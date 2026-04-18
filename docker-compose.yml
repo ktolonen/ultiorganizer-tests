@@ -1,0 +1,38 @@
+services:
+  mariadb:
+    image: mariadb:10.11
+    environment:
+      MARIADB_ROOT_PASSWORD: root
+      MARIADB_ROOT_HOST: "%"
+      MARIADB_USER: ultiorganizer
+      MARIADB_PASSWORD: ultiorganizer
+      MARIADB_DATABASE: ultiorganizer_test
+    healthcheck:
+      test: ["CMD-SHELL", "mariadb-admin ping -h 127.0.0.1 -uroot -proot --silent"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - mariadb-data:/var/lib/mysql
+
+  php-test:
+    build:
+      context: .
+      dockerfile: docker/php-test/Dockerfile
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    environment:
+      APACHE_DOCUMENT_ROOT: /workspace/.runtime/webroot
+      UO_SUT_CONTAINER_PATH: /sut-ro
+      UO_DB_HOST: mariadb
+      UO_DB_NAME: ultiorganizer_test
+      UO_DB_USER: ultiorganizer
+      UO_DB_PASSWORD: ultiorganizer
+    volumes:
+      - .:/workspace
+      - ${UO_SUT_HOST_PATH:-/home/kari/code/ultiorganizer}:/sut-ro:ro
+    working_dir: /workspace
+
+volumes:
+  mariadb-data:

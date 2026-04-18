@@ -1,0 +1,9 @@
+.runtime/
+vendor/
+reports/**
+!reports/.gitkeep
+!reports/cases/.gitkeep
+!reports/junit/.gitkeep
+!reports/logs/.gitkeep
+!reports/summary/.gitkeep
+

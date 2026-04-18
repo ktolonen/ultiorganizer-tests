@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+case_id="${1:-baseline-default}"
+filter="${2:-}"
+shift 2 || true
+exec python3 "$(dirname "$0")/scripts/harness.py" suite --case-id "$case_id" --suite integration --test-filter "$filter" "$@"
+

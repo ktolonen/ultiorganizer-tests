@@ -1,0 +1,12 @@
+{
+  "name": "ultiorganizer/test-harness",
+  "description": "PoC test harness for Ultiorganizer",
+  "type": "project",
+  "require-dev": {
+    "phpunit/phpunit": "^11.5"
+  },
+  "config": {
+    "sort-packages": true
+  }
+}
+

@@ -1,0 +1,23 @@
+{
+  "cases": [
+    {
+      "id": "baseline-default",
+      "description": "Default developer case for default customization with public standings coverage",
+      "customization": "default",
+      "config_profile": "baseline",
+      "fixture_pack": "baseline",
+      "database_name": "ultiorganizer_test",
+      "suites": ["unit", "integration", "smoke"],
+      "smoke_pages": [
+        {"id": "frontpage", "query": "view=frontpage"},
+        {"id": "seasonlist", "query": "view=seasonlist"},
+        {"id": "allcountries", "query": "view=allcountries"},
+        {"id": "teams-standings", "query": "view=teams&season=HRN2026&list=bystandings"},
+        {"id": "games-tournaments", "query": "view=games&season=HRN2026&filter=tournaments&group=all"},
+        {"id": "seriesstatus-open", "query": "view=seriesstatus&series=100"},
+        {"id": "poolstatus-pool-a", "query": "view=poolstatus&pool=200"}
+      ],
+      "tags": ["default", "public-pages"]
+    }
+  ]
+}

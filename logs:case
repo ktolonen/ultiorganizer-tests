@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+case_id="${1:-baseline-default}"
+shift || true
+exec python3 "$(dirname "$0")/scripts/harness.py" logs-case --case-id "$case_id" "$@"

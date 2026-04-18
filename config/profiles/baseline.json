@@ -1,0 +1,29 @@
+{
+  "id": "baseline",
+  "base_url": "http://127.0.0.1",
+  "customization": "default",
+  "default_locale": "en_GB.utf8",
+  "timezone": "Europe/Helsinki",
+  "allow_install": true,
+  "disable_self_registration": true,
+  "anonymous_result_input": false,
+  "enable_admin_db_access": "disabled",
+  "api_rate_limit": 120,
+  "api_rate_window": 60,
+  "server_settings": {
+    "CurrentSeason": "HRN2026",
+    "HomeTeamResponsible": "yes",
+    "GoogleMapsAPIKey": "",
+    "EmailSource": "ultiorganizer@example.com",
+    "GameRSSEnabled": "false",
+    "PageTitle": "Ultiorganizer Test Harness - ",
+    "DefaultTimezone": "Europe/Helsinki",
+    "DefaultLocale": "en_GB.utf8",
+    "ShowDefenseStats": "false",
+    "AdminEmail": "admin@example.com",
+    "ShowSpiritComments": "false",
+    "ReadOnlyServer": "false",
+    "DisableVisitorLogging": "true"
+  }
+}
+
