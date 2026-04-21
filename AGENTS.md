@@ -4,7 +4,7 @@ Implementation summary for the current Ultiorganizer test harness.
 
 ## Repo purpose
 
-- This repository is a separate Dockerized test harness for the production Ultiorganizer codebase, typically at sibling path `../ultiorganizer` or legacy path `/home/kari/code/ultiorganizer`.
+- This repository is a separate Dockerized test harness for the production Ultiorganizer codebase, typically at sibling path `../ultiorganizer`.
 - The SUT is mounted read-only into the test container and copied into `.runtime/cases/<case-id>/sut` before test config is injected.
 - Every run recreates the disposable MariaDB test database and writes reports under `reports/`.
 
@@ -36,7 +36,7 @@ Implementation summary for the current Ultiorganizer test harness.
 
 ## Runtime behavior
 
-- The harness prefers the sibling SUT path `../ultiorganizer` when it exists, falls back to `/home/kari/code/ultiorganizer`, and also accepts `--sut-path` for worktrees or alternate checkouts.
+- The harness uses the sibling SUT path `../ultiorganizer` by default and also accepts `--sut-path` for worktrees or alternate checkouts.
 - The generated test config sets `ALLOW_INSTALL=true` because Ultiorganizer refuses to boot through `index.php` while `install.php` exists otherwise.
 - DB bootstrap uses MariaDB over plain TCP with SSL disabled for the local container network.
 - Apache serves `/workspace/.runtime/webroot`, which is a symlink to the prepared runtime SUT copy for the active case.

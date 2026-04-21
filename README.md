@@ -2,7 +2,7 @@
 
 This repository contains a Dockerized test harness for the production Ultiorganizer codebase.
 
-By default, the harness uses the sibling checkout at `../ultiorganizer` when it exists. If that path is not present, it falls back to `/home/kari/code/ultiorganizer`.
+By default, the harness uses the sibling checkout at `../ultiorganizer`.
 
 The harness does not modify that source tree directly. For each run it copies the SUT into `.runtime/`, injects test-only config there, recreates a disposable MariaDB database, and writes results to `reports/`.
 
@@ -11,7 +11,7 @@ The harness does not modify that source tree directly. For each run it copies th
 - Docker
 - Docker Compose
 - Access to the Docker daemon
-- The Ultiorganizer source checkout at `../ultiorganizer`, `/home/kari/code/ultiorganizer`, or another checkout/worktree you pass with `--sut-path`
+- The Ultiorganizer source checkout at `../ultiorganizer`, or another checkout/worktree you pass with `--sut-path`
 
 ## Quick start
 
@@ -123,7 +123,7 @@ Smoke failures are reported with the failing page id, HTTP status, response snip
 
 ## Using another SUT checkout
 
-The default SUT path is `../ultiorganizer` when that sibling checkout exists. The Python harness also accepts any alternate checkout or worktree.
+The default SUT path is `../ultiorganizer`. The Python harness also accepts any alternate checkout or worktree.
 
 Example:
 

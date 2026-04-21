@@ -31,7 +31,7 @@ services:
       UO_DB_PASSWORD: ultiorganizer
     volumes:
       - .:/workspace
-      - ${UO_SUT_HOST_PATH:-/home/kari/code/ultiorganizer}:/sut-ro:ro
+      - ${UO_SUT_HOST_PATH:-../ultiorganizer}:/sut-ro:ro
     working_dir: /workspace
 
 volumes:

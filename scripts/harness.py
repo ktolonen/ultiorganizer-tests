@@ -17,7 +17,6 @@ ROOT = Path(__file__).resolve().parent.parent
 REPORTS_ROOT = ROOT / "reports"
 MATRIX_CONFIG = ROOT / "config" / "matrix.json"
 LOCK_PATH = ROOT / ".runtime" / "harness.lock"
-LEGACY_DEFAULT_SUT_PATH = Path("/home/kari/code/ultiorganizer")
 SIBLING_DEFAULT_SUT_PATH = (ROOT.parent / "ultiorganizer").resolve()
 REQUIRED_SUT_PATHS = [
     "index.php",
@@ -49,7 +48,7 @@ def get_case(case_id: str) -> dict:
 def default_sut_path() -> str:
     if SIBLING_DEFAULT_SUT_PATH.is_dir():
         return str(SIBLING_DEFAULT_SUT_PATH)
-    return str(LEGACY_DEFAULT_SUT_PATH)
+    return str(SIBLING_DEFAULT_SUT_PATH)
 
 
 def normalize_sut_path(sut_path: str) -> str:

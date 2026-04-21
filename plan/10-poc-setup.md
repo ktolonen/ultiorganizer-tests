@@ -17,7 +17,7 @@ The PoC must prove that the harness can:
 
 - Customization: `cust/default`
 - Configuration profile: `baseline`
-- Database source: `/home/kari/code/ultiorganizer/sql/ultiorganizer.sql`
+- Database source: the selected SUT checkout SQL dump such as `../ultiorganizer/sql/ultiorganizer.sql`
 - Suites enabled: `unit`, `integration`, `smoke`
 
 ## Container Setup
@@ -40,7 +40,7 @@ The harness must provide a controlled bootstrap that makes legacy `lib/` code sa
 
 Bootstrap responsibilities:
 
-- set `$_SERVER['SERVER_NAME']` and related values expected by `/home/kari/code/ultiorganizer/lib/database.php`
+- set `$_SERVER['SERVER_NAME']` and related values expected by the selected SUT checkout `lib/database.php`
 - ensure includes resolve against the mounted SUT path
 - point config loading to test-only config files
 - fail fast if a non-test database target is detected
@@ -51,7 +51,7 @@ Bootstrap responsibilities:
 ### Initialization
 
 - create a fresh MariaDB schema for every run or every matrix case
-- initialize schema from `/home/kari/code/ultiorganizer/sql/ultiorganizer.sql`
+- initialize schema from the selected SUT checkout SQL dump such as `../ultiorganizer/sql/ultiorganizer.sql`
 - load small fixture packs after schema setup instead of using one large shared dataset
 
 ### First fixture pack

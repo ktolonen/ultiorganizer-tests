@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This repository will host an isolated automated test harness for the production Ultiorganizer codebase under `/home/kari/code/ultiorganizer`.
+This repository will host an isolated automated test harness for the production Ultiorganizer codebase under a sibling checkout such as `../ultiorganizer`.
 
 The goals are:
 
@@ -27,7 +27,7 @@ The goals are:
 
 - Dockerized PHP and MariaDB test environment
 - test-only bootstrap and config injection
-- schema initialization from `/home/kari/code/ultiorganizer/sql/ultiorganizer.sql`
+- schema initialization from the selected SUT checkout SQL dump such as `../ultiorganizer/sql/ultiorganizer.sql`
 - a first set of unit tests for low-coupled `lib/` functions
 - a first set of integration tests for representative DB-backed `lib/` functions
 - smoke tests for a small allowlist of PHP pages
