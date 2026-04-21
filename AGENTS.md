@@ -4,7 +4,7 @@ Implementation summary for the current Ultiorganizer test harness.
 
 ## Repo purpose
 
-- This repository is a separate Dockerized test harness for the production Ultiorganizer codebase at `/home/kari/code/ultiorganizer`.
+- This repository is a separate Dockerized test harness for the production Ultiorganizer codebase, typically at sibling path `../ultiorganizer` or legacy path `/home/kari/code/ultiorganizer`.
 - The SUT is mounted read-only into the test container and copied into `.runtime/cases/<case-id>/sut` before test config is injected.
 - Every run recreates the disposable MariaDB test database and writes reports under `reports/`.
 
@@ -36,7 +36,7 @@ Implementation summary for the current Ultiorganizer test harness.
 
 ## Runtime behavior
 
-- The harness uses the default SUT path `/home/kari/code/ultiorganizer`, but `scripts/harness.py` also accepts `--sut-path` for worktrees or alternate checkouts.
+- The harness prefers the sibling SUT path `../ultiorganizer` when it exists, falls back to `/home/kari/code/ultiorganizer`, and also accepts `--sut-path` for worktrees or alternate checkouts.
 - The generated test config sets `ALLOW_INSTALL=true` because Ultiorganizer refuses to boot through `index.php` while `install.php` exists otherwise.
 - DB bootstrap uses MariaDB over plain TCP with SSL disabled for the local container network.
 - Apache serves `/workspace/.runtime/webroot`, which is a symlink to the prepared runtime SUT copy for the active case.
@@ -51,6 +51,8 @@ Implementation summary for the current Ultiorganizer test harness.
 - Failed runs also refresh `reports/summary/latest-failed.json` and `reports/cases/<case-id>/latest-failed.json`.
 - Each run writes a setup log plus per-suite JUnit XML and raw suite logs.
 - Summaries include failure classification, failure reason, first failed test, failed smoke pages, and direct artifact paths.
+- Summaries also include SUT context metadata such as branch, commit, dirty state, inferred or explicit context label, and optional PR number metadata.
+- Context-scoped latest pointers are written under `reports/summary/contexts/<context-label>/` and `reports/cases/<case-id>/contexts/<context-label>/`.
 - Current failure classes used by the harness are:
   - `preflight_failure`
   - `container_startup_failure`

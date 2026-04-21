@@ -2,7 +2,7 @@
 
 This repository contains a Dockerized test harness for the production Ultiorganizer codebase.
 
-By default, the system under test is read from `/home/kari/code/ultiorganizer`.
+By default, the harness uses the sibling checkout at `../ultiorganizer` when it exists. If that path is not present, it falls back to `/home/kari/code/ultiorganizer`.
 
 The harness does not modify that source tree directly. For each run it copies the SUT into `.runtime/`, injects test-only config there, recreates a disposable MariaDB database, and writes results to `reports/`.
 
@@ -11,7 +11,7 @@ The harness does not modify that source tree directly. For each run it copies th
 - Docker
 - Docker Compose
 - Access to the Docker daemon
-- The Ultiorganizer source checkout at `/home/kari/code/ultiorganizer`, or another checkout/worktree you pass with `--sut-path`
+- The Ultiorganizer source checkout at `../ultiorganizer`, `/home/kari/code/ultiorganizer`, or another checkout/worktree you pass with `--sut-path`
 
 ## Quick start
 
@@ -123,7 +123,7 @@ Smoke failures are reported with the failing page id, HTTP status, response snip
 
 ## Using another SUT checkout
 
-The default SUT path is `/home/kari/code/ultiorganizer`, but the Python harness also accepts an alternate checkout or worktree.
+The default SUT path is `../ultiorganizer` when that sibling checkout exists. The Python harness also accepts any alternate checkout or worktree.
 
 Example:
 
@@ -132,6 +132,35 @@ python3 scripts/harness.py case --case-id baseline-default --sut-path /path/to/o
 ```
 
 You can use the same `--sut-path` pattern with `doctor`, `quick`, `suite`, `case`, and `matrix`.
+
+## Local development vs PR validation
+
+The harness now records SUT git context with each run and can keep separate "latest" pointers per context label. That gives you a practical manual workflow without CI:
+
+- Local development: point at your normal checkout or worktree and let the harness infer a branch-scoped context label.
+- PR validation: point at a PR checkout or worktree and pass `--pr-number` so the reports are tracked under `pr-<number>`.
+
+Example local branch run:
+
+```sh
+./test:quick --sut-path ../ultiorganizer
+./report:latest --context-label branch-my-feature
+```
+
+Example manual PR run from a local PR checkout:
+
+```sh
+./test:case baseline-default \
+  --sut-path ../ultiorganizer-pr-123 \
+  --pr-number 123 \
+  --pr-head-ref feature/my-change \
+  --pr-base-ref main
+
+./report:case baseline-default --context-label pr-123
+./logs:case baseline-default --context-label pr-123
+```
+
+If you want a stable label that does not depend on the git branch name, pass `--context-label` explicitly.
 
 ## What each run does
 
@@ -179,7 +208,15 @@ Each summary includes:
 - failure reason
 - first failed test when PHPUnit fails
 - failed page details when smoke fails
+- SUT context metadata such as branch, commit, dirty state, and optional PR number
 - artifact paths for summary, JUnit, and raw logs
+
+Context-scoped latest pointers are also written when a context label is available:
+
+- `reports/summary/contexts/<context-label>/latest.json`
+- `reports/summary/contexts/<context-label>/latest-failed.json`
+- `reports/cases/<case-id>/contexts/<context-label>/latest.json`
+- `reports/cases/<case-id>/contexts/<context-label>/latest-failed.json`
 
 ## Failure classes
 

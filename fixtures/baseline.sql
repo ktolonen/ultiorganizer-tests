@@ -131,3 +131,8 @@ INSERT INTO uo_urls (
   ('season', 'HRN2026', 'menulink', 'Harness Event Site', 'https://example.com/harness', '1', 0, NULL, NULL),
   ('season', 'HRN2026', 'menumail', 'Harness Admin', 'admin@example.com', '2', 0, NULL, NULL),
   ('admin', '0', 'admin', 'Harness Admin', 'admin@example.com', '1', 0, NULL, NULL);
+
+INSERT INTO uo_userproperties (
+  userid, name, value
+) VALUES
+  ('admin', 'userrole', 'superadmin');

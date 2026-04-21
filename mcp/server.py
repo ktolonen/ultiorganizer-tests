@@ -17,6 +17,28 @@ def send(message: dict) -> None:
     sys.stdout.flush()
 
 
+def extend_context_args(args: list[str], arguments: dict) -> list[str]:
+    if arguments.get("sut_path"):
+        args.extend(["--sut-path", arguments["sut_path"]])
+    if arguments.get("run_label"):
+        args.extend(["--run-label", arguments["run_label"]])
+    if arguments.get("context_label"):
+        args.extend(["--context-label", arguments["context_label"]])
+    if arguments.get("pr_number"):
+        args.extend(["--pr-number", arguments["pr_number"]])
+    if arguments.get("pr_head_ref"):
+        args.extend(["--pr-head-ref", arguments["pr_head_ref"]])
+    if arguments.get("pr_base_ref"):
+        args.extend(["--pr-base-ref", arguments["pr_base_ref"]])
+    return args
+
+
+def extend_report_args(args: list[str], arguments: dict) -> list[str]:
+    if arguments.get("context_label"):
+        args.extend(["--context-label", arguments["context_label"]])
+    return args
+
+
 def tool_definitions() -> list[dict]:
     return [
         {
@@ -33,6 +55,10 @@ def tool_definitions() -> list[dict]:
                     "case_id": {"type": "string"},
                     "sut_path": {"type": "string"},
                     "run_label": {"type": "string"},
+                    "context_label": {"type": "string"},
+                    "pr_number": {"type": "string"},
+                    "pr_head_ref": {"type": "string"},
+                    "pr_base_ref": {"type": "string"},
                 },
                 "required": ["case_id"],
             },
@@ -47,6 +73,10 @@ def tool_definitions() -> list[dict]:
                     "suite": {"type": "string"},
                     "sut_path": {"type": "string"},
                     "run_label": {"type": "string"},
+                    "context_label": {"type": "string"},
+                    "pr_number": {"type": "string"},
+                    "pr_head_ref": {"type": "string"},
+                    "pr_base_ref": {"type": "string"},
                 },
                 "required": ["case_id", "suite"],
             },
@@ -62,6 +92,10 @@ def tool_definitions() -> list[dict]:
                     "test_filter": {"type": "string"},
                     "sut_path": {"type": "string"},
                     "run_label": {"type": "string"},
+                    "context_label": {"type": "string"},
+                    "pr_number": {"type": "string"},
+                    "pr_head_ref": {"type": "string"},
+                    "pr_base_ref": {"type": "string"},
                 },
                 "required": ["case_id", "suite", "test_filter"],
             },
@@ -69,14 +103,17 @@ def tool_definitions() -> list[dict]:
         {
             "name": "report_latest",
             "description": "Return the latest summary.",
-            "inputSchema": {"type": "object", "properties": {}},
+            "inputSchema": {"type": "object", "properties": {"context_label": {"type": "string"}}},
         },
         {
             "name": "report_case",
             "description": "Return the latest summary for a case.",
             "inputSchema": {
                 "type": "object",
-                "properties": {"case_id": {"type": "string"}},
+                "properties": {
+                    "case_id": {"type": "string"},
+                    "context_label": {"type": "string"},
+                },
                 "required": ["case_id"],
             },
         },
@@ -85,7 +122,10 @@ def tool_definitions() -> list[dict]:
             "description": "Return log paths for a case.",
             "inputSchema": {
                 "type": "object",
-                "properties": {"case_id": {"type": "string"}},
+                "properties": {
+                    "case_id": {"type": "string"},
+                    "context_label": {"type": "string"},
+                },
                 "required": ["case_id"],
             },
         },
@@ -121,18 +161,10 @@ def handle_tool_call(name: str, arguments: dict) -> dict:
         return {"status": "ok", "cases": matrix["cases"]}
     if name == "matrix_run":
         args = ["case", "--case-id", arguments["case_id"]]
-        if arguments.get("sut_path"):
-            args.extend(["--sut-path", arguments["sut_path"]])
-        if arguments.get("run_label"):
-            args.extend(["--run-label", arguments["run_label"]])
-        return run_harness(args)
+        return run_harness(extend_context_args(args, arguments))
     if name == "suite_run":
         args = ["suite", "--case-id", arguments["case_id"], "--suite", arguments["suite"]]
-        if arguments.get("sut_path"):
-            args.extend(["--sut-path", arguments["sut_path"]])
-        if arguments.get("run_label"):
-            args.extend(["--run-label", arguments["run_label"]])
-        return run_harness(args)
+        return run_harness(extend_context_args(args, arguments))
     if name == "test_run":
         args = [
             "suite",
@@ -143,17 +175,13 @@ def handle_tool_call(name: str, arguments: dict) -> dict:
             "--test-filter",
             arguments["test_filter"],
         ]
-        if arguments.get("sut_path"):
-            args.extend(["--sut-path", arguments["sut_path"]])
-        if arguments.get("run_label"):
-            args.extend(["--run-label", arguments["run_label"]])
-        return run_harness(args)
+        return run_harness(extend_context_args(args, arguments))
     if name == "report_latest":
-        return run_harness(["report-latest"])
+        return run_harness(extend_report_args(["report-latest"], arguments))
     if name == "report_case":
-        return run_harness(["report-case", "--case-id", arguments["case_id"]])
+        return run_harness(extend_report_args(["report-case", "--case-id", arguments["case_id"]], arguments))
     if name == "logs_case":
-        return run_harness(["logs-case", "--case-id", arguments["case_id"]])
+        return run_harness(extend_report_args(["logs-case", "--case-id", arguments["case_id"]], arguments))
     raise RuntimeError(f"Unknown tool: {name}")
 
 
@@ -206,4 +234,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

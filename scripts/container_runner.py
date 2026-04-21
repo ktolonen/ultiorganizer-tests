@@ -88,6 +88,17 @@ def command_output(result: subprocess.CompletedProcess[str]) -> str:
     return ((result.stdout or "") + (result.stderr or "")).strip()
 
 
+def load_sut_context() -> dict:
+    raw = os.environ.get("UO_SUT_CONTEXT_JSON", "").strip()
+    if not raw:
+        return {}
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
 def ensure_vendor() -> dict:
     vendor_autoload = WORKSPACE / "vendor" / "autoload.php"
     if vendor_autoload.is_file():
@@ -103,7 +114,7 @@ def ensure_vendor() -> dict:
     return {"status": "installed", "vendor_autoload": str(vendor_autoload)}
 
 
-def write_test_config(case: dict, profile: dict, runtime_sut: Path) -> Path:
+def write_test_config(case: dict, profile: dict, runtime_sut: Path, maintenance_runtime_dir: Path) -> Path:
     db_name = case["database_name"]
     if not db_name.startswith("ultiorganizer_test"):
         raise RunnerFailure(
@@ -113,6 +124,10 @@ def write_test_config(case: dict, profile: dict, runtime_sut: Path) -> Path:
 
     config_path = runtime_sut / "conf" / "config.inc.php"
     config_path.parent.mkdir(parents=True, exist_ok=True)
+    if config_path.exists():
+        config_path.chmod(0o644)
+    maintenance_runtime_dir.mkdir(parents=True, exist_ok=True)
+    maintenance_runtime_dir.chmod(0o777)
     lines = [
         "<?php",
         f"define('DB_HOST', '{os.environ.get('UO_DB_HOST', 'mariadb')}');",
@@ -121,6 +136,7 @@ def write_test_config(case: dict, profile: dict, runtime_sut: Path) -> Path:
         f"define('DB_DATABASE', '{db_name}');",
         f"define('BASEURL', '{profile['base_url']}');",
         "define('UPLOAD_DIR', 'images/uploads/');",
+        f"define('MAINTENANCE_RUNTIME_DIR', '{maintenance_runtime_dir}');",
         f"define('CUSTOMIZATIONS', '{case['customization']}');",
         "define('DATE_FORMAT', _('%d.%m.%Y %H:%M'));",
         "define('WORD_DELIMITER', '/([\\;\\,\\-_\\s\\/\\.])/');",
@@ -143,6 +159,7 @@ def write_test_config(case: dict, profile: dict, runtime_sut: Path) -> Path:
 def prepare_runtime(case: dict, profile: dict, setup_log_path: Path) -> dict:
     runtime_case_root = RUNTIME_ROOT / "cases" / case["id"]
     runtime_sut = runtime_case_root / "sut"
+    maintenance_runtime_dir = runtime_case_root / "maintenance-runtime"
     runtime_case_root.mkdir(parents=True, exist_ok=True)
     runtime_sut.mkdir(parents=True, exist_ok=True)
 
@@ -165,7 +182,7 @@ def prepare_runtime(case: dict, profile: dict, setup_log_path: Path) -> dict:
         )
 
     try:
-        config_path = write_test_config(case, profile, runtime_sut)
+        config_path = write_test_config(case, profile, runtime_sut, maintenance_runtime_dir)
     except OSError as exc:
         raise RunnerFailure(
             "runtime_sut_copy_config_failure",
@@ -185,6 +202,7 @@ def prepare_runtime(case: dict, profile: dict, setup_log_path: Path) -> dict:
     return {
         "runtime_case_root": str(runtime_case_root),
         "runtime_sut": str(runtime_sut),
+        "maintenance_runtime_dir": str(maintenance_runtime_dir),
         "config_path": str(config_path),
         "webroot": str(WEBROOT_LINK),
     }
@@ -274,19 +292,7 @@ def initialize_database(case: dict, setup_log_path: Path) -> None:
 
 
 def junit_summary(junit_path: Path) -> dict:
-    if not junit_path.is_file():
-        return {
-            "tests": 0,
-            "failures": 0,
-            "errors": 0,
-            "skipped": 0,
-            "time": 0.0,
-            "failed_tests": [],
-        }
-
-    root = ET.parse(junit_path).getroot()
-    test_nodes = list(root) if root.tag == "testsuites" else [root]
-    summary = {
+    empty_summary = {
         "tests": 0,
         "failures": 0,
         "errors": 0,
@@ -294,6 +300,25 @@ def junit_summary(junit_path: Path) -> dict:
         "time": 0.0,
         "failed_tests": [],
     }
+
+    if not junit_path.is_file():
+        return empty_summary
+
+    if junit_path.stat().st_size == 0:
+        return {
+            **empty_summary,
+            "parse_error": "JUnit XML file was empty",
+        }
+
+    try:
+        root = ET.parse(junit_path).getroot()
+    except ET.ParseError as exc:
+        return {
+            **empty_summary,
+            "parse_error": str(exc),
+        }
+    test_nodes = list(root) if root.tag == "testsuites" else [root]
+    summary = dict(empty_summary)
 
     for node in test_nodes:
         summary["tests"] += int(node.attrib.get("tests", 0))
@@ -403,10 +428,14 @@ def run_suite(case: dict, suite: str, run_root: Path, test_filter: str | None, r
     status = "passed" if result.returncode == 0 else "failed"
     if result.returncode not in (0, 1):
         status = "error"
+    if parsed.get("parse_error"):
+        status = "error"
 
     failed_pages = extract_smoke_failures(parsed["failed_tests"])
     failure_classification = suite_failure_classification(suite, status)
     failure_reason = suite_failure_reason(suite, parsed["failed_tests"], failed_pages)
+    if parsed.get("parse_error") and not failure_reason:
+        failure_reason = f"JUnit parse error for suite {suite}: {parsed['parse_error']}"
 
     return {
         "suite": suite,
@@ -421,6 +450,7 @@ def run_suite(case: dict, suite: str, run_root: Path, test_filter: str | None, r
         "failures": parsed["failures"],
         "errors": parsed["errors"],
         "skipped": parsed["skipped"],
+        "junit_parse_error": parsed.get("parse_error"),
         "failed_tests": parsed["failed_tests"],
         "first_failed_test": first_failed_test(parsed["failed_tests"]),
         "failed_pages": failed_pages,
@@ -459,17 +489,33 @@ def git_value(args: list[str]) -> str:
 
 
 def write_markdown(path: Path, summary: dict) -> None:
+    sut_context = summary.get("sut_context") or {}
     lines = [
         f"# Test Summary: {summary['case_id']}",
         "",
         f"- Status: `{summary['status']}`",
         f"- SUT path: `{summary['sut_source']}`",
+        f"- Context label: `{summary.get('context_label', '')}`",
         f"- Customization: `{summary['customization']}`",
         f"- Config profile: `{summary['config_profile']}`",
         f"- Started: `{summary['started_at']}`",
         f"- Finished: `{summary['finished_at']}`",
         f"- Run label: `{summary['run_label']}`",
     ]
+    if sut_context.get("type"):
+        lines.append(f"- SUT context type: `{sut_context['type']}`")
+    if sut_context.get("pr_number"):
+        lines.append(f"- PR number: `{sut_context['pr_number']}`")
+    if sut_context.get("pr_head_ref"):
+        lines.append(f"- PR head ref: `{sut_context['pr_head_ref']}`")
+    if sut_context.get("pr_base_ref"):
+        lines.append(f"- PR base ref: `{sut_context['pr_base_ref']}`")
+    if sut_context.get("branch"):
+        lines.append(f"- Branch: `{sut_context['branch']}`")
+    if sut_context.get("commit_sha"):
+        lines.append(f"- Commit: `{sut_context['commit_sha']}`")
+    if "dirty" in sut_context:
+        lines.append(f"- Dirty worktree: `{sut_context['dirty']}`")
     if summary.get("failure_classification"):
         lines.append(f"- Failure class: `{summary['failure_classification']}`")
     if summary.get("failure_reason"):
@@ -512,12 +558,19 @@ def write_markdown(path: Path, summary: dict) -> None:
 
 
 def update_latest_pointers(case_id: str, summary: dict) -> None:
+    context_label = sanitize(summary.get("context_label", "")) if summary.get("context_label") else ""
     write_json(REPORTS_ROOT / "summary" / "latest.json", summary)
     write_markdown(REPORTS_ROOT / "summary" / f"{case_id}-latest.md", summary)
     write_json(REPORTS_ROOT / "cases" / case_id / "latest.json", summary)
+    if context_label:
+        write_json(REPORTS_ROOT / "summary" / "contexts" / context_label / "latest.json", summary)
+        write_json(REPORTS_ROOT / "cases" / case_id / "contexts" / context_label / "latest.json", summary)
     if summary["status"] == "failed":
         write_json(REPORTS_ROOT / "summary" / "latest-failed.json", summary)
         write_json(REPORTS_ROOT / "cases" / case_id / "latest-failed.json", summary)
+        if context_label:
+            write_json(REPORTS_ROOT / "summary" / "contexts" / context_label / "latest-failed.json", summary)
+            write_json(REPORTS_ROOT / "cases" / case_id / "contexts" / context_label / "latest-failed.json", summary)
 
 
 def finalize_summary(
@@ -529,6 +582,7 @@ def finalize_summary(
     run_label: str | None,
     setup_result: dict,
 ) -> dict:
+    sut_context = load_sut_context()
     started = setup_result["started_at"]
     finished = setup_result["finished_at"]
     if suite_results:
@@ -552,9 +606,11 @@ def finalize_summary(
         "started_at": started,
         "finished_at": finished,
         "sut_source": str(SUT_SOURCE),
+        "context_label": sut_context.get("label", ""),
+        "sut_context": sut_context,
         "run_label": run_label or "",
-        "branch": git_value(["git", "-C", str(SUT_SOURCE), "rev-parse", "--abbrev-ref", "HEAD"]),
-        "commit_sha": git_value(["git", "-C", str(SUT_SOURCE), "rev-parse", "HEAD"]),
+        "branch": sut_context.get("branch") or git_value(["git", "-C", str(SUT_SOURCE), "rev-parse", "--abbrev-ref", "HEAD"]),
+        "commit_sha": sut_context.get("commit_sha") or git_value(["git", "-C", str(SUT_SOURCE), "rev-parse", "HEAD"]),
         "failure_classification": failure_classification,
         "failure_reason": failure_reason,
         "first_failed_test": failing_suite.get("first_failed_test") if failing_suite else None,
@@ -570,6 +626,18 @@ def finalize_summary(
             "case_latest_failed_json": str(REPORTS_ROOT / "cases" / case["id"] / "latest-failed.json"),
         },
     }
+    if summary["context_label"]:
+        context_label = sanitize(summary["context_label"])
+        summary["artifact_paths"]["context_latest_json"] = str(REPORTS_ROOT / "summary" / "contexts" / context_label / "latest.json")
+        summary["artifact_paths"]["context_latest_failed_json"] = str(
+            REPORTS_ROOT / "summary" / "contexts" / context_label / "latest-failed.json"
+        )
+        summary["artifact_paths"]["case_context_latest_json"] = str(
+            REPORTS_ROOT / "cases" / case["id"] / "contexts" / context_label / "latest.json"
+        )
+        summary["artifact_paths"]["case_context_latest_failed_json"] = str(
+            REPORTS_ROOT / "cases" / case["id"] / "contexts" / context_label / "latest-failed.json"
+        )
     write_json(run_root / "summary" / "summary.json", summary)
     write_markdown(run_root / "summary" / "summary.md", summary)
     update_latest_pointers(case["id"], summary)

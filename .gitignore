@@ -6,4 +6,5 @@ reports/**
 !reports/junit/.gitkeep
 !reports/logs/.gitkeep
 !reports/summary/.gitkeep
-
+__pycache__/
+*.py[cod]
