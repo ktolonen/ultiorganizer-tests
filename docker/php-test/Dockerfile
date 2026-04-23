@@ -14,6 +14,7 @@ RUN apt-get update \
         python3 \
         rsync \
         unzip \
+        wget \
         zip \
     && docker-php-ext-install mysqli gettext mbstring \
     && a2enmod rewrite \

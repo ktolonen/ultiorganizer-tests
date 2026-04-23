@@ -10,6 +10,9 @@ import shutil
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from pathlib import Path
@@ -25,6 +28,8 @@ MATRIX_CONFIG = WORKSPACE / "config" / "matrix.json"
 PROFILE_DIR = WORKSPACE / "config" / "profiles"
 FIXTURE_DIR = WORKSPACE / "fixtures"
 APACHE_ERROR_LOG = Path("/var/log/apache2/error.log")
+PHPUNIT_SUITES = {"unit", "integration", "smoke"}
+CrawlFailure = dict[str, object]
 
 
 class RunnerFailure(RuntimeError):
@@ -376,11 +381,382 @@ def extract_smoke_failures(failed_tests: list[dict]) -> list[dict]:
     return failed_pages
 
 
+def parse_failed_block(log_path: Path, heading: str) -> list[str]:
+    if not log_path.is_file():
+        return []
+
+    lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    failures: list[str] = []
+    capture = False
+    for line in lines:
+        if line.strip() == heading:
+            capture = True
+            continue
+        if not capture:
+            continue
+        if line.startswith(" - "):
+            failures.append(line[3:].strip())
+            continue
+        if line.startswith("[") or not line.strip():
+            break
+    return failures
+
+
+def count_manifest_entries(path: Path) -> int:
+    if not path.is_file():
+        return 0
+    return sum(1 for line in path.read_text(encoding="utf-8", errors="replace").splitlines() if line.strip())
+
+
+def crawl_plan_env(plan: dict) -> dict[str, str]:
+    env: dict[str, str] = {}
+    scalar_mappings = {
+        "accept_regex": "WGET_ACCEPT_REGEX",
+        "reject_regex": "WGET_REJECT_REGEX",
+        "auth_failure_regex": "WGET_AUTH_FAILURE_REGEX",
+        "login_url": "WGET_LOGIN_URL",
+        "verify_url": "WGET_VERIFY_URL",
+        "page_delay": "WGET_PAGE_DELAY",
+        "retries": "WGET_RETRIES",
+        "timeout": "WGET_TIMEOUT",
+        "max_depth": "WGET_CRAWL_MAX_DEPTH",
+        "max_pages": "WGET_CRAWL_MAX_PAGES",
+        "max_pages_per_view": "WGET_CRAWL_MAX_PAGES_PER_VIEW",
+        "max_visits_per_url": "WGET_MAX_VISITS_PER_URL",
+    }
+    for key, env_name in scalar_mappings.items():
+        value = plan.get(key)
+        if value is None:
+            continue
+        env[env_name] = str(value)
+
+    if "block_auth_routes" in plan:
+        env["WGET_BLOCK_AUTH_ROUTES"] = "1" if plan["block_auth_routes"] else "0"
+
+    auth_user = plan.get("auth_user")
+    auth_pass = plan.get("auth_pass")
+    if isinstance(auth_user, str) and auth_user:
+        env["WGET_LOGIN_USER"] = auth_user
+    if isinstance(auth_pass, str) and auth_pass:
+        env["WGET_LOGIN_PASS"] = auth_pass
+
+    auth_user_env = plan.get("auth_user_env")
+    auth_pass_env = plan.get("auth_pass_env")
+    if isinstance(auth_user_env, str) and auth_user_env:
+        value = os.environ.get(auth_user_env, "")
+        if value:
+            env["WGET_LOGIN_USER"] = value
+    if isinstance(auth_pass_env, str) and auth_pass_env:
+        value = os.environ.get(auth_pass_env, "")
+        if value:
+            env["WGET_LOGIN_PASS"] = value
+
+    return env
+
+
+def run_follow_links_plan(plan: dict, plan_dir: Path) -> tuple[subprocess.CompletedProcess[str], dict]:
+    start_url_or_path = str(plan.get("start_url_or_path", "")).strip()
+    if not start_url_or_path:
+        raise RunnerFailure("crawl_runtime_failure", f"Crawl plan {plan.get('id', 'unknown')} is missing start_url_or_path")
+
+    env = crawl_plan_env(plan)
+    result = run(
+        [
+            "bash",
+            str(WORKSPACE / "wget_follow_links.sh"),
+            "http://127.0.0.1",
+            start_url_or_path,
+            str(plan_dir),
+        ],
+        cwd=WORKSPACE,
+        env=env,
+    )
+    manifest_path = plan_dir / "manifest.tsv"
+    details = {
+        "type": "follow_links",
+        "start_url_or_path": start_url_or_path,
+        "manifest_path": str(manifest_path),
+        "downloaded_pages": count_manifest_entries(manifest_path),
+        "failed_urls": parse_failed_block(plan_dir / "wget_follow_links.log", "Failed URLs:"),
+    }
+    return result, details
+
+
+def run_php_files_plan(case: dict, plan: dict, runtime_sut: Path, plan_dir: Path) -> tuple[subprocess.CompletedProcess[str], dict]:
+    input_root_value = str(plan.get("input_root", ".")).strip() or "."
+    input_root = (runtime_sut / input_root_value).resolve()
+    try:
+        input_root.relative_to(runtime_sut.resolve())
+    except ValueError as exc:
+        raise RunnerFailure(
+            "crawl_runtime_failure",
+            f"Crawl plan {plan.get('id', 'unknown')} input_root escapes the runtime SUT: {input_root_value}",
+        ) from exc
+
+    env = crawl_plan_env(plan)
+    base_url = str(plan.get("base_url", "http://127.0.0.1")).strip() or "http://127.0.0.1"
+    result = run(
+        [
+            "bash",
+            str(WORKSPACE / "wget_php_files.sh"),
+            base_url,
+            str(input_root),
+            str(plan_dir),
+        ],
+        cwd=WORKSPACE,
+        env=env,
+    )
+    log_path = plan_dir / "wget_php_files.log"
+    downloaded_files = []
+    if plan_dir.is_dir():
+        downloaded_files = [
+            str(path.relative_to(plan_dir))
+            for path in plan_dir.rglob("*.php")
+            if path.is_file()
+        ]
+    details = {
+        "type": "php_files",
+        "base_url": base_url,
+        "input_root": str(input_root),
+        "downloaded_files": len(downloaded_files),
+        "failed_files": parse_failed_block(log_path, "Failed downloads:"),
+    }
+    return result, details
+
+
+class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def http_probe(url: str, timeout: int = 20) -> dict:
+    request = urllib.request.Request(url, headers={"User-Agent": "ultiorganizer-harness-path-probe/1.0"})
+    opener = urllib.request.build_opener(NoRedirectHandler)
+    try:
+        with opener.open(request, timeout=timeout) as response:
+            body = response.read().decode("utf-8", errors="replace")
+            return {
+                "status_code": response.getcode(),
+                "headers": dict(response.headers.items()),
+                "body": body,
+                "final_url": response.geturl(),
+            }
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        return {
+            "status_code": exc.code,
+            "headers": dict(exc.headers.items()),
+            "body": body,
+            "final_url": exc.geturl(),
+        }
+
+
+def run_path_probes_plan(plan: dict, plan_dir: Path) -> tuple[subprocess.CompletedProcess[str], dict]:
+    probes = plan.get("probes", [])
+    if not isinstance(probes, list) or not probes:
+        raise RunnerFailure("crawl_runtime_failure", f"Crawl plan {plan.get('id', 'unknown')} defines no probes")
+
+    base_url = str(plan.get("base_url", "http://127.0.0.1")).rstrip("/") or "http://127.0.0.1"
+    forbidden_patterns = [str(pattern) for pattern in plan.get("forbidden_body_regexes", []) if str(pattern).strip()]
+    timeout = int(plan.get("timeout", 20))
+    log_path = plan_dir / "path_probes.log"
+    results: list[dict] = []
+    failures: list[dict] = []
+
+    with log_path.open("w", encoding="utf-8") as log_handle:
+        for probe in probes:
+            probe_id = sanitize(str(probe.get("id", "")).strip() or "probe")
+            path = str(probe.get("path", "")).strip()
+            if not path:
+                failures.append({"id": probe_id, "reason": "missing path"})
+                log_handle.write(f"[FAIL] {probe_id}: missing path\n")
+                continue
+
+            url = path if "://" in path else f"{base_url}{path}"
+            expected_statuses = [int(status) for status in probe.get("expected_statuses", [200])]
+            response = http_probe(url, timeout=timeout)
+            body = response["body"]
+            status_code = int(response["status_code"])
+            matched_forbidden = [
+                pattern for pattern in forbidden_patterns if re.search(pattern, body, flags=re.IGNORECASE)
+            ]
+            location = response["headers"].get("Location", "")
+
+            probe_result = {
+                "id": probe_id,
+                "url": url,
+                "status_code": status_code,
+                "expected_statuses": expected_statuses,
+                "location": location,
+                "matched_forbidden_patterns": matched_forbidden,
+                "body_snippet": re.sub(r"\s+", " ", body).strip()[:300],
+            }
+            results.append(probe_result)
+
+            if status_code not in expected_statuses:
+                failures.append({"id": probe_id, "reason": f"unexpected status {status_code}", **probe_result})
+                log_handle.write(f"[FAIL] {probe_id}: unexpected status {status_code} for {url}\n")
+                continue
+
+            if matched_forbidden:
+                failures.append({"id": probe_id, "reason": "matched forbidden body patterns", **probe_result})
+                log_handle.write(f"[FAIL] {probe_id}: forbidden body pattern matched for {url}\n")
+                continue
+
+            log_handle.write(f"[OK] {probe_id}: status={status_code} url={url}\n")
+
+    status_code = 0 if not failures else 1
+    details = {
+        "type": "path_probes",
+        "base_url": base_url,
+        "probe_results": results,
+        "failed_probes": failures,
+        "log_path": str(log_path),
+    }
+    return subprocess.CompletedProcess(args=["path_probes"], returncode=status_code, stdout="", stderr=""), details
+
+
+def execute_crawl_plan(case: dict, plan: dict, runtime_sut: Path, crawl_root: Path) -> dict:
+    plan_id = sanitize(str(plan.get("id", "")).strip() or "crawl-plan")
+    plan_type = str(plan.get("type", "")).strip()
+    plan_dir = crawl_root / plan_id
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    started = datetime.now(timezone.utc)
+    started_monotonic = time.monotonic()
+
+    if plan_type == "follow_links":
+        result, details = run_follow_links_plan(plan, plan_dir)
+        log_name = "wget_follow_links.log"
+    elif plan_type == "php_files":
+        result, details = run_php_files_plan(case, plan, runtime_sut, plan_dir)
+        log_name = "wget_php_files.log"
+    elif plan_type == "path_probes":
+        result, details = run_path_probes_plan(plan, plan_dir)
+        log_name = "path_probes.log"
+    else:
+        raise RunnerFailure(
+            "crawl_runtime_failure",
+            f"Crawl plan {plan_id} uses unsupported type {plan_type!r}",
+        )
+
+    finished = datetime.now(timezone.utc)
+    finished_monotonic = time.monotonic()
+    log_path = plan_dir / log_name
+    status = "passed" if result.returncode == 0 else "failed"
+    if result.returncode not in (0, 1):
+        status = "error"
+
+    failure_items = details.get("failed_urls") or details.get("failed_files") or details.get("failed_probes") or []
+    failure_reason = ""
+    if status != "passed":
+        if failure_items:
+            first_failure = failure_items[0]
+            if isinstance(first_failure, dict):
+                failure_reason = f"{plan_id} failed on {first_failure.get('id', 'unknown')}"
+            else:
+                failure_reason = f"{plan_id} failed on {first_failure}"
+        else:
+            failure_reason = f"{plan_id} exited with code {result.returncode}"
+
+    return {
+        "id": plan_id,
+        "type": plan_type,
+        "status": status,
+        "started_at": started.isoformat(),
+        "finished_at": finished.isoformat(),
+        "duration_seconds": round(max(0.0, finished_monotonic - started_monotonic), 3),
+        "exit_code": result.returncode,
+        "log_path": str(log_path),
+        "artifact_root": str(plan_dir),
+        "details": details,
+        "failure_reason": failure_reason,
+        "log_excerpt": log_excerpt(log_path) if status != "passed" else "",
+    }
+
+
+def run_crawl_suite(case: dict, run_root: Path, run_label: str | None) -> dict:
+    runtime_sut = RUNTIME_ROOT / "cases" / case["id"] / "sut"
+    crawl_root = run_root / "crawl"
+    crawl_root.mkdir(parents=True, exist_ok=True)
+    plans = case.get("crawl_plans", [])
+    started = datetime.now(timezone.utc)
+    started_monotonic = time.monotonic()
+
+    if not isinstance(plans, list) or not plans:
+        finished = datetime.now(timezone.utc)
+        finished_monotonic = time.monotonic()
+        reason = f"Case {case['id']} enables crawl but defines no crawl_plans"
+        return {
+            "suite": "crawl",
+            "status": "error",
+            "started_at": started.isoformat(),
+            "finished_at": finished.isoformat(),
+            "duration_seconds": round(max(0.0, finished_monotonic - started_monotonic), 3),
+            "exit_code": 2,
+            "junit_path": "",
+            "log_path": "",
+            "tests": 0,
+            "failures": 0,
+            "errors": 1,
+            "skipped": 0,
+            "junit_parse_error": None,
+            "failed_tests": [{"name": "crawl-config", "class": "crawl", "message": reason}],
+            "first_failed_test": {"name": "crawl-config", "class": "crawl", "message": reason},
+            "failed_pages": [],
+            "crawl_plans": [],
+            "failure_classification": "crawl_runtime_failure",
+            "failure_reason": reason,
+            "log_excerpt": "",
+        }
+
+    plan_results = [execute_crawl_plan(case, plan, runtime_sut, crawl_root) for plan in plans]
+    finished = datetime.now(timezone.utc)
+    finished_monotonic = time.monotonic()
+    failed_plan_results = [plan for plan in plan_results if plan["status"] != "passed"]
+    status = "passed" if not failed_plan_results else "failed"
+    if any(plan["status"] == "error" for plan in failed_plan_results):
+        status = "error"
+
+    failed_tests = [
+        {
+            "name": str(plan["id"]),
+            "class": "crawl",
+            "message": str(plan.get("failure_reason", "")),
+        }
+        for plan in failed_plan_results
+    ]
+
+    return {
+        "suite": "crawl",
+        "status": status,
+        "started_at": started.isoformat(),
+        "finished_at": finished.isoformat(),
+        "duration_seconds": round(max(0.0, finished_monotonic - started_monotonic), 3),
+        "exit_code": 0 if status == "passed" else 1,
+        "junit_path": "",
+        "log_path": str(crawl_root),
+        "tests": len(plan_results),
+        "failures": len([plan for plan in plan_results if plan["status"] == "failed"]),
+        "errors": len([plan for plan in plan_results if plan["status"] == "error"]),
+        "skipped": 0,
+        "junit_parse_error": None,
+        "failed_tests": failed_tests,
+        "first_failed_test": first_failed_test(failed_tests),
+        "failed_pages": [],
+        "crawl_plans": plan_results,
+        "failure_classification": suite_failure_classification("crawl", status),
+        "failure_reason": suite_failure_reason("crawl", failed_tests, []),
+        "log_excerpt": "\n\n".join(plan["log_excerpt"] for plan in failed_plan_results if plan.get("log_excerpt")),
+    }
+
+
 def suite_failure_classification(suite: str, status: str) -> str | None:
     if status == "passed":
         return None
     if suite == "smoke":
         return "smoke_http_runtime_failure"
+    if suite == "crawl":
+        return "crawl_runtime_failure"
     return "phpunit_test_failure"
 
 
@@ -388,6 +764,11 @@ def suite_failure_reason(suite: str, failed_tests: list[dict], failed_pages: lis
     if suite == "smoke" and failed_pages:
         page = failed_pages[0]
         return f"Smoke page {page.get('page_id', 'unknown')} failed"
+    if suite == "crawl":
+        first = first_failed_test(failed_tests)
+        if first:
+            return f"Crawl plan {first.get('name', 'unknown')} failed"
+        return None
     first = first_failed_test(failed_tests)
     if first:
         return f"{first.get('class', '')}::{first.get('name', '')}".strip(":")
@@ -395,6 +776,35 @@ def suite_failure_reason(suite: str, failed_tests: list[dict], failed_pages: lis
 
 
 def run_suite(case: dict, suite: str, run_root: Path, test_filter: str | None, run_label: str | None) -> dict:
+    if suite == "crawl":
+        return run_crawl_suite(case, run_root, run_label)
+    if suite not in PHPUNIT_SUITES:
+        started = datetime.now(timezone.utc)
+        finished = datetime.now(timezone.utc)
+        reason = f"Unknown suite: {suite}"
+        failed_test = {"name": suite, "class": "suite", "message": reason}
+        return {
+            "suite": suite,
+            "status": "error",
+            "started_at": started.isoformat(),
+            "finished_at": finished.isoformat(),
+            "duration_seconds": 0.0,
+            "exit_code": 2,
+            "junit_path": "",
+            "log_path": "",
+            "tests": 0,
+            "failures": 0,
+            "errors": 1,
+            "skipped": 0,
+            "junit_parse_error": None,
+            "failed_tests": [failed_test],
+            "first_failed_test": failed_test,
+            "failed_pages": [],
+            "failure_classification": "phpunit_test_failure",
+            "failure_reason": reason,
+            "log_excerpt": "",
+        }
+
     runtime_sut = RUNTIME_ROOT / "cases" / case["id"] / "sut"
     junit_path = run_root / "junit" / f"{suite}.xml"
     log_path = run_root / "logs" / f"{suite}.log"
@@ -543,7 +953,8 @@ def write_markdown(path: Path, summary: dict) -> None:
             f"- `{suite['suite']}`: `{suite['status']}` "
             f"(tests={suite['tests']}, failures={suite['failures']}, errors={suite['errors']}, skipped={suite['skipped']})"
         )
-        lines.append(f"  junit: `{suite['junit_path']}`")
+        if suite.get("junit_path"):
+            lines.append(f"  junit: `{suite['junit_path']}`")
         lines.append(f"  log: `{suite['log_path']}`")
         if suite.get("failure_classification"):
             lines.append(f"  failure class: `{suite['failure_classification']}`")
@@ -554,6 +965,8 @@ def write_markdown(path: Path, summary: dict) -> None:
             lines.append(
                 f"  failed page: `{page.get('page_id', 'unknown')}` status={page.get('status_code', 'n/a')}"
             )
+        for plan in suite.get("crawl_plans", []):
+            lines.append(f"  crawl plan: `{plan['id']}` `{plan['status']}`")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -601,6 +1014,7 @@ def finalize_summary(
         "suites": case["suites"],
         "suites_run": requested_suites,
         "smoke_pages": case.get("smoke_pages", []),
+        "crawl_plans": case.get("crawl_plans", []),
         "suite_results": suite_results,
         "setup_result": setup_result,
         "started_at": started,

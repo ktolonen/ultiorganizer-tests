@@ -39,6 +39,20 @@ Read the latest summary:
 ./report:latest
 ```
 
+## Docs
+
+- [Documentation Index](docs/README.md)
+- [Architecture](docs/architecture.md)
+- [PHPUnit Suites](docs/phpunit.md)
+- [Smoke Testing](docs/smoke.md)
+- [Crawl Testing](docs/crawl.md)
+- [Matrix](docs/matrix.md)
+- [Fixtures](docs/fixtures.md)
+- [Reporting](docs/reporting.md)
+- [MCP](docs/mcp.md)
+- [Runtime](docs/runtime.md)
+- [Local Workflow](docs/local-workflow.md)
+
 ## Common commands
 
 Run just the unit suite:
@@ -57,6 +71,12 @@ Run just the smoke suite:
 
 ```sh
 ./test:smoke
+```
+
+Run just the crawl suite:
+
+```sh
+./test:crawl
 ```
 
 Run one full case:
@@ -103,7 +123,7 @@ The current matrix contains one case:
   - customization: `default`
   - config profile: `baseline`
   - fixture pack: `baseline`
-  - suites: `unit`, `integration`, `smoke`
+  - suites: `unit`, `integration`, `smoke`, `crawl`
 
 The baseline fixture is no longer only a minimal boot fixture. It now includes one current season, one valid series, one visible pool, two teams, reservations and location rows, two pool games, and minimal player/goal data so public standings and scoreboard pages render cleanly.
 
@@ -120,6 +140,33 @@ The current smoke allowlist covers these public pages:
 - `view=poolstatus&pool=200`
 
 Smoke failures are reported with the failing page id, HTTP status, response snippet, and Apache log excerpt when available.
+
+## Crawl coverage
+
+The harness also supports a case-scoped `crawl` suite for broader route discovery and artifact capture.
+
+The default case currently includes one crawl plan:
+
+- `public-follow-links`
+  - type: `follow_links`
+  - start path: `?view=frontpage`
+  - purpose: recursively follow in-scope public links from the harness-managed runtime copy
+- `public-ext-php`
+  - type: `php_files`
+  - input root: `ext`
+  - base URL: `http://127.0.0.1/ext`
+  - purpose: fetch directly addressable public extension endpoints as files
+- `superadmin-follow-links`
+  - type: `follow_links`
+  - start path: `?view=admin/serverconf`
+  - auth: `admin` / `harness-admin`
+  - purpose: crawl authenticated admin-visible pages while excluding obviously destructive database routes
+- `anonymous-sensitive-paths`
+  - type: `path_probes`
+  - purpose: probe sensitive direct-file and traversal-style URLs anonymously and assert they stay blocked
+  - current expectations: admin entrypoint redirects away, direct config/lib access is forbidden, traversal-style URLs return blocked/error responses
+
+Unlike `smoke`, which is a small deterministic allowlist, `crawl` is intended for broader probing. Crawl failures are reported at the plan level and include the plan artifact directory and raw crawler log paths.
 
 ## Using another SUT checkout
 
@@ -174,7 +221,7 @@ For the selected case, the harness will:
 6. Drop and recreate the disposable test database.
 7. Load the production schema from the SUT SQL dump.
 8. Load the harness fixture pack.
-9. Run PHPUnit for the requested suites.
+9. Run the requested suites, including PHPUnit suites and any configured crawl plans.
 10. Write setup logs, JUnit, raw logs, and summaries under `reports/`.
 
 ## Reports and artifacts
@@ -229,6 +276,7 @@ The harness currently classifies failures as:
 - `fixture_load_failure`
 - `phpunit_test_failure`
 - `smoke_http_runtime_failure`
+- `crawl_runtime_failure`
 
 ## MCP wrapper
 

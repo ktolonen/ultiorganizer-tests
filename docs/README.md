@@ -1,0 +1,26 @@
+# Documentation
+
+This directory contains short topic-oriented documents for the Ultiorganizer test harness.
+
+## Core
+
+- [Architecture](architecture.md): high-level structure, execution model, runtime boundaries, and reporting model
+- [Runtime](runtime.md): disposable runtime copy, webroot, and isolation rules
+- [Local Workflow](local-workflow.md): common local commands and worktree-oriented usage
+- [MCP](mcp.md): MCP wrapper purpose, scope, and extension rules
+- [AI Docs](ai/README.md): repo-local AI skills and helper guidance
+
+## Testing
+
+- [PHPUnit Suites](phpunit.md): `unit` and `integration` suite purpose and behavior
+- [Smoke Testing](smoke.md): deterministic public page sanity checks
+- [Crawl Testing](crawl.md): broader HTTP and security-oriented runtime probing
+
+## Test Data And Cases
+
+- [Matrix](matrix.md): case model and how to add or change cases
+- [Fixtures](fixtures.md): fixture pack purpose and design rules
+
+## Results
+
+- [Reporting](reporting.md): report locations, summary structure, and failure classes

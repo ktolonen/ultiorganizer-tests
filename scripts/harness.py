@@ -24,6 +24,8 @@ REQUIRED_SUT_PATHS = [
     "sql/ultiorganizer.sql",
     "cust/default",
 ]
+CONTAINER_ENV_PASSTHROUGH_PREFIXES = ("WGET_", "UO_CRAWL_")
+SUITE_CHOICES = ["unit", "integration", "smoke", "crawl"]
 
 
 class HarnessError(RuntimeError):
@@ -107,6 +109,14 @@ def compose_env(sut_path: str) -> dict[str, str]:
     env = os.environ.copy()
     env["UO_SUT_HOST_PATH"] = normalize_sut_path(sut_path)
     return env
+
+
+def forwarded_container_env() -> dict[str, str]:
+    forwarded: dict[str, str] = {}
+    for name, value in os.environ.items():
+        if any(name.startswith(prefix) for prefix in CONTAINER_ENV_PASSTHROUGH_PREFIXES):
+            forwarded[name] = value
+    return forwarded
 
 
 @contextmanager
@@ -247,6 +257,7 @@ def invoke_case_runner(
     env = compose_env(sut_path)
     if sut_context:
         env["UO_SUT_CONTEXT_JSON"] = json.dumps(sut_context)
+    passthrough_env = forwarded_container_env()
 
     uid = str(os.getuid())
     gid = str(os.getgid())
@@ -260,6 +271,8 @@ def invoke_case_runner(
         "-e",
         "HOME=/tmp",
     ]
+    for name, value in passthrough_env.items():
+        base.extend(["-e", f"{name}={value}"])
     if sut_context:
         base.extend(["-e", f"UO_SUT_CONTEXT_JSON={json.dumps(sut_context)}"])
     result = run(base + ["php-test"] + cmd, env=env)
@@ -569,7 +582,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     suite = subparsers.add_parser("suite")
     add_common_case_args(suite)
-    suite.add_argument("--suite", required=True, choices=["unit", "integration", "smoke"])
+    suite.add_argument("--suite", required=True, choices=SUITE_CHOICES)
     suite.add_argument("--test-filter")
     suite.set_defaults(func=cmd_suite)
 

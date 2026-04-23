@@ -132,6 +132,12 @@ INSERT INTO uo_urls (
   ('season', 'HRN2026', 'menumail', 'Harness Admin', 'admin@example.com', '2', 0, NULL, NULL),
   ('admin', '0', 'admin', 'Harness Admin', 'admin@example.com', '1', 0, NULL, NULL);
 
+INSERT INTO uo_users (
+  userid, password, name, email, last_login
+) VALUES (
+  'admin', '$2y$10$M2UtQRckO3bZAAmA8EcJceXVtZPdO1zwoW1g0glff.PstHambxtdq', 'Harness Admin', 'admin@example.com', '2026-01-01 00:00:00'
+);
+
 INSERT INTO uo_userproperties (
   userid, name, value
 ) VALUES

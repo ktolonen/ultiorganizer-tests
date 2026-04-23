@@ -7,7 +7,7 @@
       "config_profile": "baseline",
       "fixture_pack": "baseline",
       "database_name": "ultiorganizer_test",
-      "suites": ["unit", "integration", "smoke"],
+      "suites": ["unit", "integration", "smoke", "crawl"],
       "smoke_pages": [
         {"id": "frontpage", "query": "view=frontpage"},
         {"id": "seasonlist", "query": "view=seasonlist"},
@@ -16,6 +16,74 @@
         {"id": "games-tournaments", "query": "view=games&season=HRN2026&filter=tournaments&group=all"},
         {"id": "seriesstatus-open", "query": "view=seriesstatus&series=100"},
         {"id": "poolstatus-pool-a", "query": "view=poolstatus&pool=200"}
+      ],
+      "crawl_plans": [
+        {
+          "id": "public-follow-links",
+          "type": "follow_links",
+          "start_url_or_path": "?view=frontpage",
+          "max_depth": 2,
+          "max_pages": 20,
+          "max_pages_per_view": 5,
+          "max_visits_per_url": 1,
+          "reject_regex": "([?&]view=(login|logout|register|resultinput|api)([&#]|$))"
+        },
+        {
+          "id": "public-ext-php",
+          "type": "php_files",
+          "input_root": "ext",
+          "base_url": "http://127.0.0.1/ext"
+        },
+        {
+          "id": "superadmin-follow-links",
+          "type": "follow_links",
+          "start_url_or_path": "?view=admin/serverconf",
+          "auth_user": "admin",
+          "auth_pass": "harness-admin",
+          "max_depth": 3,
+          "max_pages": 80,
+          "max_pages_per_view": 3,
+          "max_visits_per_url": 1,
+          "reject_regex": "([?&]view=(login|logout|register|resultinput|api|admin/(dbadmin|dbbackup|dbequalize|dbrestore|executesql))([&#]|$))"
+        },
+        {
+          "id": "anonymous-sensitive-paths",
+          "type": "path_probes",
+          "forbidden_body_regexes": [
+            "<\\?php",
+            "DB_HOST",
+            "DB_PASSWORD",
+            "define\\s*\\(",
+            "mysqli_connect"
+          ],
+          "probes": [
+            {
+              "id": "admin-serverconf-direct",
+              "path": "/admin/serverconf.php",
+              "expected_statuses": [302]
+            },
+            {
+              "id": "config-direct",
+              "path": "/conf/config.inc.php",
+              "expected_statuses": [403, 404]
+            },
+            {
+              "id": "lib-database-direct",
+              "path": "/lib/database.php",
+              "expected_statuses": [403, 404]
+            },
+            {
+              "id": "traversal-encoded-parent",
+              "path": "/%2e%2e/conf/config.inc.php",
+              "expected_statuses": [400, 403, 404]
+            },
+            {
+              "id": "traversal-query-view",
+              "path": "/index.php?view=../../conf/config.inc.php",
+              "expected_statuses": [400, 403, 404]
+            }
+          ]
+        }
       ],
       "tags": ["default", "public-pages"]
     }
