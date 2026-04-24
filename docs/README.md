@@ -13,6 +13,8 @@ This directory contains short topic-oriented documents for the Ultiorganizer tes
 ## Testing
 
 - [PHPUnit Suites](phpunit.md): `unit` and `integration` suite purpose and behavior
+- [Per-File Lib Tests](lib-tests.md): catalog, naming convention, checkpoint status, and incremental lib-test commands
+- [Deep Coverage Readiness](lib-test-deep-coverage.md): what broader per-file coverage requires from the harness versus the SUT
 - [Smoke Testing](smoke.md): deterministic public page sanity checks
 - [Crawl Testing](crawl.md): broader HTTP and security-oriented runtime probing
 
@@ -24,3 +26,7 @@ This directory contains short topic-oriented documents for the Ultiorganizer tes
 ## Results
 
 - [Reporting](reporting.md): report locations, summary structure, and failure classes
+
+## Maintenance
+
+- [Lib Test Triage](lib-test-triage.md): changed-file failure classification for per-file lib tests

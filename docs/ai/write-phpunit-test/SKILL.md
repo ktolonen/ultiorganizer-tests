@@ -24,6 +24,8 @@ Use this skill when the task is to add or update PHPUnit coverage for:
 - `tests/Integration`
 - `tests/Smoke`
 
+For the dedicated top-level `lib/*.php` one-file-per-lib workflow, prefer `docs/ai/write-lib-file-test/SKILL.md`.
+
 This skill is for writing tests, not for broad crawl-plan changes. If the real requirement is broader HTTP discovery, authenticated route coverage, or anonymous security path checks, prefer `crawl` configuration instead of forcing that behavior into PHPUnit.
 
 ## Suite Selection

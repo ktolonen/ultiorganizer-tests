@@ -44,6 +44,7 @@ Read the latest summary:
 - [Documentation Index](docs/README.md)
 - [Architecture](docs/architecture.md)
 - [PHPUnit Suites](docs/phpunit.md)
+- [Per-File Lib Tests](docs/lib-tests.md)
 - [Smoke Testing](docs/smoke.md)
 - [Crawl Testing](docs/crawl.md)
 - [Matrix](docs/matrix.md)
@@ -52,6 +53,12 @@ Read the latest summary:
 - [MCP](docs/mcp.md)
 - [Runtime](docs/runtime.md)
 - [Local Workflow](docs/local-workflow.md)
+
+## Current Lib Coverage
+
+The per-file lib rollout is now in the incremental expansion phase. The harness currently has matching per-file tests for 15 top-level `lib/*.php` files, including pure helpers, guard files, shallow DB-backed reads, and one narrow event-log write path.
+
+This work intentionally favors shallow but trustworthy coverage. Files that still depend on broad bootstrap state, redirects, `die()`-driven control flow, or mutation-heavy legacy paths are still deferred until they can be covered without brittle assumptions.
 
 ## Common commands
 
@@ -113,6 +120,30 @@ Show log paths for one case:
 
 ```sh
 ./logs:case baseline-default
+```
+
+Refresh the per-file lib catalog:
+
+```sh
+./libtest:catalog-refresh
+```
+
+Report missing matching per-file lib tests:
+
+```sh
+./libtest:missing
+```
+
+Run one matching per-file lib test:
+
+```sh
+./libtest:run --lib-file common.functions.php
+```
+
+Scaffold one matching per-file lib test:
+
+```sh
+./libtest:scaffold --lib-file common.functions.php
 ```
 
 ## Current default case

@@ -8,6 +8,42 @@ final class LegacyApp
 {
     private static bool $bootstrapped = false;
     private static bool $databaseLoaded = false;
+    private const LIB_LOAD_PROFILES = [
+        'bootstrap_only' => [
+            'database' => false,
+            'dependencies' => [],
+        ],
+        'common_only' => [
+            'database' => false,
+            'dependencies' => ['common.functions.php'],
+        ],
+        'database_only' => [
+            'database' => true,
+            'dependencies' => [],
+        ],
+        'database_with_common' => [
+            'database' => true,
+            'dependencies' => ['common.functions.php'],
+        ],
+        'season_stack' => [
+            'database' => true,
+            'dependencies' => ['season.functions.php', 'series.functions.php', 'statistical.functions.php'],
+        ],
+        'pool_stack' => [
+            'database' => true,
+            'dependencies' => ['pool.functions.php', 'series.functions.php', 'season.functions.php', 'statistical.functions.php'],
+        ],
+        'team_stack' => [
+            'database' => true,
+            'dependencies' => [
+                'team.functions.php',
+                'pool.functions.php',
+                'series.functions.php',
+                'season.functions.php',
+                'statistical.functions.php',
+            ],
+        ],
+    ];
 
     public static function bootstrapEnvironment(): void
     {
@@ -40,53 +76,70 @@ final class LegacyApp
 
     public static function loadCommonFunctions(): void
     {
-        self::bootstrapEnvironment();
-        require_once 'lib/common.functions.php';
+        self::loadLibFileUsingProfile('common.functions.php', 'bootstrap_only');
     }
 
     public static function loadCountryFunctions(): void
     {
-        self::openDatabaseConnection();
-        require_once 'lib/country.functions.php';
+        self::loadLibFileUsingProfile('country.functions.php', 'database_only');
     }
 
     public static function loadSeasonFunctions(): void
     {
-        self::openDatabaseConnection();
-        require_once 'lib/season.functions.php';
-        require_once 'lib/series.functions.php';
-        require_once 'lib/statistical.functions.php';
+        self::loadLibFilesUsingProfile([], 'season_stack');
     }
 
     public static function loadPoolFunctions(): void
     {
-        self::openDatabaseConnection();
-        require_once 'lib/pool.functions.php';
-        require_once 'lib/series.functions.php';
-        require_once 'lib/season.functions.php';
-        require_once 'lib/statistical.functions.php';
+        self::loadLibFilesUsingProfile([], 'pool_stack');
     }
 
     public static function loadTeamFunctions(): void
     {
-        self::openDatabaseConnection();
-        require_once 'lib/team.functions.php';
-        require_once 'lib/pool.functions.php';
-        require_once 'lib/series.functions.php';
-        require_once 'lib/season.functions.php';
-        require_once 'lib/statistical.functions.php';
+        self::loadLibFilesUsingProfile([], 'team_stack');
     }
 
     public static function loadConfigurationFunctions(): void
     {
-        self::openDatabaseConnection();
-        require_once 'lib/configuration.functions.php';
+        self::loadLibFileUsingProfile('configuration.functions.php', 'database_only');
     }
 
     public static function loadUserFunctions(): void
     {
-        self::openDatabaseConnection();
-        require_once 'lib/user.functions.php';
+        self::loadLibFileUsingProfile('user.functions.php', 'database_only');
+    }
+
+    public static function loadLibFileUsingProfile(string $libFile, string $profile = 'bootstrap_only'): void
+    {
+        self::loadLibFilesUsingProfile([$libFile], $profile);
+    }
+
+    public static function loadLibFilesUsingProfile(array $libFiles, string $profile = 'bootstrap_only'): void
+    {
+        self::bootstrapEnvironment();
+        $config = self::LIB_LOAD_PROFILES[$profile] ?? null;
+        if ($config === null) {
+            throw new \InvalidArgumentException('Unknown lib load profile: ' . $profile);
+        }
+
+        if (!empty($config['database'])) {
+            self::openDatabaseConnection();
+        }
+
+        $queue = array_merge($config['dependencies'], $libFiles);
+        foreach ($queue as $libFile) {
+            self::requireTopLevelLib($libFile);
+        }
+    }
+
+    public static function requireTopLevelLib(string $libFile): void
+    {
+        self::bootstrapEnvironment();
+        $normalized = trim($libFile, '/');
+        if (str_contains($normalized, '/')) {
+            throw new \InvalidArgumentException('Expected top-level lib filename, got: ' . $libFile);
+        }
+        require_once 'lib/' . $normalized;
     }
 
     public static function openDatabaseConnection(): void

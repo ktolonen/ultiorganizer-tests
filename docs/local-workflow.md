@@ -42,6 +42,24 @@ Latest summary:
 ./report:latest
 ```
 
+Per-file lib catalog refresh:
+
+```sh
+./libtest:catalog-refresh
+```
+
+Per-file lib test gap report:
+
+```sh
+./libtest:missing
+```
+
+Run one per-file lib test:
+
+```sh
+./libtest:run --lib-file common.functions.php
+```
+
 ## Alternate SUT Checkouts
 
 The default SUT path is `../ultiorganizer`.
@@ -86,3 +104,5 @@ Use `test:quick` for frequent local feedback.
 Use `test:case` when you want the full configured case, including runtime HTTP checks and crawl plans.
 
 Use `report:case` and `logs:case` when a failure needs artifact inspection instead of just terminal output.
+
+Use `libtest:catalog-refresh`, `libtest:missing`, `libtest:scaffold`, and `libtest:run` when the change is centered on one top-level `lib/*.php` file rather than a broad harness run.

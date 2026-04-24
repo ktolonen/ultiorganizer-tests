@@ -21,6 +21,8 @@ Typical targets:
 
 Current tests live under `tests/Unit/`.
 
+Per-file lib coverage should prefer `tests/Unit/Lib/<DerivedClassName>LibTest.php`.
+
 ## Integration
 
 `integration` covers DB-backed application behavior using the disposable MariaDB schema loaded from:
@@ -35,6 +37,8 @@ Typical targets:
 - DB-backed helper functions
 
 Current tests live under `tests/Integration/`.
+
+Per-file lib coverage should prefer `tests/Integration/Lib/<DerivedClassName>LibTest.php`.
 
 ## Execution
 
@@ -64,3 +68,5 @@ Use `unit` when the behavior can be checked directly in PHP with minimal environ
 Use `integration` when correctness depends on the loaded schema, fixtures, or DB-backed application helpers.
 
 Use `smoke` or `crawl` when the meaningful check is HTTP-visible runtime behavior rather than direct PHP assertions.
+
+For top-level `lib/*.php` work, use the catalog in `config/lib-test-catalog.json` and the incremental commands documented in [Per-File Lib Tests](lib-tests.md).

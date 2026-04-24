@@ -16,6 +16,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 REPORTS_ROOT = ROOT / "reports"
 MATRIX_CONFIG = ROOT / "config" / "matrix.json"
+LIB_TEST_CATALOG = ROOT / "config" / "lib-test-catalog.json"
 LOCK_PATH = ROOT / ".runtime" / "harness.lock"
 SIBLING_DEFAULT_SUT_PATH = (ROOT.parent / "ultiorganizer").resolve()
 REQUIRED_SUT_PATHS = [
@@ -26,6 +27,65 @@ REQUIRED_SUT_PATHS = [
 ]
 CONTAINER_ENV_PASSTHROUGH_PREFIXES = ("WGET_", "UO_CRAWL_")
 SUITE_CHOICES = ["unit", "integration", "smoke", "crawl"]
+LIB_TEST_SUITES = ["unit", "integration"]
+LIB_TEST_DB_BACKED_FILES = {
+    "accreditation.functions.php",
+    "api.functions.php",
+    "club.functions.php",
+    "comment.functions.php",
+    "configuration.functions.php",
+    "country.functions.php",
+    "data.functions.php",
+    "database.maintenance.php",
+    "database.php",
+    "game.functions.php",
+    "location.functions.php",
+    "logging.functions.php",
+    "player.functions.php",
+    "pool.functions.php",
+    "reservation.functions.php",
+    "season.functions.php",
+    "seasonpoints.functions.php",
+    "series.functions.php",
+    "session.functions.php",
+    "spirit.functions.php",
+    "standings.functions.php",
+    "statistical.functions.php",
+    "swissdraw.functions.php",
+    "team.functions.php",
+    "timetable.functions.php",
+    "url.functions.php",
+    "user.functions.php",
+}
+LIB_TEST_LOAD_PROFILE_OVERRIDES = {
+    "common.functions.php": "bootstrap_only",
+    "configuration.functions.php": "database_with_common",
+    "country.functions.php": "database_only",
+    "database.php": "bootstrap_only",
+    "session.functions.php": "bootstrap_only",
+    "standings.functions.php": "bootstrap_only",
+    "team.functions.php": "team_stack",
+    "user.functions.php": "database_only",
+}
+LIB_TEST_STRATEGY_OVERRIDES = {
+    "auth.guard.php": "bootstrap_guard",
+    "database.php": "bootstrap_runtime",
+    "include_only.guard.php": "bootstrap_guard",
+    "view.guard.php": "bootstrap_guard",
+}
+LIB_TEST_NOTES = {
+    "common.functions.php": "Stable utility-heavy target for the first pure-helper checkpoint.",
+    "configuration.functions.php": "Pilot tuning showed that page-title reads also need common helper loading because utf8entities() is not declared inside the file.",
+    "country.functions.php": "Representative DB-backed helper target for baseline fixture assertions.",
+    "database.php": "Treat as bootstrap/runtime coverage first; avoid deep DB side effects until a dedicated checkpoint.",
+    "include_only.guard.php": "Guard behavior should be validated with isolated include tests instead of broad runtime assertions.",
+    "season.functions.php": "Feasible read-only target; keep first-pass coverage on deterministic season, pool, and reservation reads.",
+    "session.functions.php": "Feasible request/session helper target even though the catalog still keeps it in the integration suite for now.",
+    "standings.functions.php": "Prefer pure ranking helper coverage first; defer DB-driven standing resolution flows.",
+    "team.functions.php": "Mixed legacy-heavy pilot target; keep first-pass assertions on stable fixture reads instead of mutation-heavy branches.",
+    "logging.functions.php": "Feasible shallow target; keep coverage on event-category enumeration and direct event-log inserts.",
+    "url.functions.php": "Feasible read-only target; prefer fixture-backed URL reads and defer superadmin-only write paths.",
+}
 
 
 class HarnessError(RuntimeError):
@@ -38,6 +98,10 @@ class HarnessError(RuntimeError):
 
 def load_matrix() -> dict:
     return json.loads(MATRIX_CONFIG.read_text())
+
+
+def load_json(path: Path) -> dict:
+    return json.loads(path.read_text())
 
 
 def get_case(case_id: str) -> dict:
@@ -55,6 +119,200 @@ def default_sut_path() -> str:
 
 def normalize_sut_path(sut_path: str) -> str:
     return str(Path(sut_path).expanduser().resolve())
+
+
+def normalize_lib_file(lib_file: str) -> str:
+    normalized = lib_file.strip()
+    if normalized.startswith("lib/"):
+        normalized = normalized[4:]
+    return normalized
+
+
+def top_level_lib_files(sut_path: str) -> list[str]:
+    lib_root = Path(sut_path) / "lib"
+    return sorted(path.name for path in lib_root.glob("*.php") if path.is_file())
+
+
+def lib_subject_id(lib_file: str) -> str:
+    return normalize_lib_file(lib_file).removesuffix(".php")
+
+
+def lib_test_class_name(lib_file: str) -> str:
+    pieces = []
+    token = ""
+    for char in lib_subject_id(lib_file):
+        if char.isalnum():
+            token += char
+            continue
+        if token:
+            pieces.append(token)
+            token = ""
+    if token:
+        pieces.append(token)
+    return "".join(piece[0].upper() + piece[1:] for piece in pieces) + "LibTest"
+
+
+def infer_lib_test_suite(lib_file: str) -> str:
+    normalized = normalize_lib_file(lib_file)
+    return "integration" if normalized in LIB_TEST_DB_BACKED_FILES else "unit"
+
+
+def infer_lib_test_strategy(lib_file: str) -> str:
+    normalized = normalize_lib_file(lib_file)
+    if normalized in LIB_TEST_STRATEGY_OVERRIDES:
+        return LIB_TEST_STRATEGY_OVERRIDES[normalized]
+    if normalized.endswith(".guard.php"):
+        return "bootstrap_guard"
+    if infer_lib_test_suite(normalized) == "integration":
+        return "fixture_backed"
+    if normalized.endswith("Class.php"):
+        return "class_unit"
+    return "direct_helper"
+
+
+def infer_lib_load_profile(lib_file: str) -> str:
+    normalized = normalize_lib_file(lib_file)
+    if normalized in LIB_TEST_LOAD_PROFILE_OVERRIDES:
+        return LIB_TEST_LOAD_PROFILE_OVERRIDES[normalized]
+    if normalized.endswith(".guard.php"):
+        return "bootstrap_only"
+    if infer_lib_test_suite(normalized) == "integration":
+        return "database_only"
+    return "bootstrap_only"
+
+
+def lib_test_path(lib_file: str, suite: str) -> str:
+    suite_dir = "Unit" if suite == "unit" else "Integration"
+    return f"tests/{suite_dir}/Lib/{lib_test_class_name(lib_file)}.php"
+
+
+def lib_test_entry(
+    lib_file: str,
+    *,
+    existing_entry: dict | None = None,
+    sut_path: str | None = None,
+) -> dict:
+    normalized = normalize_lib_file(lib_file)
+    inferred_suite = infer_lib_test_suite(normalized)
+    existing_test_path = (existing_entry or {}).get("test_path")
+    existing_path_exists = bool(existing_test_path) and (ROOT / existing_test_path).is_file()
+
+    if existing_path_exists:
+        suite = (existing_entry or {}).get("test_suite") or inferred_suite
+        if suite not in LIB_TEST_SUITES:
+            suite = inferred_suite
+        test_path = existing_test_path or lib_test_path(normalized, suite)
+    else:
+        suite = inferred_suite
+        test_path = lib_test_path(normalized, suite)
+    resolved_test_path = ROOT / test_path
+    triage_status = (existing_entry or {}).get("triage_status") or "untriaged"
+    triage_notes = (existing_entry or {}).get("triage_notes") or ""
+    notes = (existing_entry or {}).get("notes") or LIB_TEST_NOTES.get(normalized, "")
+
+    entry = {
+        "lib_file": normalized,
+        "lib_path": f"lib/{normalized}",
+        "subject_id": lib_subject_id(normalized),
+        "test_suite": suite,
+        "test_path": test_path,
+        "test_class": (existing_entry or {}).get("test_class") or lib_test_class_name(normalized),
+        "strategy": (existing_entry or {}).get("strategy") or infer_lib_test_strategy(normalized),
+        "load_profile": (existing_entry or {}).get("load_profile") or infer_lib_load_profile(normalized),
+        "test_path_exists": resolved_test_path.is_file(),
+        "status": "covered" if resolved_test_path.is_file() else "missing",
+        "triage_status": triage_status,
+        "triage_notes": triage_notes,
+        "notes": notes,
+    }
+    if sut_path:
+        entry["sut_path"] = str((Path(sut_path) / "lib" / normalized).resolve())
+    return entry
+
+
+def load_lib_test_catalog() -> dict:
+    if not LIB_TEST_CATALOG.is_file():
+        raise SystemExit("No lib test catalog found. Run `./libtest:catalog-refresh` first.")
+    return load_json(LIB_TEST_CATALOG)
+
+
+def build_lib_test_catalog(sut_path: str, existing_catalog: dict | None = None) -> dict:
+    existing_entries = {
+        entry["lib_file"]: entry
+        for entry in (existing_catalog or {}).get("entries", [])
+        if entry.get("lib_file")
+    }
+    entries = [
+        lib_test_entry(lib_file, existing_entry=existing_entries.get(lib_file), sut_path=sut_path)
+        for lib_file in top_level_lib_files(sut_path)
+    ]
+    return {
+        "version": 1,
+        "sut_path": normalize_sut_path(sut_path),
+        "naming": {
+            "subject_id": "lib filename without the .php suffix",
+            "test_class_suffix": "LibTest",
+            "test_path_pattern": "tests/<Unit|Integration>/Lib/<DerivedClassName>LibTest.php",
+        },
+        "entries": entries,
+    }
+
+
+def write_lib_test_catalog(catalog: dict) -> None:
+    LIB_TEST_CATALOG.parent.mkdir(parents=True, exist_ok=True)
+    LIB_TEST_CATALOG.write_text(json.dumps(catalog, indent=2) + "\n")
+
+
+def changed_top_level_lib_files(sut_path: str) -> list[str]:
+    result = subprocess.run(
+        ["git", "-C", sut_path, "status", "--short", "--", "lib"],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    changed: set[str] = set()
+    for line in result.stdout.splitlines():
+        if len(line) < 4:
+            continue
+        rel_path = line[3:].strip()
+        if rel_path.startswith("lib/") and rel_path.count("/") == 1 and rel_path.endswith(".php"):
+            changed.add(rel_path[4:])
+    return sorted(changed)
+
+
+def render_scaffolded_lib_test(entry: dict) -> str:
+    load_line = f"        LegacyApp::loadLibFileUsingProfile('{entry['lib_file']}', '{entry['load_profile']}');"
+    tear_down = ""
+    if entry["test_suite"] == "integration":
+        tear_down = """
+    protected function tearDown(): void
+    {
+        LegacyApp::closeDatabaseConnection();
+    }
+"""
+
+    return f"""<?php
+
+declare(strict_types=1);
+
+use PHPUnit\\Framework\\TestCase;
+use UltiorganizerHarness\\Support\\LegacyApp;
+
+final class {entry['test_class']} extends TestCase
+{{
+    protected function setUp(): void
+    {{
+        LegacyApp::resetRequestState();
+{load_line}
+    }}
+{tear_down}
+    public function testAddFirstMeaningfulAssertion(): void
+    {{
+        $this->markTestIncomplete('TODO: add the first focused assertion for lib/{entry["lib_file"]}.');
+    }}
+}}
+"""
 
 
 def sanitize_label(value: str) -> str:
@@ -567,6 +825,122 @@ def cmd_logs_case(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_lib_test_catalog_refresh(args: argparse.Namespace) -> int:
+    existing_catalog = load_json(LIB_TEST_CATALOG) if LIB_TEST_CATALOG.is_file() else None
+    catalog = build_lib_test_catalog(args.sut_path, existing_catalog=existing_catalog)
+    write_lib_test_catalog(catalog)
+    payload = {
+        "status": "passed",
+        "catalog_path": str(LIB_TEST_CATALOG),
+        "sut_path": normalize_sut_path(args.sut_path),
+        "entry_count": len(catalog["entries"]),
+        "missing_count": sum(1 for entry in catalog["entries"] if not entry["test_path_exists"]),
+    }
+    print(json.dumps(payload, indent=2))
+    return 0
+
+
+def cmd_lib_test_missing(args: argparse.Namespace) -> int:
+    existing_catalog = load_json(LIB_TEST_CATALOG) if LIB_TEST_CATALOG.is_file() else None
+    catalog = build_lib_test_catalog(args.sut_path, existing_catalog=existing_catalog)
+    missing = [entry for entry in catalog["entries"] if not entry["test_path_exists"]]
+    payload = {
+        "status": "passed" if not missing else "failed",
+        "sut_path": normalize_sut_path(args.sut_path),
+        "catalog_path": str(LIB_TEST_CATALOG),
+        "missing_count": len(missing),
+        "entries": missing,
+    }
+    print(json.dumps(payload, indent=2))
+    return 0 if not missing else 1
+
+
+def select_catalog_entry(catalog: dict, lib_file: str) -> dict:
+    normalized = normalize_lib_file(lib_file)
+    for entry in catalog["entries"]:
+        if entry["lib_file"] == normalized:
+            return entry
+    raise SystemExit(f"Unknown top-level lib file: {normalized}")
+
+
+def cmd_lib_test_scaffold(args: argparse.Namespace) -> int:
+    existing_catalog = load_json(LIB_TEST_CATALOG) if LIB_TEST_CATALOG.is_file() else None
+    catalog = build_lib_test_catalog(args.sut_path, existing_catalog=existing_catalog)
+    entry = select_catalog_entry(catalog, args.lib_file)
+    target = ROOT / entry["test_path"]
+    if target.exists() and not args.force:
+        raise SystemExit(f"Matching test already exists: {entry['test_path']}")
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(render_scaffolded_lib_test(entry))
+
+    refreshed_catalog = build_lib_test_catalog(args.sut_path, existing_catalog=catalog)
+    write_lib_test_catalog(refreshed_catalog)
+    refreshed_entry = select_catalog_entry(refreshed_catalog, entry["lib_file"])
+    payload = {
+        "status": "passed",
+        "lib_file": refreshed_entry["lib_file"],
+        "test_path": refreshed_entry["test_path"],
+        "test_suite": refreshed_entry["test_suite"],
+        "strategy": refreshed_entry["strategy"],
+        "load_profile": refreshed_entry["load_profile"],
+    }
+    print(json.dumps(payload, indent=2))
+    return 0
+
+
+def cmd_lib_test_triage_status(args: argparse.Namespace) -> int:
+    existing_catalog = load_json(LIB_TEST_CATALOG) if LIB_TEST_CATALOG.is_file() else None
+    catalog = build_lib_test_catalog(args.sut_path, existing_catalog=existing_catalog)
+    if args.lib_file:
+        entries = [select_catalog_entry(catalog, args.lib_file)]
+    elif args.all:
+        entries = catalog["entries"]
+    else:
+        changed = set(changed_top_level_lib_files(args.sut_path))
+        entries = [entry for entry in catalog["entries"] if entry["lib_file"] in changed]
+
+    summary: dict[str, int] = {}
+    for entry in entries:
+        summary[entry["triage_status"]] = summary.get(entry["triage_status"], 0) + 1
+
+    payload = {
+        "status": "passed",
+        "sut_path": normalize_sut_path(args.sut_path),
+        "scope": args.lib_file or ("all" if args.all else "changed"),
+        "entry_count": len(entries),
+        "triage_summary": summary,
+        "entries": entries,
+    }
+    print(json.dumps(payload, indent=2))
+    return 0
+
+
+def cmd_lib_test_run(args: argparse.Namespace) -> int:
+    catalog = load_lib_test_catalog()
+    entry = select_catalog_entry(catalog, args.lib_file)
+    payload = run_case(
+        case_id=args.case_id,
+        sut_path=args.sut_path,
+        suites=entry["test_suite"],
+        test_filter=entry["test_class"],
+        run_label=args.run_label,
+        context_label=args.context_label,
+        pr_number=args.pr_number,
+        pr_head_ref=args.pr_head_ref,
+        pr_base_ref=args.pr_base_ref,
+    )
+    result = {
+        "lib_file": entry["lib_file"],
+        "test_suite": entry["test_suite"],
+        "test_class": entry["test_class"],
+        "test_path": entry["test_path"],
+        "run": payload,
+    }
+    print(json.dumps(result, indent=2))
+    return 0 if payload["status"] == "passed" else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -626,6 +1000,31 @@ def build_parser() -> argparse.ArgumentParser:
     logs_case_parser.add_argument("--case-id", required=True)
     logs_case_parser.add_argument("--context-label")
     logs_case_parser.set_defaults(func=cmd_logs_case)
+
+    lib_catalog_refresh = subparsers.add_parser("lib-test-catalog-refresh")
+    lib_catalog_refresh.add_argument("--sut-path", default=default_sut_path())
+    lib_catalog_refresh.set_defaults(func=cmd_lib_test_catalog_refresh)
+
+    lib_missing = subparsers.add_parser("lib-test-missing")
+    lib_missing.add_argument("--sut-path", default=default_sut_path())
+    lib_missing.set_defaults(func=cmd_lib_test_missing)
+
+    lib_scaffold = subparsers.add_parser("lib-test-scaffold")
+    lib_scaffold.add_argument("--sut-path", default=default_sut_path())
+    lib_scaffold.add_argument("--lib-file", required=True)
+    lib_scaffold.add_argument("--force", action="store_true")
+    lib_scaffold.set_defaults(func=cmd_lib_test_scaffold)
+
+    lib_triage = subparsers.add_parser("lib-test-triage-status")
+    lib_triage.add_argument("--sut-path", default=default_sut_path())
+    lib_triage.add_argument("--lib-file")
+    lib_triage.add_argument("--all", action="store_true")
+    lib_triage.set_defaults(func=cmd_lib_test_triage_status)
+
+    lib_run = subparsers.add_parser("lib-test-run")
+    add_common_case_args(lib_run)
+    lib_run.add_argument("--lib-file", required=True)
+    lib_run.set_defaults(func=cmd_lib_test_run)
 
     return parser
 
