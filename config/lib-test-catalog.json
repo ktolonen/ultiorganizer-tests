@@ -8,22 +8,6 @@
   },
   "entries": [
     {
-      "lib_file": "HSVClass.php",
-      "lib_path": "lib/HSVClass.php",
-      "subject_id": "HSVClass",
-      "test_suite": "unit",
-      "test_path": "tests/Unit/Lib/HSVClassLibTest.php",
-      "test_class": "HSVClassLibTest",
-      "strategy": "class_unit",
-      "load_profile": "bootstrap_only",
-      "test_path_exists": true,
-      "status": "covered",
-      "triage_status": "untriaged",
-      "triage_notes": "",
-      "notes": "",
-      "sut_path": "/home/kari/dev/ultiorganizer/lib/HSVClass.php"
-    },
-    {
       "lib_file": "accreditation.functions.php",
       "lib_path": "lib/accreditation.functions.php",
       "subject_id": "accreditation.functions",

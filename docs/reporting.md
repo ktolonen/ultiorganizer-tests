@@ -22,6 +22,7 @@ Per-run artifacts live under:
 A run may contain:
 
 - `logs/`: setup log and per-suite raw logs
+- `logs/apache-error.log`: new Apache/PHP error-log content captured during the run
 - `junit/`: JUnit XML for PHPUnit suites
 - `crawl/`: per-plan crawl artifacts
 - `summary/summary.json`: canonical machine-readable summary
@@ -40,8 +41,17 @@ The JSON summary includes:
 - failure reason
 - first failed test when relevant
 - failed smoke page details when relevant
+- run-level Apache/PHP error-log metadata and excerpt
 - SUT git context and optional PR metadata
 - artifact paths
+
+The Apache/PHP error-log data is grouped under `runtime_logs.apache_error_log` and includes:
+
+- source path inside the container
+- captured artifact path under `reports/.../logs/apache-error.log`
+- whether new log content was detected during the run
+- whether the captured delta matches common PHP issue patterns
+- a short excerpt for report rendering
 
 ## Context Labels
 
@@ -73,4 +83,4 @@ Common commands:
 - `./report:case <case-id>`
 - `./logs:case <case-id>`
 
-Use the JSON summaries for automation and the Markdown summary plus raw logs for manual debugging.
+Use the JSON summaries for automation and the Markdown summary plus raw logs for manual debugging. When smoke or crawl failures are unclear, check the captured `apache_error_log` path from `./logs:case` or from `artifact_paths.apache_error_log` in the summary.

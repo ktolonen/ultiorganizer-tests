@@ -636,6 +636,9 @@ def logs_case(case_id: str, context_label: str | None = None) -> dict:
     setup_result = summary.get("setup_result") or {}
     if setup_result.get("log_path"):
         logs["setup"] = setup_result["log_path"]
+    apache_error_log = ((summary.get("runtime_logs") or {}).get("apache_error_log") or {}).get("artifact_path")
+    if apache_error_log:
+        logs["apache_error_log"] = apache_error_log
     for suite in summary.get("suite_results", []):
         logs[suite["suite"]] = suite["log_path"]
     return {

@@ -105,4 +105,6 @@ Use `test:case` when you want the full configured case, including runtime HTTP c
 
 Use `report:case` and `logs:case` when a failure needs artifact inspection instead of just terminal output.
 
+`logs:case` now also includes the run-level Apache/PHP error-log artifact. Check that path when a request failed without a clear PHPUnit assertion message or when runtime warnings only appeared in Apache logs.
+
 Use `libtest:catalog-refresh`, `libtest:missing`, `libtest:scaffold`, and `libtest:run` when the change is centered on one top-level `lib/*.php` file rather than a broad harness run.

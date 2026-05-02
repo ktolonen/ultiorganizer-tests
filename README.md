@@ -60,6 +60,8 @@ The per-file lib rollout is now in the incremental expansion phase. The harness 
 
 This work intentionally favors shallow but trustworthy coverage. Files that still depend on broad bootstrap state, redirects, `die()`-driven control flow, or mutation-heavy legacy paths are still deferred until they can be covered without brittle assumptions.
 
+Run artifacts now also include a captured Apache/PHP error-log delta for each case run under the normal `reports/.../logs/` tree, and `./logs:case` exposes that path alongside suite logs.
+
 ## Common commands
 
 Run just the unit suite:

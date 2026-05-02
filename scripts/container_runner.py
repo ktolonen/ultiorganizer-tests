@@ -30,6 +30,7 @@ FIXTURE_DIR = WORKSPACE / "fixtures"
 APACHE_ERROR_LOG = Path("/var/log/apache2/error.log")
 PHPUNIT_SUITES = {"unit", "integration", "smoke"}
 CrawlFailure = dict[str, object]
+PHP_ERROR_LOG_ISSUE_PATTERN = re.compile(r"PHP (Fatal error|Parse error|Warning|Notice)", re.IGNORECASE)
 
 
 class RunnerFailure(RuntimeError):
@@ -91,6 +92,45 @@ def append_log(path: Path, heading: str, content: str) -> None:
 
 def command_output(result: subprocess.CompletedProcess[str]) -> str:
     return ((result.stdout or "") + (result.stderr or "")).strip()
+
+
+def apache_error_log_offset() -> int:
+    if not APACHE_ERROR_LOG.is_file():
+        return 0
+    return APACHE_ERROR_LOG.stat().st_size
+
+
+def read_apache_error_log_delta(offset: int) -> str:
+    if not APACHE_ERROR_LOG.is_file():
+        return ""
+
+    current_size = APACHE_ERROR_LOG.stat().st_size
+    start = offset if current_size >= offset else 0
+    with APACHE_ERROR_LOG.open("r", encoding="utf-8", errors="replace") as handle:
+        handle.seek(start)
+        return handle.read()
+
+
+def text_excerpt(value: str, *, lines: int = 40, limit: int = 1200) -> str:
+    content = value.strip()
+    if not content:
+        return ""
+    excerpt = "\n".join(content.splitlines()[-lines:])
+    return excerpt[:limit]
+
+
+def capture_apache_error_log_artifact(run_root: Path, offset: int) -> dict:
+    artifact_path = run_root / "logs" / "apache-error.log"
+    delta = read_apache_error_log_delta(offset)
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_text(delta, encoding="utf-8")
+    return {
+        "source_path": str(APACHE_ERROR_LOG),
+        "artifact_path": str(artifact_path),
+        "detected": bool(delta.strip()),
+        "php_issue_detected": bool(PHP_ERROR_LOG_ISSUE_PATTERN.search(delta)),
+        "excerpt": text_excerpt(delta),
+    }
 
 
 def load_sut_context() -> dict:
@@ -900,6 +940,7 @@ def git_value(args: list[str]) -> str:
 
 def write_markdown(path: Path, summary: dict) -> None:
     sut_context = summary.get("sut_context") or {}
+    apache_error_log = (summary.get("runtime_logs") or {}).get("apache_error_log") or {}
     lines = [
         f"# Test Summary: {summary['case_id']}",
         "",
@@ -944,6 +985,20 @@ def write_markdown(path: Path, summary: dict) -> None:
         lines.append(f"- failure class: `{summary['setup_result']['failure_classification']}`")
     if summary["setup_result"].get("failure_reason"):
         lines.append(f"- failure reason: `{summary['setup_result']['failure_reason']}`")
+
+    lines.extend(["", "## Runtime Logs", ""])
+    if apache_error_log:
+        lines.append(f"- apache/php error source: `{apache_error_log.get('source_path', '')}`")
+        lines.append(f"- apache/php error artifact: `{apache_error_log.get('artifact_path', '')}`")
+        lines.append(f"- new log content detected: `{apache_error_log.get('detected', False)}`")
+        lines.append(f"- php issue pattern detected: `{apache_error_log.get('php_issue_detected', False)}`")
+        if apache_error_log.get("excerpt"):
+            lines.append("")
+            lines.append("```text")
+            lines.append(apache_error_log["excerpt"])
+            lines.append("```")
+    else:
+        lines.append("- No runtime log metadata recorded")
 
     lines.extend(["", "## Suites", ""])
     if not summary["suite_results"]:
@@ -994,6 +1049,7 @@ def finalize_summary(
     run_root: Path,
     run_label: str | None,
     setup_result: dict,
+    runtime_logs: dict,
 ) -> dict:
     sut_context = load_sut_context()
     started = setup_result["started_at"]
@@ -1029,11 +1085,13 @@ def finalize_summary(
         "failure_reason": failure_reason,
         "first_failed_test": failing_suite.get("first_failed_test") if failing_suite else None,
         "failed_pages": failing_suite.get("failed_pages", []) if failing_suite else [],
+        "runtime_logs": runtime_logs,
         "artifact_paths": {
             "case_root": str(run_root),
             "summary_json": str(run_root / "summary" / "summary.json"),
             "summary_md": str(run_root / "summary" / "summary.md"),
             "setup_log": setup_result["log_path"],
+            "apache_error_log": runtime_logs.get("apache_error_log", {}).get("artifact_path", ""),
             "latest_json": str(REPORTS_ROOT / "summary" / "latest.json"),
             "latest_failed_json": str(REPORTS_ROOT / "summary" / "latest-failed.json"),
             "case_latest_json": str(REPORTS_ROOT / "cases" / case["id"] / "latest.json"),
@@ -1089,6 +1147,7 @@ def cmd_run_case(args: argparse.Namespace) -> int:
     (run_root / "logs").mkdir(parents=True, exist_ok=True)
     (run_root / "summary").mkdir(parents=True, exist_ok=True)
     setup_log_path = run_root / "logs" / "setup.log"
+    apache_error_log_start = apache_error_log_offset()
 
     setup_started = datetime.now(timezone.utc)
     setup_started_monotonic = time.monotonic()
@@ -1123,7 +1182,20 @@ def cmd_run_case(args: argparse.Namespace) -> int:
         for suite in requested_suites:
             suite_results.append(run_suite(case, suite, run_root, args.test_filter, args.run_label))
 
-    summary = finalize_summary(case, profile, requested_suites, suite_results, run_root, args.run_label, setup_result)
+    runtime_logs = {
+        "apache_error_log": capture_apache_error_log_artifact(run_root, apache_error_log_start),
+    }
+
+    summary = finalize_summary(
+        case,
+        profile,
+        requested_suites,
+        suite_results,
+        run_root,
+        args.run_label,
+        setup_result,
+        runtime_logs,
+    )
     print(json.dumps(summary))
     return 0 if summary["status"] == "passed" else 1
 
