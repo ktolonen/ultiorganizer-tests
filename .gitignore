@@ -1,4 +1,7 @@
 .runtime/
+.codex
+.codex/
+node_modules/
 vendor/
 reports/**
 !reports/.gitkeep
