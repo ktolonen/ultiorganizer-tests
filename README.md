@@ -39,6 +39,18 @@ Read the latest summary:
 ./report:latest
 ```
 
+Build the browser report index:
+
+```sh
+./report:html
+```
+
+Prune older report runs while keeping the newest 20:
+
+```sh
+./report:clean --keep 20
+```
+
 ## Docs
 
 - [Documentation Index](docs/README.md)
@@ -122,6 +134,24 @@ Show log paths for one case:
 
 ```sh
 ./logs:case baseline-default
+```
+
+Build `reports/index.html` with an index of all recorded runs and a detail view:
+
+```sh
+./report:html
+```
+
+Preview report cleanup without deleting anything:
+
+```sh
+./report:clean --keep 20 --dry-run
+```
+
+Delete older report run directories and rebuild `reports/index.html`:
+
+```sh
+./report:clean --keep 20
 ```
 
 Refresh the per-file lib catalog:

@@ -60,6 +60,9 @@ The case summary includes one result entry per crawl plan with:
 - artifact root
 - plan-specific details such as downloaded page count or failed probes
 
+If a crawler helper fails before it can write its own log, such as when the helper script is missing, the harness writes a startup-failure log at the same per-plan `log_path`.
+That log includes the command, exit code, and captured process output.
+
 ## When To Use
 
 Use `crawl` when you want:

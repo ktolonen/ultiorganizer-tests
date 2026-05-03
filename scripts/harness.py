@@ -6,6 +6,7 @@ import argparse
 import fcntl
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -641,12 +642,638 @@ def logs_case(case_id: str, context_label: str | None = None) -> dict:
         logs["apache_error_log"] = apache_error_log
     for suite in summary.get("suite_results", []):
         logs[suite["suite"]] = suite["log_path"]
+        if suite.get("suite") == "crawl":
+            for plan in suite.get("crawl_plans", []):
+                plan_id = plan.get("id", "crawl-plan")
+                if plan.get("log_path"):
+                    logs[f"crawl:{plan_id}"] = plan["log_path"]
     return {
         "case_id": case_id,
         "context_label": summary.get("context_label", ""),
         "status": summary["status"],
         "failure_classification": summary.get("failure_classification"),
         "logs": logs,
+    }
+
+
+def report_summary_files() -> list[Path]:
+    return sorted(REPORTS_ROOT.glob("cases/*/*/summary/summary.json"))
+
+
+def report_artifact_href(path_value: str | None) -> str:
+    if not path_value:
+        return ""
+    normalized = path_value.replace("\\", "/")
+    marker = "/reports/"
+    if marker in normalized:
+        return normalized.split(marker, 1)[1]
+    reports_prefix = "reports/"
+    if normalized.startswith(reports_prefix):
+        return normalized[len(reports_prefix) :]
+    return normalized
+
+
+def report_host_path(path_value: str) -> Path:
+    normalized = path_value.replace("\\", "/")
+    marker = "/reports/"
+    if marker in normalized:
+        return REPORTS_ROOT / normalized.split(marker, 1)[1]
+    reports_prefix = "reports/"
+    if normalized.startswith(reports_prefix):
+        return REPORTS_ROOT / normalized[len(reports_prefix) :]
+    return Path(path_value)
+
+
+def report_run_record(summary_path: Path) -> dict:
+    summary = load_json(summary_path)
+    run_root = summary_path.parents[1]
+    run_id = run_root.name
+    case_id = run_root.parent.name
+    suite_results = summary.get("suite_results") or []
+    totals = {
+        "tests": sum(int(suite.get("tests") or 0) for suite in suite_results),
+        "failures": sum(int(suite.get("failures") or 0) for suite in suite_results),
+        "errors": sum(int(suite.get("errors") or 0) for suite in suite_results),
+        "skipped": sum(int(suite.get("skipped") or 0) for suite in suite_results),
+    }
+    artifacts = dict(summary.get("artifact_paths") or {})
+    artifacts["summary_json"] = str(summary_path)
+    artifacts["summary_md"] = str(summary_path.with_suffix(".md"))
+    artifact_links = {
+        key: report_artifact_href(value)
+        for key, value in artifacts.items()
+        if isinstance(value, str) and value
+    }
+    for suite in suite_results:
+        suite_name = suite.get("suite")
+        if suite_name:
+            artifact_links[f"{suite_name}_log"] = report_artifact_href(suite.get("log_path"))
+            artifact_links[f"{suite_name}_junit"] = report_artifact_href(suite.get("junit_path"))
+        if suite_name == "crawl":
+            for plan in suite.get("crawl_plans", []):
+                plan_id = plan.get("id", "crawl-plan")
+                artifact_links[f"crawl:{plan_id}_log"] = report_artifact_href(plan.get("log_path"))
+
+    return {
+        "run_id": run_id,
+        "case_id": case_id,
+        "summary_path": str(summary_path.relative_to(REPORTS_ROOT)),
+        "summary_href": report_artifact_href(str(summary_path)),
+        "summary_md_href": report_artifact_href(str(summary_path.with_suffix(".md"))),
+        "status": summary.get("status", "unknown"),
+        "started_at": summary.get("started_at", ""),
+        "finished_at": summary.get("finished_at", ""),
+        "duration_seconds": round(float(summary.get("duration_seconds") or 0), 3)
+        if summary.get("duration_seconds") is not None
+        else None,
+        "context_label": summary.get("context_label", ""),
+        "run_label": summary.get("run_label", ""),
+        "branch": summary.get("branch", ""),
+        "commit_sha": summary.get("commit_sha", ""),
+        "failure_classification": summary.get("failure_classification"),
+        "failure_reason": summary.get("failure_reason"),
+        "first_failed_test": summary.get("first_failed_test"),
+        "failed_pages": summary.get("failed_pages") or [],
+        "suites_run": summary.get("suites_run") or [],
+        "suite_results": suite_results,
+        "setup_result": summary.get("setup_result"),
+        "runtime_logs": summary.get("runtime_logs"),
+        "crawl_plans": summary.get("crawl_plans") or [],
+        "totals": totals,
+        "artifact_links": artifact_links,
+        "summary": summary,
+    }
+
+
+def build_report_html(records: list[dict]) -> str:
+    data_json = (
+        json.dumps(records, ensure_ascii=False)
+        .replace("&", "\\u0026")
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+    )
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ultiorganizer Test Reports</title>
+  <style>
+    :root {{
+      color-scheme: light;
+      --bg: #f6f7f9;
+      --panel: #ffffff;
+      --line: #d8dde6;
+      --text: #17202a;
+      --muted: #657386;
+      --pass: #1f7a43;
+      --fail: #b42318;
+      --warn: #9a6700;
+      --chip: #eef2f7;
+      --accent: #2458a6;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 14px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }}
+    header {{
+      border-bottom: 1px solid var(--line);
+      background: var(--panel);
+      padding: 18px 24px;
+    }}
+    h1, h2, h3 {{ margin: 0; letter-spacing: 0; }}
+    h1 {{ font-size: 22px; }}
+    h2 {{ font-size: 18px; }}
+    h3 {{ font-size: 15px; }}
+    main {{
+      display: grid;
+      grid-template-columns: minmax(420px, 0.95fr) minmax(480px, 1.25fr);
+      gap: 18px;
+      padding: 18px;
+      max-width: 1680px;
+      margin: 0 auto;
+    }}
+    .panel {{
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      min-width: 0;
+    }}
+    .toolbar {{
+      display: grid;
+      grid-template-columns: 1fr 150px 150px;
+      gap: 10px;
+      padding: 14px;
+      border-bottom: 1px solid var(--line);
+    }}
+    input, select {{
+      width: 100%;
+      min-height: 36px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 7px 9px;
+      background: #fff;
+      color: var(--text);
+      font: inherit;
+    }}
+    table {{
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }}
+    th, td {{
+      border-bottom: 1px solid var(--line);
+      padding: 9px 10px;
+      text-align: left;
+      vertical-align: top;
+      overflow-wrap: anywhere;
+    }}
+    th {{
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
+      background: #fbfcfe;
+    }}
+    tr.run-row {{ cursor: pointer; }}
+    tr.run-row:hover, tr.run-row.active {{ background: #edf4ff; }}
+    .status {{
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-weight: 700;
+      font-size: 12px;
+      text-transform: uppercase;
+    }}
+    .passed {{ color: var(--pass); background: #e8f5ed; }}
+    .failed, .error {{ color: var(--fail); background: #fdeceb; }}
+    .unknown {{ color: var(--warn); background: #fff5d6; }}
+    .detail {{
+      padding: 16px;
+    }}
+    .meta-grid {{
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin: 14px 0;
+    }}
+    .metric {{
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+      background: #fbfcfe;
+    }}
+    .metric .label {{
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 4px;
+    }}
+    .metric .value {{
+      font-size: 18px;
+      font-weight: 750;
+      overflow-wrap: anywhere;
+    }}
+    .section {{
+      margin-top: 16px;
+      padding-top: 14px;
+      border-top: 1px solid var(--line);
+    }}
+    .suite-list {{
+      display: grid;
+      gap: 8px;
+    }}
+    .suite {{
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+      background: #fff;
+    }}
+    .suite-head {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 8px;
+    }}
+    .kv {{
+      display: grid;
+      grid-template-columns: 160px 1fr;
+      gap: 6px 12px;
+      margin: 8px 0;
+    }}
+    .key {{ color: var(--muted); }}
+    .chips {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }}
+    .chip {{
+      background: var(--chip);
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 3px 8px;
+      font-size: 12px;
+    }}
+    a {{ color: var(--accent); text-decoration: none; }}
+    a:hover {{ text-decoration: underline; }}
+    pre {{
+      max-height: 360px;
+      overflow: auto;
+      margin: 8px 0 0;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #101828;
+      color: #eef4ff;
+      font-size: 12px;
+    }}
+    details {{ margin-top: 10px; }}
+    summary {{ cursor: pointer; font-weight: 650; }}
+    .empty {{
+      padding: 24px;
+      color: var(--muted);
+    }}
+    @media (max-width: 1040px) {{
+      main {{ grid-template-columns: 1fr; }}
+      .toolbar {{ grid-template-columns: 1fr; }}
+      .meta-grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+    }}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Ultiorganizer Test Reports</h1>
+  </header>
+  <main>
+    <section class="panel">
+      <div class="toolbar">
+        <input id="search" type="search" placeholder="Filter by run, case, branch, status, reason">
+        <select id="statusFilter" aria-label="Status filter">
+          <option value="">All statuses</option>
+          <option value="passed">Passed</option>
+          <option value="failed">Failed</option>
+        </select>
+        <select id="caseFilter" aria-label="Case filter"></select>
+      </div>
+      <div id="runs"></div>
+    </section>
+    <section class="panel detail" id="detail"></section>
+  </main>
+  <script id="report-data" type="application/json">{data_json}</script>
+  <script>
+    const records = JSON.parse(document.getElementById('report-data').textContent);
+    const state = {{ selected: 0, query: '', status: '', caseId: '' }};
+    const runsEl = document.getElementById('runs');
+    const detailEl = document.getElementById('detail');
+    const searchEl = document.getElementById('search');
+    const statusEl = document.getElementById('statusFilter');
+    const caseEl = document.getElementById('caseFilter');
+
+    function esc(value) {{
+      return String(value ?? '').replace(/[&<>"']/g, char => ({{
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+      }}[char]));
+    }}
+
+    function statusClass(status) {{
+      return ['passed', 'failed', 'error'].includes(status) ? status : 'unknown';
+    }}
+
+    function statusBadge(status) {{
+      const value = status || 'unknown';
+      return `<span class="status ${{statusClass(value)}}">${{esc(value)}}</span>`;
+    }}
+
+    function shortSha(value) {{
+      return value ? String(value).slice(0, 12) : '';
+    }}
+
+    function formatDate(value) {{
+      if (!value) return '';
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+    }}
+
+    function matches(record) {{
+      if (state.status && record.status !== state.status) return false;
+      if (state.caseId && record.case_id !== state.caseId) return false;
+      if (!state.query) return true;
+      const haystack = [
+        record.run_id, record.case_id, record.status, record.branch, record.context_label,
+        record.run_label, record.failure_classification, record.failure_reason
+      ].join(' ').toLowerCase();
+      return haystack.includes(state.query.toLowerCase());
+    }}
+
+    function filteredRecords() {{
+      return records.filter(matches);
+    }}
+
+    function renderRuns() {{
+      const visible = filteredRecords();
+      if (!visible.length) {{
+        runsEl.innerHTML = '<div class="empty">No runs match the current filters.</div>';
+        detailEl.innerHTML = '<div class="empty">Select a run to inspect details.</div>';
+        return;
+      }}
+      if (!visible.includes(records[state.selected])) {{
+        state.selected = records.indexOf(visible[0]);
+      }}
+      const rows = visible.map(record => {{
+        const index = records.indexOf(record);
+        const active = index === state.selected ? ' active' : '';
+        const totals = record.totals || {{}};
+        const reason = record.failure_reason || record.suites_run.join(', ');
+        return `<tr class="run-row${{active}}" data-index="${{index}}">
+          <td>${{statusBadge(record.status)}}</td>
+          <td><strong>${{esc(record.run_id)}}</strong><br><span class="key">${{esc(formatDate(record.started_at))}}</span></td>
+          <td>${{esc(record.case_id)}}<br><span class="key">${{esc(record.context_label || '')}}</span></td>
+          <td>${{esc(record.branch || '')}}<br><span class="key">${{esc(shortSha(record.commit_sha))}}</span></td>
+          <td>${{esc(totals.tests || 0)}} tests<br><span class="key">${{esc(reason || '')}}</span></td>
+        </tr>`;
+      }}).join('');
+      runsEl.innerHTML = `<table>
+        <thead><tr><th style="width:92px">Status</th><th>Run</th><th>Case</th><th>Branch</th><th>Result</th></tr></thead>
+        <tbody>${{rows}}</tbody>
+      </table>`;
+      for (const row of runsEl.querySelectorAll('.run-row')) {{
+        row.addEventListener('click', () => {{
+          state.selected = Number(row.dataset.index);
+          renderRuns();
+          renderDetail();
+        }});
+      }}
+      renderDetail();
+    }}
+
+    function link(label, href) {{
+      return href ? `<a href="${{esc(href)}}">${{esc(label)}}</a>` : '';
+    }}
+
+    function renderKeyValues(items) {{
+      return `<div class="kv">${{items.map(([key, value]) =>
+        `<div class="key">${{esc(key)}}</div><div>${{value}}</div>`
+      ).join('')}}</div>`;
+    }}
+
+    function renderSuite(suite, links) {{
+      const name = suite.suite || 'suite';
+      const failed = suite.failed_tests || [];
+      const crawlPlans = suite.crawl_plans || [];
+      return `<div class="suite">
+        <div class="suite-head"><h3>${{esc(name)}}</h3>${{statusBadge(suite.status)}}</div>
+        ${{renderKeyValues([
+          ['Tests', esc(suite.tests ?? 0)],
+          ['Failures', esc(suite.failures ?? 0)],
+          ['Errors', esc(suite.errors ?? 0)],
+          ['Skipped', esc(suite.skipped ?? 0)],
+          ['Duration', esc((suite.duration_seconds ?? 0) + 's')],
+          ['Artifacts', [link('log', links[name + '_log']), link('junit', links[name + '_junit'])].filter(Boolean).join(' | ') || '']
+        ])}}
+        ${{suite.failure_reason ? `<div><strong>Failure:</strong> ${{esc(suite.failure_reason)}}</div>` : ''}}
+        ${{crawlPlans.length ? `<div class="suite-list">${{crawlPlans.map(plan => `
+          <div class="suite">
+            <div class="suite-head"><h3>${{esc(plan.id)}}</h3>${{statusBadge(plan.status)}}</div>
+            ${{renderKeyValues([
+              ['Type', esc(plan.type || '')],
+              ['Exit code', esc(plan.exit_code ?? '')],
+              ['Duration', esc((plan.duration_seconds ?? 0) + 's')],
+              ['Log', link('log', links['crawl:' + plan.id + '_log'])],
+              ['Artifacts', esc(plan.artifact_root || '')],
+              ['Failure', esc(plan.failure_reason || '')]
+            ])}}
+            ${{plan.log_excerpt ? `<details open><summary>Log excerpt</summary><pre>${{esc(plan.log_excerpt)}}</pre></details>` : ''}}
+          </div>
+        `).join('')}}</div>` : ''}}
+        ${{failed.length ? `<details open><summary>Failed tests</summary><pre>${{esc(JSON.stringify(failed, null, 2))}}</pre></details>` : ''}}
+        ${{suite.log_excerpt ? `<details open><summary>Log excerpt</summary><pre>${{esc(suite.log_excerpt)}}</pre></details>` : ''}}
+      </div>`;
+    }}
+
+    function renderDetail() {{
+      const record = records[state.selected];
+      if (!record) {{
+        detailEl.innerHTML = '<div class="empty">Select a run to inspect details.</div>';
+        return;
+      }}
+      const totals = record.totals || {{}};
+      const links = record.artifact_links || {{}};
+      const runtimeLog = ((record.runtime_logs || {{}}).apache_error_log || {{}});
+      const failedPages = record.failed_pages || [];
+      detailEl.innerHTML = `
+        <div class="suite-head">
+          <h2>${{esc(record.case_id)}} / ${{esc(record.run_id)}}</h2>
+          ${{statusBadge(record.status)}}
+        </div>
+        <div class="meta-grid">
+          <div class="metric"><div class="label">Tests</div><div class="value">${{esc(totals.tests || 0)}}</div></div>
+          <div class="metric"><div class="label">Failures</div><div class="value">${{esc(totals.failures || 0)}}</div></div>
+          <div class="metric"><div class="label">Errors</div><div class="value">${{esc(totals.errors || 0)}}</div></div>
+          <div class="metric"><div class="label">Skipped</div><div class="value">${{esc(totals.skipped || 0)}}</div></div>
+        </div>
+        ${{renderKeyValues([
+          ['Started', esc(formatDate(record.started_at))],
+          ['Finished', esc(formatDate(record.finished_at))],
+          ['Branch', esc(record.branch || '')],
+          ['Commit', esc(record.commit_sha || '')],
+          ['Context', esc(record.context_label || '')],
+          ['Run label', esc(record.run_label || '')],
+          ['Summary', [link('json', record.summary_href), link('markdown', record.summary_md_href)].filter(Boolean).join(' | ')],
+          ['Failure class', esc(record.failure_classification || '')],
+          ['Failure reason', esc(record.failure_reason || '')]
+        ])}}
+        <div class="section">
+          <h3>Suites</h3>
+          <div class="suite-list">${{(record.suite_results || []).map(suite => renderSuite(suite, links)).join('') || '<div class="empty">No suites were recorded.</div>'}}</div>
+        </div>
+        ${{failedPages.length ? `<div class="section"><h3>Failed Smoke Pages</h3><pre>${{esc(JSON.stringify(failedPages, null, 2))}}</pre></div>` : ''}}
+        ${{runtimeLog.detected ? `<div class="section"><h3>Apache/PHP Error Log</h3>${{renderKeyValues([
+          ['PHP issue detected', esc(runtimeLog.php_issue_detected)],
+          ['Artifact', link('apache-error.log', links.apache_error_log)]
+        ])}}${{runtimeLog.excerpt ? `<pre>${{esc(runtimeLog.excerpt)}}</pre>` : ''}}</div>` : ''}}
+        <div class="section">
+          <h3>Artifacts</h3>
+          <div class="chips">${{Object.entries(links).map(([key, href]) => `<span class="chip">${{link(key, href)}}</span>`).join('')}}</div>
+        </div>
+        <div class="section">
+          <details><summary>Raw Summary JSON</summary><pre>${{esc(JSON.stringify(record.summary, null, 2))}}</pre></details>
+        </div>
+      `;
+    }}
+
+    function populateCaseFilter() {{
+      const cases = Array.from(new Set(records.map(record => record.case_id))).sort();
+      caseEl.innerHTML = '<option value="">All cases</option>' + cases.map(caseId => `<option value="${{esc(caseId)}}">${{esc(caseId)}}</option>`).join('');
+    }}
+
+    searchEl.addEventListener('input', event => {{
+      state.query = event.target.value;
+      renderRuns();
+    }});
+    statusEl.addEventListener('change', event => {{
+      state.status = event.target.value;
+      renderRuns();
+    }});
+    caseEl.addEventListener('change', event => {{
+      state.caseId = event.target.value;
+      renderRuns();
+    }});
+
+    populateCaseFilter();
+    renderRuns();
+  </script>
+</body>
+</html>
+"""
+
+
+def write_report_html(output_path: Path | None = None) -> dict:
+    output_path = output_path or REPORTS_ROOT / "index.html"
+    records = [report_run_record(path) for path in report_summary_files()]
+    records.sort(key=lambda record: (record.get("started_at") or "", record.get("run_id") or ""), reverse=True)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(build_report_html(records))
+    return {
+        "status": "passed",
+        "report_html": str(output_path),
+        "run_count": len(records),
+    }
+
+
+def report_run_cleanup_candidates(case_id: str | None = None) -> list[dict]:
+    candidates = []
+    for summary_path in report_summary_files():
+        run_root = summary_path.parents[1]
+        run_case_id = run_root.parent.name
+        if case_id and run_case_id != case_id:
+            continue
+        try:
+            summary = load_json(summary_path)
+        except json.JSONDecodeError:
+            summary = {}
+        candidates.append(
+            {
+                "case_id": run_case_id,
+                "run_id": run_root.name,
+                "run_root": run_root,
+                "started_at": summary.get("started_at", ""),
+                "status": summary.get("status", "unknown"),
+            }
+        )
+    candidates.sort(key=lambda item: (item["started_at"], item["run_id"]), reverse=True)
+    return candidates
+
+
+def prune_stale_report_pointers(deleted_roots: set[Path], dry_run: bool = False) -> list[str]:
+    stale = []
+    for pointer in REPORTS_ROOT.glob("**/*.json"):
+        if "/summary/" in pointer.as_posix() and pointer.name == "summary.json":
+            continue
+        if pointer.parent.name == "summary" and pointer.name == "summary.json":
+            continue
+        try:
+            payload = load_json(pointer)
+        except (json.JSONDecodeError, OSError):
+            continue
+        case_root = ((payload.get("artifact_paths") or {}).get("case_root") or "").strip()
+        if not case_root:
+            continue
+        case_root_path = report_host_path(case_root)
+        if case_root_path in deleted_roots or not case_root_path.exists():
+            stale.append(str(pointer))
+            if not dry_run:
+                pointer.unlink()
+    return stale
+
+
+def clean_reports(
+    *,
+    keep: int,
+    case_id: str | None = None,
+    delete_all: bool = False,
+    dry_run: bool = False,
+    refresh_html: bool = True,
+) -> dict:
+    if keep < 0:
+        raise SystemExit("--keep must be 0 or greater")
+    candidates = report_run_cleanup_candidates(case_id=case_id)
+    delete_after = 0 if delete_all else keep
+    to_delete = candidates[delete_after:]
+    deleted_roots = {item["run_root"] for item in to_delete}
+
+    deleted = []
+    for item in to_delete:
+        deleted.append(
+            {
+                "case_id": item["case_id"],
+                "run_id": item["run_id"],
+                "status": item["status"],
+                "started_at": item["started_at"],
+                "path": str(item["run_root"]),
+            }
+        )
+        if not dry_run:
+            shutil.rmtree(item["run_root"])
+
+    stale_pointers = prune_stale_report_pointers(deleted_roots, dry_run=dry_run)
+    html_result = None
+    if refresh_html and not dry_run:
+        html_result = write_report_html()
+
+    return {
+        "status": "passed",
+        "dry_run": dry_run,
+        "case_id": case_id or "",
+        "keep": 0 if delete_all else keep,
+        "runs_seen": len(candidates),
+        "runs_deleted": len(deleted),
+        "deleted": deleted,
+        "stale_pointers_removed": stale_pointers,
+        "report_html": (html_result or {}).get("report_html"),
     }
 
 
@@ -828,6 +1455,24 @@ def cmd_logs_case(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_report_html(args: argparse.Namespace) -> int:
+    output_path = Path(args.output).expanduser() if args.output else None
+    print(json.dumps(write_report_html(output_path), indent=2))
+    return 0
+
+
+def cmd_report_clean(args: argparse.Namespace) -> int:
+    payload = clean_reports(
+        keep=args.keep,
+        case_id=args.case_id,
+        delete_all=args.all,
+        dry_run=args.dry_run,
+        refresh_html=not args.no_html,
+    )
+    print(json.dumps(payload, indent=2))
+    return 0
+
+
 def cmd_lib_test_catalog_refresh(args: argparse.Namespace) -> int:
     existing_catalog = load_json(LIB_TEST_CATALOG) if LIB_TEST_CATALOG.is_file() else None
     catalog = build_lib_test_catalog(args.sut_path, existing_catalog=existing_catalog)
@@ -1003,6 +1648,18 @@ def build_parser() -> argparse.ArgumentParser:
     logs_case_parser.add_argument("--case-id", required=True)
     logs_case_parser.add_argument("--context-label")
     logs_case_parser.set_defaults(func=cmd_logs_case)
+
+    report_html_parser = subparsers.add_parser("report-html")
+    report_html_parser.add_argument("--output")
+    report_html_parser.set_defaults(func=cmd_report_html)
+
+    report_clean_parser = subparsers.add_parser("report-clean")
+    report_clean_parser.add_argument("--keep", type=int, default=20)
+    report_clean_parser.add_argument("--case-id")
+    report_clean_parser.add_argument("--all", action="store_true")
+    report_clean_parser.add_argument("--dry-run", action="store_true")
+    report_clean_parser.add_argument("--no-html", action="store_true")
+    report_clean_parser.set_defaults(func=cmd_report_clean)
 
     lib_catalog_refresh = subparsers.add_parser("lib-test-catalog-refresh")
     lib_catalog_refresh.add_argument("--sut-path", default=default_sut_path())

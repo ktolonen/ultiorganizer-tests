@@ -12,6 +12,7 @@ Reports live under `reports/`.
 - `reports/summary/latest-failed.json`: latest failed summary across runs
 - `reports/cases/<case-id>/latest.json`: latest summary for one case
 - `reports/cases/<case-id>/latest-failed.json`: latest failed summary for one case
+- `reports/index.html`: generated browser view over all recorded runs
 
 Per-run artifacts live under:
 
@@ -81,6 +82,15 @@ Common commands:
 
 - `./report:latest`
 - `./report:case <case-id>`
+- `./report:html`
+- `./report:clean --keep 20`
 - `./logs:case <case-id>`
+
+`./report:html` scans `reports/cases/*/*/summary/summary.json` and writes a self-contained `reports/index.html`.
+Open that file in a browser to filter all runs in newest-first time order, select a run, inspect suite results, and jump to linked logs, JUnit files, Markdown summaries, or raw JSON.
+Crawl suite details include one row per crawl plan and direct links to each plan log.
+
+`./report:clean --keep <count>` deletes older per-run directories under `reports/cases/<case-id>/<run-id>/`, prunes stale latest-pointer JSON files when they pointed at deleted runs, and refreshes `reports/index.html`.
+Use `--dry-run` to preview deletions, `--case-id <case-id>` to limit cleanup to one case, or `--all` to delete all per-run directories.
 
 Use the JSON summaries for automation and the Markdown summary plus raw logs for manual debugging. When smoke or crawl failures are unclear, check the captured `apache_error_log` path from `./logs:case` or from `artifact_paths.apache_error_log` in the summary.

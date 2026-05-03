@@ -448,6 +448,37 @@ def count_manifest_entries(path: Path) -> int:
     return sum(1 for line in path.read_text(encoding="utf-8", errors="replace").splitlines() if line.strip())
 
 
+def write_crawl_startup_log(log_path: Path, command: list[str], result: subprocess.CompletedProcess[str]) -> None:
+    if log_path.is_file() and log_path.stat().st_size > 0:
+        return
+
+    lines = [
+        "Crawl command failed before writing its own log.",
+        "",
+        "Command:",
+        " ".join(command),
+        "",
+        f"Exit code: {result.returncode}",
+    ]
+    output = command_output(result)
+    if output:
+        lines.extend(["", "Output:", output])
+
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+
+
+def missing_crawl_script_result(script_path: Path, log_path: Path, command: list[str]) -> subprocess.CompletedProcess[str]:
+    result = subprocess.CompletedProcess(
+        args=command,
+        returncode=127,
+        stdout="",
+        stderr=f"Missing crawl helper script: {script_path}",
+    )
+    write_crawl_startup_log(log_path, command, result)
+    return result
+
+
 def crawl_plan_env(plan: dict) -> dict[str, str]:
     env: dict[str, str] = {}
     scalar_mappings = {
@@ -500,24 +531,28 @@ def run_follow_links_plan(plan: dict, plan_dir: Path) -> tuple[subprocess.Comple
         raise RunnerFailure("crawl_runtime_failure", f"Crawl plan {plan.get('id', 'unknown')} is missing start_url_or_path")
 
     env = crawl_plan_env(plan)
-    result = run(
-        [
-            "bash",
-            str(WORKSPACE / "wget_follow_links.sh"),
-            "http://127.0.0.1",
-            start_url_or_path,
-            str(plan_dir),
-        ],
-        cwd=WORKSPACE,
-        env=env,
-    )
+    script_path = WORKSPACE / "scripts" / "crawl" / "wget_follow_links.sh"
+    log_path = plan_dir / "wget_follow_links.log"
+    command = [
+        "bash",
+        str(script_path),
+        "http://127.0.0.1",
+        start_url_or_path,
+        str(plan_dir),
+    ]
+    if script_path.is_file():
+        result = run(command, cwd=WORKSPACE, env=env)
+        if result.returncode != 0:
+            write_crawl_startup_log(log_path, command, result)
+    else:
+        result = missing_crawl_script_result(script_path, log_path, command)
     manifest_path = plan_dir / "manifest.tsv"
     details = {
         "type": "follow_links",
         "start_url_or_path": start_url_or_path,
         "manifest_path": str(manifest_path),
         "downloaded_pages": count_manifest_entries(manifest_path),
-        "failed_urls": parse_failed_block(plan_dir / "wget_follow_links.log", "Failed URLs:"),
+        "failed_urls": parse_failed_block(log_path, "Failed URLs:"),
     }
     return result, details
 
@@ -535,18 +570,21 @@ def run_php_files_plan(case: dict, plan: dict, runtime_sut: Path, plan_dir: Path
 
     env = crawl_plan_env(plan)
     base_url = str(plan.get("base_url", "http://127.0.0.1")).strip() or "http://127.0.0.1"
-    result = run(
-        [
-            "bash",
-            str(WORKSPACE / "wget_php_files.sh"),
-            base_url,
-            str(input_root),
-            str(plan_dir),
-        ],
-        cwd=WORKSPACE,
-        env=env,
-    )
+    script_path = WORKSPACE / "scripts" / "crawl" / "wget_php_files.sh"
     log_path = plan_dir / "wget_php_files.log"
+    command = [
+        "bash",
+        str(script_path),
+        base_url,
+        str(input_root),
+        str(plan_dir),
+    ]
+    if script_path.is_file():
+        result = run(command, cwd=WORKSPACE, env=env)
+        if result.returncode != 0:
+            write_crawl_startup_log(log_path, command, result)
+    else:
+        result = missing_crawl_script_result(script_path, log_path, command)
     downloaded_files = []
     if plan_dir.is_dir():
         downloaded_files = [
