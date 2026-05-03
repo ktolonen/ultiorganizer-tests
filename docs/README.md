@@ -13,6 +13,8 @@ This directory contains short topic-oriented documents for the Ultiorganizer tes
 ## Testing
 
 - [PHP Syntax Lint](lint.md): SUT-wide `php -l` syntax checks
+- [Export Contract Testing](export.md): CSV, JSON, XML, and RSS endpoint contracts
+- [REST API Contract Testing](api.md): versioned JSON API auth and response contracts
 - [PHPUnit Suites](phpunit.md): `unit` and `integration` suite purpose and behavior
 - [Per-File Lib Tests](lib-tests.md): catalog, naming convention, checkpoint status, and incremental lib-test commands
 - [Deep Coverage Readiness](lib-test-deep-coverage.md): what broader per-file coverage requires from the harness versus the SUT

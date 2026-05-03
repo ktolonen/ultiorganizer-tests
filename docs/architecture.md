@@ -25,7 +25,7 @@ The harness does not own:
 - `config/matrix.json`: declarative case definitions, enabled suites, smoke pages, and crawl plans
 - `config/profiles/*.json`: test-only config profiles injected into the runtime copy
 - `fixtures/*.sql`: deterministic fixture packs loaded after the production schema
-- `tests/Unit`, `tests/Integration`, `tests/Smoke`: PHPUnit suites
+- `tests/Unit`, `tests/Integration`, `tests/Export`, `tests/Api`, `tests/Smoke`: PHPUnit suites
 - `docker-compose.yml` and `docker/php-test/Dockerfile`: runtime services and test image
 - `mcp/server.py`: thin MCP wrapper over the normal harness commands
 
@@ -58,6 +58,8 @@ This separation is the core design rule: test-only config and data belong in the
 - `lint`: SUT-wide PHP syntax checks using `php -l`
 - `unit`: PHPUnit tests that do not require DB-backed application state
 - `integration`: PHPUnit tests that exercise DB-backed application behavior
+- `export`: PHPUnit HTTP contract tests for public export endpoints
+- `api`: PHPUnit HTTP contract tests for the versioned JSON API
 - `smoke`: deterministic public page checks driven by `smoke_pages`
 - `crawl`: broader route and path probing driven by `crawl_plans`
 
@@ -66,6 +68,8 @@ This separation is the core design rule: test-only config and data belong in the
 Related documents:
 
 - [PHP Syntax Lint](lint.md)
+- [Export Contract Testing](export.md)
+- [REST API Contract Testing](api.md)
 - [PHPUnit Suites](phpunit.md)
 - [Smoke Testing](smoke.md)
 - [Crawl Testing](crawl.md)

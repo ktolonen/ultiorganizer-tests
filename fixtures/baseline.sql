@@ -25,6 +25,22 @@ INSERT INTO uo_season (
   'Europe/Helsinki', 1003
 );
 
+UPDATE uo_season SET api_public=1 WHERE season_id='HRN2026';
+
+INSERT INTO uo_api_token (
+  token_id, token_hash, token_value, label, scope_type, scope_id, revoked, created_at, last_used
+) VALUES (
+  900,
+  '1a6918a0de39b1d923f2d4b15b44c153f2c4fbbe2bc6e82604c2b3ec37890a68',
+  'harness-api-token',
+  'Harness API token',
+  'season',
+  'HRN2026',
+  0,
+  '2026-01-01 00:00:00',
+  NULL
+);
+
 INSERT INTO uo_series (
   series_id, name, ordering, season, valid, type, color, pool_template
 ) VALUES (

@@ -40,7 +40,7 @@ MCP tool calls translate to the same CLI operations used by local shell wrappers
 That means MCP results inherit the same:
 
 - case model
-- suite behavior, including `lint`, PHPUnit, smoke, and crawl suites
+- suite behavior, including `lint`, PHPUnit export/API contracts, smoke, and crawl suites
 - failure classifications
 - artifact paths
 - report structure

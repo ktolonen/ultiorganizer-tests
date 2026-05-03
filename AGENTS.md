@@ -12,12 +12,12 @@ Implementation summary for the current Ultiorganizer test harness.
 
 - `docker-compose.yml`: starts `php-test` and `mariadb`.
 - `docker/php-test/Dockerfile`: PHP 8.3 Apache image with mysqli, gettext, mbstring, Composer, Python, MariaDB client, `wget`, locales, and Apache access config for the runtime webroot.
-- `config/matrix.json`: currently defines one default case, `baseline-default`, with `lint`, `unit`, `integration`, `smoke`, and `crawl` suites plus case-scoped smoke pages and crawl plans.
+- `config/matrix.json`: currently defines one default case, `baseline-default`, with `lint`, `unit`, `integration`, `export`, `api`, `smoke`, and `crawl` suites plus case-scoped smoke pages and crawl plans.
 - `config/profiles/baseline.json`: baseline test config profile.
-- `fixtures/baseline.sql`: deterministic fixture pack with one season, one series, one visible pool, two teams, reservations/location rows, two pool games, minimal player/goal data, and a deterministic superadmin account for authenticated crawl coverage.
+- `fixtures/baseline.sql`: deterministic fixture pack with one API-public season, one series, one visible pool, two teams, reservations/location rows, two pool games, minimal player/goal data, a deterministic superadmin account for authenticated crawl coverage, and a deterministic API token for REST API coverage.
 - `scripts/harness.py`: host-side orchestration for preflight, `doctor`, `quick`, suites, cases, matrix runs, and report access.
 - `scripts/container_runner.py`: container-side orchestration for runtime SUT copy, config generation, DB bootstrap, fixture loading, PHP lint execution, PHPUnit suite execution, crawl execution, and report writing.
-- `tests/Unit`, `tests/Integration`, `tests/Smoke`: PHPUnit suites for helper functions, DB-backed season/team/pool/config reads, and HTTP page smoke checks.
+- `tests/Unit`, `tests/Integration`, `tests/Export`, `tests/Api`, `tests/Smoke`: PHPUnit suites for helper functions, DB-backed season/team/pool/config reads, export endpoint contracts, REST API contracts, and HTTP page smoke checks.
 - `mcp/server.py`: thin stdio JSON-RPC MCP wrapper over the normal script entrypoints.
 - `docs/README.md`: documentation index for the topic-oriented docs under `docs/`, including the dedicated `docs/lint.md` syntax-lint note.
 
@@ -28,6 +28,8 @@ Implementation summary for the current Ultiorganizer test harness.
 - `./test:lint`
 - `./test:unit`
 - `./test:integration`
+- `./test:export`
+- `./test:api`
 - `./test:smoke`
 - `./test:crawl`
 - `./test:case baseline-default`
@@ -53,6 +55,8 @@ Implementation summary for the current Ultiorganizer test harness.
 - `./doctor` checks SUT preflight, Docker access, Compose services, stack startup, and MariaDB connectivity from `php-test`.
 - `./test:quick` runs `lint`, `unit`, and `integration` for `baseline-default` and is the default day-to-day command.
 - `lint` runs `php -l` across PHP files in the prepared runtime SUT copy.
+- `export` checks fixture-backed `ext/` CSV, JSON, XML, and RSS contracts over HTTP.
+- `api` checks the versioned `/api/v1` JSON API, including OpenAPI, token failures, and fixture-backed authenticated reads.
 - `crawl` is configured per case with declarative `crawl_plans` and currently supports `follow_links`, `php_files`, and `path_probes`.
 
 ## Reporting

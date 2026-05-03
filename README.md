@@ -33,6 +33,18 @@ Run only the SUT PHP syntax lint:
 ./test:lint
 ```
 
+Run only export endpoint contract tests:
+
+```sh
+./test:export
+```
+
+Run only REST API contract tests:
+
+```sh
+./test:api
+```
+
 Run the full default case:
 
 ```sh
@@ -62,6 +74,8 @@ Prune older report runs while keeping the newest 20:
 - [Documentation Index](docs/README.md)
 - [Architecture](docs/architecture.md)
 - [PHP Syntax Lint](docs/lint.md)
+- [Export Contract Testing](docs/export.md)
+- [REST API Contract Testing](docs/api.md)
 - [PHPUnit Suites](docs/phpunit.md)
 - [Per-File Lib Tests](docs/lib-tests.md)
 - [Smoke Testing](docs/smoke.md)
@@ -99,6 +113,18 @@ Run just the integration suite:
 
 ```sh
 ./test:integration
+```
+
+Run just the export contract suite:
+
+```sh
+./test:export
+```
+
+Run just the REST API contract suite:
+
+```sh
+./test:api
 ```
 
 Run just the smoke suite:

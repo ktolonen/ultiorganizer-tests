@@ -11,9 +11,14 @@
     <testsuite name="Integration">
       <directory>tests/Integration</directory>
     </testsuite>
+    <testsuite name="Export">
+      <directory>tests/Export</directory>
+    </testsuite>
+    <testsuite name="Api">
+      <directory>tests/Api</directory>
+    </testsuite>
     <testsuite name="Smoke">
       <directory>tests/Smoke</directory>
     </testsuite>
   </testsuites>
 </phpunit>
-

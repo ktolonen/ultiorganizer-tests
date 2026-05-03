@@ -30,6 +30,18 @@ Only PHP syntax lint:
 ./test:lint
 ```
 
+Only export endpoint contracts:
+
+```sh
+./test:export
+```
+
+Only REST API contracts:
+
+```sh
+./test:api
+```
+
 Full default case:
 
 ```sh
@@ -107,7 +119,7 @@ Examples:
 
 Use `test:quick` for frequent local feedback. It runs PHP syntax lint before the unit and integration suites.
 
-Use `test:case` when you want the full configured case, including runtime HTTP checks and crawl plans.
+Use `test:case` when you want the full configured case, including export contracts, API contracts, runtime HTTP checks, and crawl plans.
 
 Use `report:case` and `logs:case` when a failure needs artifact inspection instead of just terminal output.
 

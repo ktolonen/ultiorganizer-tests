@@ -27,7 +27,7 @@ REQUIRED_SUT_PATHS = [
     "cust/default",
 ]
 CONTAINER_ENV_PASSTHROUGH_PREFIXES = ("WGET_", "UO_CRAWL_")
-SUITE_CHOICES = ["lint", "unit", "integration", "smoke", "crawl"]
+SUITE_CHOICES = ["lint", "unit", "integration", "export", "api", "smoke", "crawl"]
 LIB_TEST_SUITES = ["unit", "integration"]
 LIB_TEST_DB_BACKED_FILES = {
     "accreditation.functions.php",

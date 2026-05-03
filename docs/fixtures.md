@@ -40,6 +40,7 @@ It currently includes:
 - two pool games
 - minimal player and goal data
 - one deterministic superadmin account for authenticated crawl coverage
+- one deterministic API token, `harness-api-token`, scoped to `HRN2026`
 
 The goal is not to mirror a full production database. The goal is to create enough stable data for meaningful runtime and integration coverage.
 
