@@ -27,7 +27,7 @@ REQUIRED_SUT_PATHS = [
     "cust/default",
 ]
 CONTAINER_ENV_PASSTHROUGH_PREFIXES = ("WGET_", "UO_CRAWL_")
-SUITE_CHOICES = ["unit", "integration", "smoke", "crawl"]
+SUITE_CHOICES = ["lint", "unit", "integration", "smoke", "crawl"]
 LIB_TEST_SUITES = ["unit", "integration"]
 LIB_TEST_DB_BACKED_FILES = {
     "accreditation.functions.php",
@@ -1373,7 +1373,7 @@ def cmd_quick(args: argparse.Namespace) -> int:
     payload = run_case(
         case_id=args.case_id,
         sut_path=args.sut_path,
-        suites="unit,integration",
+        suites="lint,unit,integration",
         run_label=args.run_label,
         context_label=args.context_label,
         pr_number=args.pr_number,

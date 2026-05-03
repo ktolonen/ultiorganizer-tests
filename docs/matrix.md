@@ -26,6 +26,8 @@ Each case typically defines:
 - `database_name`
 - `suites`
 
+The default `baseline-default` case currently runs `lint`, `unit`, `integration`, `smoke`, and `crawl`.
+
 Optional runtime coverage data:
 
 - `smoke_pages`

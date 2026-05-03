@@ -27,6 +27,12 @@ Run the default day-to-day test command:
 ./test:quick
 ```
 
+Run only the SUT PHP syntax lint:
+
+```sh
+./test:lint
+```
+
 Run the full default case:
 
 ```sh
@@ -55,6 +61,7 @@ Prune older report runs while keeping the newest 20:
 
 - [Documentation Index](docs/README.md)
 - [Architecture](docs/architecture.md)
+- [PHP Syntax Lint](docs/lint.md)
 - [PHPUnit Suites](docs/phpunit.md)
 - [Per-File Lib Tests](docs/lib-tests.md)
 - [Smoke Testing](docs/smoke.md)
@@ -80,6 +87,12 @@ Run just the unit suite:
 
 ```sh
 ./test:unit
+```
+
+Run just the PHP syntax lint suite:
+
+```sh
+./test:lint
 ```
 
 Run just the integration suite:

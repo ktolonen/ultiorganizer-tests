@@ -70,7 +70,7 @@ def tool_definitions() -> list[dict]:
                 "type": "object",
                 "properties": {
                     "case_id": {"type": "string"},
-                    "suite": {"type": "string", "enum": ["unit", "integration", "smoke", "crawl"]},
+                    "suite": {"type": "string", "enum": ["lint", "unit", "integration", "smoke", "crawl"]},
                     "sut_path": {"type": "string"},
                     "run_label": {"type": "string"},
                     "context_label": {"type": "string"},
@@ -88,7 +88,7 @@ def tool_definitions() -> list[dict]:
                 "type": "object",
                 "properties": {
                     "case_id": {"type": "string"},
-                    "suite": {"type": "string", "enum": ["unit", "integration", "smoke", "crawl"]},
+                    "suite": {"type": "string", "enum": ["lint", "unit", "integration", "smoke", "crawl"]},
                     "test_filter": {"type": "string"},
                     "sut_path": {"type": "string"},
                     "run_label": {"type": "string"},

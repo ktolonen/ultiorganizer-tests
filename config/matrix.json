@@ -7,7 +7,7 @@
       "config_profile": "baseline",
       "fixture_pack": "baseline",
       "database_name": "ultiorganizer_test",
-      "suites": ["unit", "integration", "smoke", "crawl"],
+      "suites": ["lint", "unit", "integration", "smoke", "crawl"],
       "smoke_pages": [
         {"id": "frontpage", "query": "view=frontpage"},
         {"id": "seasonlist", "query": "view=seasonlist"},

@@ -55,15 +55,17 @@ This separation is the core design rule: test-only config and data belong in the
 
 ## Suite Types
 
+- `lint`: SUT-wide PHP syntax checks using `php -l`
 - `unit`: PHPUnit tests that do not require DB-backed application state
 - `integration`: PHPUnit tests that exercise DB-backed application behavior
 - `smoke`: deterministic public page checks driven by `smoke_pages`
 - `crawl`: broader route and path probing driven by `crawl_plans`
 
-`smoke` is intentionally small and stable. `crawl` is broader and artifact-heavy.
+`lint` is the cheapest first gate. `smoke` is intentionally small and stable. `crawl` is broader and artifact-heavy.
 
 Related documents:
 
+- [PHP Syntax Lint](lint.md)
 - [PHPUnit Suites](phpunit.md)
 - [Smoke Testing](smoke.md)
 - [Crawl Testing](crawl.md)

@@ -24,6 +24,12 @@ Default day-to-day validation:
 ./test:quick
 ```
 
+Only PHP syntax lint:
+
+```sh
+./test:lint
+```
+
 Full default case:
 
 ```sh
@@ -99,7 +105,7 @@ Examples:
 
 ## Practical Use
 
-Use `test:quick` for frequent local feedback.
+Use `test:quick` for frequent local feedback. It runs PHP syntax lint before the unit and integration suites.
 
 Use `test:case` when you want the full configured case, including runtime HTTP checks and crawl plans.
 

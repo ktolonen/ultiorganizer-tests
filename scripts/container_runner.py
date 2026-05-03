@@ -29,6 +29,7 @@ PROFILE_DIR = WORKSPACE / "config" / "profiles"
 FIXTURE_DIR = WORKSPACE / "fixtures"
 APACHE_ERROR_LOG = Path("/var/log/apache2/error.log")
 PHPUNIT_SUITES = {"unit", "integration", "smoke"}
+LINT_EXCLUDED_DIRS = {".git", ".runtime", "node_modules", "reports", "vendor"}
 CrawlFailure = dict[str, object]
 PHP_ERROR_LOG_ISSUE_PATTERN = re.compile(r"PHP (Fatal error|Parse error|Warning|Notice)", re.IGNORECASE)
 
@@ -828,9 +829,85 @@ def run_crawl_suite(case: dict, run_root: Path, run_label: str | None) -> dict:
     }
 
 
+def should_lint_php_file(path: Path, runtime_sut: Path) -> bool:
+    try:
+        relative = path.relative_to(runtime_sut)
+    except ValueError:
+        return False
+    return not any(part in LINT_EXCLUDED_DIRS for part in relative.parts)
+
+
+def lint_php_file(path: Path, runtime_sut: Path, log_handle) -> tuple[bool, str]:
+    relative_path = str(path.relative_to(runtime_sut))
+    result = run(["php", "-l", str(path)], cwd=runtime_sut)
+    output = command_output(result) or f"No syntax errors detected in {relative_path}"
+    log_handle.write(f"$ php -l {relative_path}\n")
+    log_handle.write(output.rstrip() + "\n\n")
+    return result.returncode == 0, output
+
+
+def run_lint_suite(case: dict, run_root: Path) -> dict:
+    runtime_sut = RUNTIME_ROOT / "cases" / case["id"] / "sut"
+    log_path = run_root / "logs" / "lint.log"
+    started = datetime.now(timezone.utc)
+    started_monotonic = time.monotonic()
+    php_files = [
+        path
+        for path in sorted(runtime_sut.rglob("*.php"))
+        if path.is_file() and should_lint_php_file(path, runtime_sut)
+    ]
+    failed_tests: list[dict] = []
+
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with log_path.open("w", encoding="utf-8") as log_handle:
+        log_handle.write(f"Linting {len(php_files)} PHP files under {runtime_sut}\n\n")
+        for path in php_files:
+            passed, output = lint_php_file(path, runtime_sut, log_handle)
+            if passed:
+                continue
+            relative_path = str(path.relative_to(runtime_sut))
+            failed_tests.append(
+                {
+                    "name": relative_path,
+                    "class": "php-lint",
+                    "message": output.strip(),
+                }
+            )
+
+    finished = datetime.now(timezone.utc)
+    finished_monotonic = time.monotonic()
+    status = "passed" if not failed_tests else "failed"
+    failure_classification = suite_failure_classification("lint", status)
+    failure_reason = suite_failure_reason("lint", failed_tests, [])
+
+    return {
+        "suite": "lint",
+        "status": status,
+        "started_at": started.isoformat(),
+        "finished_at": finished.isoformat(),
+        "duration_seconds": round(max(0.0, finished_monotonic - started_monotonic), 3),
+        "exit_code": 0 if status == "passed" else 1,
+        "junit_path": "",
+        "log_path": str(log_path),
+        "tests": len(php_files),
+        "failures": len(failed_tests),
+        "errors": 0,
+        "skipped": 0,
+        "junit_parse_error": None,
+        "failed_tests": failed_tests,
+        "first_failed_test": first_failed_test(failed_tests),
+        "failed_pages": [],
+        "failure_classification": failure_classification,
+        "failure_reason": failure_reason,
+        "log_excerpt": log_excerpt(log_path) if status != "passed" else "",
+    }
+
+
 def suite_failure_classification(suite: str, status: str) -> str | None:
     if status == "passed":
         return None
+    if suite == "lint":
+        return "php_lint_failure"
     if suite == "smoke":
         return "smoke_http_runtime_failure"
     if suite == "crawl":
@@ -839,6 +916,11 @@ def suite_failure_classification(suite: str, status: str) -> str | None:
 
 
 def suite_failure_reason(suite: str, failed_tests: list[dict], failed_pages: list[dict]) -> str | None:
+    if suite == "lint":
+        first = first_failed_test(failed_tests)
+        if first:
+            return f"PHP syntax lint failed for {first.get('name', 'unknown')}"
+        return None
     if suite == "smoke" and failed_pages:
         page = failed_pages[0]
         return f"Smoke page {page.get('page_id', 'unknown')} failed"
@@ -854,6 +936,8 @@ def suite_failure_reason(suite: str, failed_tests: list[dict], failed_pages: lis
 
 
 def run_suite(case: dict, suite: str, run_root: Path, test_filter: str | None, run_label: str | None) -> dict:
+    if suite == "lint":
+        return run_lint_suite(case, run_root)
     if suite == "crawl":
         return run_crawl_suite(case, run_root, run_label)
     if suite not in PHPUNIT_SUITES:

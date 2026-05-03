@@ -12,19 +12,20 @@ Implementation summary for the current Ultiorganizer test harness.
 
 - `docker-compose.yml`: starts `php-test` and `mariadb`.
 - `docker/php-test/Dockerfile`: PHP 8.3 Apache image with mysqli, gettext, mbstring, Composer, Python, MariaDB client, `wget`, locales, and Apache access config for the runtime webroot.
-- `config/matrix.json`: currently defines one default case, `baseline-default`, with `unit`, `integration`, `smoke`, and `crawl` suites plus case-scoped smoke pages and crawl plans.
+- `config/matrix.json`: currently defines one default case, `baseline-default`, with `lint`, `unit`, `integration`, `smoke`, and `crawl` suites plus case-scoped smoke pages and crawl plans.
 - `config/profiles/baseline.json`: baseline test config profile.
 - `fixtures/baseline.sql`: deterministic fixture pack with one season, one series, one visible pool, two teams, reservations/location rows, two pool games, minimal player/goal data, and a deterministic superadmin account for authenticated crawl coverage.
 - `scripts/harness.py`: host-side orchestration for preflight, `doctor`, `quick`, suites, cases, matrix runs, and report access.
-- `scripts/container_runner.py`: container-side orchestration for runtime SUT copy, config generation, DB bootstrap, fixture loading, PHPUnit suite execution, crawl execution, and report writing.
+- `scripts/container_runner.py`: container-side orchestration for runtime SUT copy, config generation, DB bootstrap, fixture loading, PHP lint execution, PHPUnit suite execution, crawl execution, and report writing.
 - `tests/Unit`, `tests/Integration`, `tests/Smoke`: PHPUnit suites for helper functions, DB-backed season/team/pool/config reads, and HTTP page smoke checks.
 - `mcp/server.py`: thin stdio JSON-RPC MCP wrapper over the normal script entrypoints.
-- `docs/README.md`: documentation index for the topic-oriented docs under `docs/`.
+- `docs/README.md`: documentation index for the topic-oriented docs under `docs/`, including the dedicated `docs/lint.md` syntax-lint note.
 
 ## Stable entrypoints
 
 - `./doctor`
 - `./test:quick`
+- `./test:lint`
 - `./test:unit`
 - `./test:integration`
 - `./test:smoke`
@@ -34,7 +35,14 @@ Implementation summary for the current Ultiorganizer test harness.
 - `./test:filter baseline-default <pattern>`
 - `./report:latest`
 - `./report:case baseline-default`
+- `./report:html`
+- `./report:clean`
 - `./logs:case baseline-default`
+- `./libtest:catalog-refresh`
+- `./libtest:missing`
+- `./libtest:run --lib-file <lib-file>`
+- `./libtest:scaffold --lib-file <lib-file>`
+- `./libtest:triage-status`
 
 ## Runtime behavior
 
@@ -43,7 +51,8 @@ Implementation summary for the current Ultiorganizer test harness.
 - DB bootstrap uses MariaDB over plain TCP with SSL disabled for the local container network.
 - Apache serves `/workspace/.runtime/webroot`, which is a symlink to the prepared runtime SUT copy for the active case.
 - `./doctor` checks SUT preflight, Docker access, Compose services, stack startup, and MariaDB connectivity from `php-test`.
-- `./test:quick` runs `unit` plus `integration` for `baseline-default` and is the default day-to-day command.
+- `./test:quick` runs `lint`, `unit`, and `integration` for `baseline-default` and is the default day-to-day command.
+- `lint` runs `php -l` across PHP files in the prepared runtime SUT copy.
 - `crawl` is configured per case with declarative `crawl_plans` and currently supports `follow_links`, `php_files`, and `path_probes`.
 
 ## Reporting
@@ -52,7 +61,7 @@ Implementation summary for the current Ultiorganizer test harness.
 - `reports/summary/latest.json` stores the latest run summary.
 - `reports/cases/<case-id>/latest.json` stores the latest summary for a specific case.
 - Failed runs also refresh `reports/summary/latest-failed.json` and `reports/cases/<case-id>/latest-failed.json`.
-- Each run writes a setup log plus per-suite JUnit XML, raw suite logs, and crawl artifacts where relevant.
+- Each run writes a setup log, raw suite logs, JUnit XML for PHPUnit suites, and crawl artifacts where relevant.
 - Summaries include failure classification, failure reason, first failed test, failed smoke pages, crawl plan results, and direct artifact paths.
 - Summaries also include SUT context metadata such as branch, commit, dirty state, inferred or explicit context label, and optional PR number metadata.
 - Context-scoped latest pointers are written under `reports/summary/contexts/<context-label>/` and `reports/cases/<case-id>/contexts/<context-label>/`.
@@ -62,6 +71,7 @@ Implementation summary for the current Ultiorganizer test harness.
   - `runtime_sut_copy_config_failure`
   - `database_initialization_failure`
   - `fixture_load_failure`
+  - `php_lint_failure`
   - `phpunit_test_failure`
   - `smoke_http_runtime_failure`
   - `crawl_runtime_failure`

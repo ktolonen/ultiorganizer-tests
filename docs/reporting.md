@@ -72,6 +72,7 @@ Current failure classes include:
 - `runtime_sut_copy_config_failure`
 - `database_initialization_failure`
 - `fixture_load_failure`
+- `php_lint_failure`
 - `phpunit_test_failure`
 - `smoke_http_runtime_failure`
 - `crawl_runtime_failure`
