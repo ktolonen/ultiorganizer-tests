@@ -86,6 +86,183 @@
         }
       ],
       "tags": ["default", "public-pages"]
+    },
+    {
+      "id": "customization-bula",
+      "description": "Runtime smoke coverage for bula customization",
+      "customization": "bula",
+      "config_profile": "baseline",
+      "fixture_pack": "baseline",
+      "database_name": "ultiorganizer_test_bula",
+      "suites": ["smoke", "crawl"],
+      "smoke_pages": [
+        {"id": "frontpage", "query": "view=frontpage"},
+        {"id": "teams-standings", "query": "view=teams&season=HRN2026&list=bystandings"},
+        {"id": "games-tournaments", "query": "view=games&season=HRN2026&filter=tournaments&group=all"}
+      ],
+      "crawl_plans": [
+        {
+          "id": "public-follow-links",
+          "type": "follow_links",
+          "start_url_or_path": "?view=frontpage",
+          "max_depth": 2,
+          "max_pages": 20,
+          "max_pages_per_view": 5,
+          "max_visits_per_url": 1,
+          "reject_regex": "([?&]view=(login|logout|register|resultinput|api)([&#]|$))"
+        }
+      ],
+      "tags": ["customization", "bula", "runtime-smoke"]
+    },
+    {
+      "id": "customization-fpudd",
+      "description": "Runtime smoke coverage for fpudd customization",
+      "customization": "fpudd",
+      "config_profile": "baseline",
+      "fixture_pack": "baseline",
+      "database_name": "ultiorganizer_test_fpudd",
+      "suites": ["smoke", "crawl"],
+      "smoke_pages": [
+        {"id": "frontpage", "query": "view=frontpage"},
+        {"id": "teams-standings", "query": "view=teams&season=HRN2026&list=bystandings"},
+        {"id": "games-tournaments", "query": "view=games&season=HRN2026&filter=tournaments&group=all"}
+      ],
+      "crawl_plans": [
+        {
+          "id": "public-follow-links",
+          "type": "follow_links",
+          "start_url_or_path": "?view=frontpage",
+          "max_depth": 2,
+          "max_pages": 20,
+          "max_pages_per_view": 5,
+          "max_visits_per_url": 1,
+          "reject_regex": "([?&]view=(login|logout|register|resultinput|api)([&#]|$))"
+        }
+      ],
+      "tags": ["customization", "fpudd", "runtime-smoke"]
+    },
+    {
+      "id": "customization-gummis",
+      "description": "Runtime smoke coverage for gummis customization",
+      "customization": "gummis",
+      "config_profile": "baseline",
+      "fixture_pack": "baseline",
+      "database_name": "ultiorganizer_test_gummis",
+      "suites": ["smoke", "crawl"],
+      "smoke_pages": [
+        {"id": "frontpage", "query": "view=frontpage"},
+        {"id": "teams-standings", "query": "view=teams&season=HRN2026&list=bystandings"},
+        {"id": "games-tournaments", "query": "view=games&season=HRN2026&filter=tournaments&group=all"}
+      ],
+      "crawl_plans": [
+        {
+          "id": "public-follow-links",
+          "type": "follow_links",
+          "start_url_or_path": "?view=frontpage",
+          "max_depth": 2,
+          "max_pages": 20,
+          "max_pages_per_view": 5,
+          "max_visits_per_url": 1,
+          "reject_regex": "([?&]view=(login|logout|register|resultinput|api)([&#]|$))"
+        }
+      ],
+      "tags": ["customization", "gummis", "runtime-smoke"]
+    },
+    {
+      "id": "customization-slkl",
+      "description": "Runtime smoke coverage for slkl customization",
+      "customization": "slkl",
+      "config_profile": "baseline",
+      "fixture_pack": "baseline",
+      "database_name": "ultiorganizer_test_slkl",
+      "suites": ["smoke", "crawl"],
+      "smoke_pages": [
+        {"id": "frontpage", "query": "view=frontpage"},
+        {"id": "teams-standings", "query": "view=teams&season=HRN2026&list=bystandings"},
+        {"id": "games-tournaments", "query": "view=games&season=HRN2026&filter=tournaments&group=all"}
+      ],
+      "crawl_plans": [
+        {
+          "id": "public-follow-links",
+          "type": "follow_links",
+          "start_url_or_path": "?view=frontpage",
+          "max_depth": 2,
+          "max_pages": 20,
+          "max_pages_per_view": 5,
+          "max_visits_per_url": 1,
+          "reject_regex": "([?&]view=(login|logout|register|resultinput|api)([&#]|$))"
+        }
+      ],
+      "tags": ["customization", "slkl", "runtime-smoke"]
+    },
+    {
+      "id": "customization-wfdf",
+      "description": "Runtime smoke coverage for wfdf customization",
+      "customization": "wfdf",
+      "config_profile": "baseline",
+      "fixture_pack": "baseline",
+      "database_name": "ultiorganizer_test_wfdf",
+      "suites": ["smoke", "crawl"],
+      "smoke_pages": [
+        {"id": "frontpage", "query": "view=frontpage"},
+        {"id": "teams-standings", "query": "view=teams&season=HRN2026&list=bystandings"},
+        {"id": "games-tournaments", "query": "view=games&season=HRN2026&filter=tournaments&group=all"}
+      ],
+      "crawl_plans": [
+        {
+          "id": "public-follow-links",
+          "type": "follow_links",
+          "start_url_or_path": "?view=frontpage",
+          "max_depth": 2,
+          "max_pages": 20,
+          "max_pages_per_view": 5,
+          "max_visits_per_url": 1,
+          "reject_regex": "([?&]view=(login|logout|register|resultinput|api)([&#]|$))"
+        }
+      ],
+      "tags": ["customization", "wfdf", "runtime-smoke"]
+    },
+    {
+      "id": "customization-windmill",
+      "description": "Runtime smoke coverage for windmill customization",
+      "customization": "windmill",
+      "config_profile": "baseline",
+      "fixture_pack": "baseline",
+      "database_name": "ultiorganizer_test_windmill",
+      "suites": ["smoke", "crawl"],
+      "smoke_pages": [
+        {"id": "frontpage", "query": "view=frontpage"},
+        {"id": "teams-standings", "query": "view=teams&season=HRN2026&list=bystandings"},
+        {"id": "games-tournaments", "query": "view=games&season=HRN2026&filter=tournaments&group=all"}
+      ],
+      "crawl_plans": [
+        {
+          "id": "public-follow-links",
+          "type": "follow_links",
+          "start_url_or_path": "?view=frontpage",
+          "max_depth": 2,
+          "max_pages": 20,
+          "max_pages_per_view": 5,
+          "max_visits_per_url": 1,
+          "reject_regex": "([?&]view=(login|logout|register|resultinput|api)([&#]|$))"
+        }
+      ],
+      "tags": ["customization", "windmill", "runtime-smoke"]
+    },
+    {
+      "id": "config-overrides",
+      "description": "Verifies non-default generated config and server settings are applied",
+      "customization": "default",
+      "config_profile": "config-overrides",
+      "fixture_pack": "baseline",
+      "database_name": "ultiorganizer_test_config_overrides",
+      "suites": ["integration", "smoke"],
+      "smoke_pages": [
+        {"id": "frontpage", "query": "view=frontpage"},
+        {"id": "teams-standings", "query": "view=teams&season=HRN2026&list=bystandings"},
+        {"id": "games-tournaments", "query": "view=games&season=HRN2026&filter=tournaments&group=all"}
+      ],
+      "tags": ["config-profile", "overrides"]
     }
   ]
 }

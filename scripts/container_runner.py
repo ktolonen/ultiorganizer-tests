@@ -267,6 +267,10 @@ def mariadb_base_command() -> list[str]:
     ]
 
 
+def sql_string(value: object) -> str:
+    return "'" + str(value).replace("\\", "\\\\").replace("'", "''") + "'"
+
+
 def wait_for_database(setup_log_path: Path) -> None:
     root_password = os.environ.get("MARIADB_ROOT_PASSWORD", "root")
     for _ in range(30):
@@ -290,7 +294,7 @@ def wait_for_database(setup_log_path: Path) -> None:
     raise RunnerFailure("database_initialization_failure", "MariaDB did not become ready in time")
 
 
-def initialize_database(case: dict, setup_log_path: Path) -> None:
+def initialize_database(case: dict, profile: dict, setup_log_path: Path) -> None:
     db_name = case["database_name"]
     if not db_name.startswith("ultiorganizer_test"):
         raise RunnerFailure(
@@ -335,6 +339,25 @@ def initialize_database(case: dict, setup_log_path: Path) -> None:
             "Loading the harness fixture pack failed",
             {"output": command_output(fixture_result), "fixture_path": str(fixture_path)},
         )
+
+    server_settings = profile.get("server_settings", {})
+    if server_settings:
+        statements = [
+            f"UPDATE uo_setting SET value={sql_string(value)} WHERE name={sql_string(name)};"
+            for name, value in sorted(server_settings.items())
+        ]
+        settings_result = run(base_cmd + [db_name, "-e", "\n".join(statements)])
+        append_log(
+            setup_log_path,
+            "profile_server_settings",
+            command_output(settings_result) or f"Applied {len(statements)} profile server settings",
+        )
+        if settings_result.returncode != 0:
+            raise RunnerFailure(
+                "database_initialization_failure",
+                "Applying profile server settings failed",
+                {"output": command_output(settings_result), "profile_id": profile.get("id", "")},
+            )
 
 
 def junit_summary(junit_path: Path) -> dict:
@@ -974,6 +997,9 @@ def run_suite(case: dict, suite: str, run_root: Path, test_filter: str | None, r
         "UO_SUT_ROOT": str(runtime_sut),
         "UO_BASE_URL": "http://127.0.0.1",
         "UO_APACHE_ERROR_LOG": str(APACHE_ERROR_LOG),
+        "UO_CASE_ID": case["id"],
+        "UO_CUSTOMIZATION": case["customization"],
+        "UO_CONFIG_PROFILE": case["config_profile"],
         "UO_RUN_LABEL": run_label or "",
         "UO_SMOKE_PAGES": json.dumps(case.get("smoke_pages", [])),
     }
@@ -1249,7 +1275,7 @@ def cmd_prepare_case(args: argparse.Namespace) -> int:
     profile = get_profile(case["config_profile"])
     setup_log_path = REPORTS_ROOT / "cases" / case["id"] / "prepare-case.log"
     runtime_info = prepare_runtime(case, profile, setup_log_path)
-    initialize_database(case, setup_log_path)
+    initialize_database(case, profile, setup_log_path)
     payload = {
         "status": "prepared",
         "case_id": case["id"],
@@ -1276,7 +1302,7 @@ def cmd_run_case(args: argparse.Namespace) -> int:
     runtime_info = None
     try:
         runtime_info = prepare_runtime(case, profile, setup_log_path)
-        initialize_database(case, setup_log_path)
+        initialize_database(case, profile, setup_log_path)
         setup_status = "passed"
         setup_classification = None
         setup_reason = None

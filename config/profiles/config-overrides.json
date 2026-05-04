@@ -1,0 +1,28 @@
+{
+  "id": "config-overrides",
+  "base_url": "http://127.0.0.1",
+  "customization": "default",
+  "default_locale": "fi_FI.utf8",
+  "timezone": "Europe/Helsinki",
+  "allow_install": true,
+  "disable_self_registration": false,
+  "anonymous_result_input": true,
+  "enable_admin_db_access": "enabled",
+  "api_rate_limit": 7,
+  "api_rate_window": 11,
+  "server_settings": {
+    "CurrentSeason": "HRN2026",
+    "HomeTeamResponsible": "yes",
+    "GoogleMapsAPIKey": "",
+    "EmailSource": "override@example.com",
+    "GameRSSEnabled": "true",
+    "PageTitle": "Ultiorganizer Override Harness - ",
+    "DefaultTimezone": "Europe/Helsinki",
+    "DefaultLocale": "fi_FI.utf8",
+    "ShowDefenseStats": "true",
+    "AdminEmail": "override-admin@example.com",
+    "ShowSpiritComments": "true",
+    "ReadOnlyServer": "false",
+    "DisableVisitorLogging": "false"
+  }
+}

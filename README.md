@@ -217,15 +217,29 @@ Scaffold one matching per-file lib test:
 ./libtest:scaffold --lib-file common.functions.php
 ```
 
-## Current default case
+## Current matrix cases
 
-The current matrix contains one case:
+The full baseline case is:
 
 - `baseline-default`
   - customization: `default`
   - config profile: `baseline`
   - fixture pack: `baseline`
-  - suites: `unit`, `integration`, `smoke`, `crawl`
+  - suites: `lint`, `unit`, `integration`, `export`, `api`, `smoke`, `crawl`
+
+The matrix also contains lightweight runtime cases for the non-default customizations under the SUT `cust/` directory:
+
+- `customization-bula`
+- `customization-fpudd`
+- `customization-gummis`
+- `customization-slkl`
+- `customization-wfdf`
+- `customization-windmill`
+
+Those cases use the baseline profile and fixture pack with unique disposable database names.
+They run `smoke` and `crawl` to confirm each `CUSTOMIZATIONS` value can boot representative public pages and customization-specific header, stylesheet, and schedule include paths.
+
+The matrix also contains `config-overrides`, which uses `config/profiles/config-overrides.json` to verify generated config constants and database-backed server settings can be changed from the baseline defaults.
 
 The baseline fixture is no longer only a minimal boot fixture. It now includes one current season, one valid series, one visible pool, two teams, reservations and location rows, two pool games, and minimal player/goal data so public standings and scoreboard pages render cleanly.
 

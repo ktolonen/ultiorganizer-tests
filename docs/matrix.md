@@ -27,6 +27,7 @@ Each case typically defines:
 - `suites`
 
 The default `baseline-default` case currently runs `lint`, `unit`, `integration`, `export`, `api`, `smoke`, and `crawl`.
+Customization runtime cases run the narrower `smoke` and `crawl` suite set so every `cust/*` directory boots without duplicating the full baseline contract suite.
 
 Optional runtime coverage data:
 
@@ -63,8 +64,26 @@ Each case run gets:
 
 ## Current State
 
-The repository currently has one main case:
+The repository has one full baseline case:
 
 - `baseline-default`
 
 That case is the default developer validation path and the current reference shape for adding more cases later.
+
+The repository also has lightweight runtime cases for the non-default SUT customizations:
+
+- `customization-bula`
+- `customization-fpudd`
+- `customization-gummis`
+- `customization-slkl`
+- `customization-wfdf`
+- `customization-windmill`
+
+These cases use the baseline profile and fixture pack with unique disposable database names.
+They verify that the selected `CUSTOMIZATIONS` value can render representative public pages and game pages, including customization-specific header, stylesheet, and schedule include paths.
+
+The repository also has a config override case:
+
+- `config-overrides`
+
+That case uses `config/profiles/config-overrides.json` to verify generated `config.inc.php` constants and database-backed server settings can differ from the baseline defaults while the app still boots.

@@ -16,7 +16,7 @@ final class ConfigurationFunctionsTest extends TestCase
 
     protected function tearDown(): void
     {
-        SetServerConfValue('ShowDefenseStats', 'false');
+        SetServerConfValue('ShowDefenseStats', self::expectedShowDefenseStats());
         LegacyApp::closeDatabaseConnection();
     }
 
@@ -36,5 +36,9 @@ final class ConfigurationFunctionsTest extends TestCase
         $this->assertCount(1, $series);
         $this->assertSame('Open', $series[0]['name']);
     }
-}
 
+    private static function expectedShowDefenseStats(): string
+    {
+        return getenv('UO_CONFIG_PROFILE') === 'config-overrides' ? 'true' : 'false';
+    }
+}
