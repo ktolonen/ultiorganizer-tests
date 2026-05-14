@@ -34,8 +34,29 @@ jobs:
       - name: Run full matrix
         working-directory: ultiorganizer-tests
         run: ./test:matrix
-      - name: Upload reports on failure
-        if: failure()
+      - name: Publish job summary
+        if: always()
+        working-directory: ultiorganizer-tests
+        run: |
+          {
+            echo "# Test harness — full matrix"
+            echo
+            found=0
+            while IFS= read -r f; do
+              found=1
+              cat "$f"
+              echo
+            done < <(find reports -path '*/summary/summary.md' | sort)
+            if [ "$found" -eq 0 ]; then
+              echo "_No case summaries were produced; see the run log above._"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Build HTML report
+        if: always()
+        working-directory: ultiorganizer-tests
+        run: ./report:html
+      - name: Upload reports
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: harness-reports
