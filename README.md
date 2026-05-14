@@ -305,6 +305,11 @@ GitHub Actions runs the full matrix automatically (see `.github/workflows/ci.yml
 
 Both workflows check out the two repositories side by side and invoke `./test:matrix`, exactly like the local sibling-checkout workflow below.
 
+Each run surfaces its results two ways:
+
+- A per-case pass/fail breakdown is written to the GitHub Actions job summary, visible directly on the workflow run page.
+- The full `reports/` tree, including the `./report:html` browser index, is uploaded as the `harness-reports` artifact (on every run, pass or fail). Download it and open `index.html` for the complete report.
+
 ## Local development vs PR validation
 
 The harness records SUT git context with each run and keeps separate "latest" pointers per context label, which also supports a manual workflow alongside CI:
