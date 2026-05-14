@@ -296,9 +296,18 @@ python3 scripts/harness.py case --case-id baseline-default --sut-path /path/to/o
 
 You can use the same `--sut-path` pattern with `doctor`, `quick`, `suite`, `case`, and `matrix`.
 
+## Continuous integration
+
+GitHub Actions runs the full matrix automatically (see `.github/workflows/ci.yml`):
+
+- In this repository, on every push to `main` and every pull request, against `ultiorganizer@master`. This catches harness regressions.
+- In the `ultiorganizer` repository, a `harness` job checks this repository out as a sibling and runs the full matrix against the pull request's code.
+
+Both workflows check out the two repositories side by side and invoke `./test:matrix`, exactly like the local sibling-checkout workflow below.
+
 ## Local development vs PR validation
 
-The harness now records SUT git context with each run and can keep separate "latest" pointers per context label. That gives you a practical manual workflow without CI:
+The harness records SUT git context with each run and keeps separate "latest" pointers per context label, which also supports a manual workflow alongside CI:
 
 - Local development: point at your normal checkout or worktree and let the harness infer a branch-scoped context label.
 - PR validation: point at a PR checkout or worktree and pass `--pr-number` so the reports are tracked under `pr-<number>`.

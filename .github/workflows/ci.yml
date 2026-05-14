@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel superseded PR runs; let every push to main get its own run.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  harness:
+    name: Test harness (full matrix)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout test harness
+        uses: actions/checkout@v4
+        with:
+          path: ultiorganizer-tests
+      - name: Checkout SUT (ultiorganizer main)
+        uses: actions/checkout@v4
+        with:
+          repository: ktolonen/ultiorganizer
+          ref: master
+          path: ultiorganizer
+      - name: Run doctor
+        working-directory: ultiorganizer-tests
+        run: ./doctor
+      - name: Run full matrix
+        working-directory: ultiorganizer-tests
+        run: ./test:matrix
+      - name: Upload reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: harness-reports
+          path: ultiorganizer-tests/reports/
+          retention-days: 14
