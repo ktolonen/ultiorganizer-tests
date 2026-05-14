@@ -17,6 +17,8 @@ RUN apt-get update \
         wget \
         zip \
     && docker-php-ext-install mysqli gettext mbstring \
+    && pecl install pcov \
+    && docker-php-ext-enable pcov \
     && a2enmod rewrite \
     && sed -ri "s!/var/www/html!${APACHE_DOCUMENT_ROOT}!g" /etc/apache2/sites-available/000-default.conf /etc/apache2/apache2.conf /etc/apache2/conf-available/*.conf \
     && printf "ServerName localhost\n" > /etc/apache2/conf-available/servername.conf \
@@ -28,5 +30,6 @@ RUN apt-get update \
 COPY --from=composer:2 /usr/bin/composer /usr/local/bin/composer
 COPY docker/php-test/workspace.conf /etc/apache2/conf-available/workspace.conf
 COPY docker/php-test/disable-path-caches.ini /usr/local/etc/php/conf.d/zz-disable-path-caches.ini
+COPY docker/php-test/pcov.ini /usr/local/etc/php/conf.d/zz-pcov.ini
 
 RUN a2enconf workspace

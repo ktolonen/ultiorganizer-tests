@@ -89,6 +89,28 @@ Each PHPUnit suite writes:
 
 If a test fails, the summary records the first failed test and marks the failure as `phpunit_test_failure`.
 
+## Code coverage
+
+The `unit` and `integration` suites run the SUT in-process, so they yield PHP
+code coverage of the SUT's top-level `lib/*.php` files. The `export`, `api`,
+`smoke`, and `crawl` suites are HTTP-driven and are not covered.
+
+Coverage is collected with PCOV, which is installed in the `php-test` image but
+disabled by default; the harness opts in per invocation only for the two
+in-process suites. Each suite writes a raw `.cov` dump, and after a case's
+suites finish, `phpcov` merges them into `coverage/` under the run directory:
+
+- `coverage/html/` — browsable HTML report (also linked from the `report:html`
+  index detail panel)
+- `coverage/clover.xml` — Clover XML
+- `coverage/coverage.txt` — text summary
+- `coverage/coverage.json` — line-coverage percentage consumed by `report:html`
+
+The coverage scope is the SUT's `lib/` tree, excluding the vendored third-party
+directories, configured via the `<source>` block in `phpunit.xml.dist`. Cases
+that run neither in-process suite (the smoke-only customization cases) produce
+no `coverage/` directory.
+
 ## When To Use
 
 Use `unit` when the behavior can be checked directly in PHP with minimal environment dependence.
