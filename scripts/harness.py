@@ -684,11 +684,34 @@ def report_host_path(path_value: str) -> Path:
     return Path(path_value)
 
 
+def report_coverage_record(run_root: Path) -> dict | None:
+    coverage_json_path = run_root / "coverage" / "coverage.json"
+    if not coverage_json_path.is_file():
+        return None
+    try:
+        data = load_json(coverage_json_path)
+    except json.JSONDecodeError:
+        return None
+    return {
+        "percent": data.get("percent"),
+        "covered": data.get("covered"),
+        "total": data.get("total"),
+        "status": data.get("status"),
+        "html_href": report_artifact_href(str(run_root / "coverage" / "html" / "index.html"))
+        if data.get("html")
+        else "",
+        "text_href": report_artifact_href(str(run_root / "coverage" / "coverage.txt"))
+        if data.get("text")
+        else "",
+    }
+
+
 def report_run_record(summary_path: Path) -> dict:
     summary = load_json(summary_path)
     run_root = summary_path.parents[1]
     run_id = run_root.name
     case_id = run_root.parent.name
+    coverage = report_coverage_record(run_root)
     suite_results = summary.get("suite_results") or []
     totals = {
         "tests": sum(int(suite.get("tests") or 0) for suite in suite_results),
@@ -740,6 +763,7 @@ def report_run_record(summary_path: Path) -> dict:
         "runtime_logs": summary.get("runtime_logs"),
         "crawl_plans": summary.get("crawl_plans") or [],
         "totals": totals,
+        "coverage": coverage,
         "artifact_links": artifact_links,
         "summary": summary,
     }
@@ -1123,6 +1147,11 @@ def build_report_html(records: list[dict]) -> str:
           ['Context', esc(record.context_label || '')],
           ['Run label', esc(record.run_label || '')],
           ['Summary', [link('json', record.summary_href), link('markdown', record.summary_md_href)].filter(Boolean).join(' | ')],
+          ...(record.coverage ? [['Coverage', [
+            record.coverage.percent != null ? esc(record.coverage.percent) + '%' : 'n/a',
+            link('html report', record.coverage.html_href),
+            link('text', record.coverage.text_href)
+          ].filter(Boolean).join(' | ')]] : []),
           ['Failure class', esc(record.failure_classification || '')],
           ['Failure reason', esc(record.failure_reason || '')]
         ])}}

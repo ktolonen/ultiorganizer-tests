@@ -29,6 +29,9 @@ PROFILE_DIR = WORKSPACE / "config" / "profiles"
 FIXTURE_DIR = WORKSPACE / "fixtures"
 APACHE_ERROR_LOG = Path("/var/log/apache2/error.log")
 PHPUNIT_SUITES = {"unit", "integration", "export", "api", "smoke"}
+# Suites that run the SUT in-process and can therefore yield PHP code coverage.
+# export/api/smoke are HTTP-driven, so the PHPUnit process never loads SUT code.
+COVERAGE_SUITES = {"unit", "integration"}
 LINT_EXCLUDED_DIRS = {".git", ".runtime", "node_modules", "reports", "vendor"}
 CrawlFailure = dict[str, object]
 PHP_ERROR_LOG_ISSUE_PATTERN = re.compile(r"PHP (Fatal error|Parse error|Warning|Notice)", re.IGNORECASE)
@@ -1004,8 +1007,20 @@ def run_suite(case: dict, suite: str, run_root: Path, test_filter: str | None, r
         "UO_SMOKE_PAGES": json.dumps(case.get("smoke_pages", [])),
     }
 
-    cmd = [
-        "php",
+    php_cmd = ["php"]
+    if suite in COVERAGE_SUITES:
+        # PCOV is installed but disabled by default (see docker/php-test/pcov.ini);
+        # opt in only for the in-process suites and scope it to the SUT copy.
+        coverage_dir = run_root / "coverage"
+        coverage_dir.mkdir(parents=True, exist_ok=True)
+        php_cmd += [
+            "-d",
+            "pcov.enabled=1",
+            "-d",
+            f"pcov.directory={runtime_sut}",
+        ]
+
+    cmd = php_cmd + [
         "vendor/bin/phpunit",
         "--configuration",
         "phpunit.xml.dist",
@@ -1014,6 +1029,8 @@ def run_suite(case: dict, suite: str, run_root: Path, test_filter: str | None, r
         "--log-junit",
         str(junit_path),
     ]
+    if suite in COVERAGE_SUITES:
+        cmd.extend(["--coverage-php", str(run_root / "coverage" / f"{suite}.cov")])
     if test_filter:
         cmd.extend(["--filter", test_filter])
 
@@ -1189,6 +1206,75 @@ def update_latest_pointers(case_id: str, summary: dict) -> None:
             write_json(REPORTS_ROOT / "cases" / case_id / "contexts" / context_label / "latest-failed.json", summary)
 
 
+def parse_clover_line_coverage(clover_path: Path) -> dict | None:
+    try:
+        root = ET.parse(clover_path).getroot()
+    except (ET.ParseError, OSError):
+        return None
+    metrics = root.find("./project/metrics")
+    if metrics is None:
+        metrics = root.find(".//metrics")
+    if metrics is None:
+        return None
+    total = int(metrics.get("statements", 0) or 0)
+    covered = int(metrics.get("coveredstatements", 0) or 0)
+    percent = round(covered / total * 100, 2) if total else 0.0
+    return {"percent": percent, "covered": covered, "total": total}
+
+
+def merge_case_coverage(run_root: Path) -> dict | None:
+    """Merge the per-suite .cov dumps for a case into one report.
+
+    Best effort: only the in-process suites (see COVERAGE_SUITES) emit .cov
+    files, so smoke-only cases have nothing to merge and this is a no-op. A
+    merge failure is logged but never fails the case.
+    """
+    coverage_dir = run_root / "coverage"
+    cov_files = sorted(coverage_dir.glob("*.cov"))
+    if not cov_files:
+        return None
+
+    html_dir = coverage_dir / "html"
+    clover_path = coverage_dir / "clover.xml"
+    text_path = coverage_dir / "coverage.txt"
+    merge_log = run_root / "logs" / "coverage.log"
+    result = run(
+        [
+            "php",
+            "vendor/bin/phpcov",
+            "merge",
+            "--html",
+            str(html_dir),
+            "--clover",
+            str(clover_path),
+            "--text",
+            str(text_path),
+            str(coverage_dir),
+        ],
+        cwd=WORKSPACE,
+        stdout_path=merge_log,
+    )
+
+    coverage_json = {
+        "status": "passed" if result.returncode == 0 else "failed",
+        "cov_files": [path.name for path in cov_files],
+        "merge_log": str(merge_log),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if html_dir.is_dir():
+        coverage_json["html"] = "coverage/html/index.html"
+    if clover_path.is_file():
+        coverage_json["clover"] = "coverage/clover.xml"
+    if text_path.is_file():
+        coverage_json["text"] = "coverage/coverage.txt"
+    line_coverage = parse_clover_line_coverage(clover_path)
+    if line_coverage:
+        coverage_json.update(line_coverage)
+
+    (coverage_dir / "coverage.json").write_text(json.dumps(coverage_json, indent=2))
+    return coverage_json
+
+
 def finalize_summary(
     case: dict,
     profile: dict,
@@ -1294,6 +1380,14 @@ def cmd_run_case(args: argparse.Namespace) -> int:
     (run_root / "junit").mkdir(parents=True, exist_ok=True)
     (run_root / "logs").mkdir(parents=True, exist_ok=True)
     (run_root / "summary").mkdir(parents=True, exist_ok=True)
+    # Wipe stale coverage artifacts so a rerun (e.g. with the same --run-label
+    # or any reused run directory) never silently merges old .cov files into
+    # the new report, and never leaves a stale coverage.json behind for a run
+    # that produced no coverage. Recreated lazily by run_suite() and
+    # merge_case_coverage() when fresh data is produced.
+    coverage_dir = run_root / "coverage"
+    if coverage_dir.exists():
+        shutil.rmtree(coverage_dir)
     setup_log_path = run_root / "logs" / "setup.log"
     apache_error_log_start = apache_error_log_offset()
 
@@ -1329,6 +1423,7 @@ def cmd_run_case(args: argparse.Namespace) -> int:
     if setup_status == "passed":
         for suite in requested_suites:
             suite_results.append(run_suite(case, suite, run_root, args.test_filter, args.run_label))
+        merge_case_coverage(run_root)
 
     runtime_logs = {
         "apache_error_log": capture_apache_error_log_artifact(run_root, apache_error_log_start),

@@ -21,4 +21,24 @@
       <directory>tests/Smoke</directory>
     </testsuite>
   </testsuites>
+  <!--
+    Coverage scope for the in-process unit and integration suites.
+    .runtime/webroot is the stable symlink the harness re-points at the current
+    case's SUT copy before each run, so this resolves to that case's lib/ tree.
+    Vendored third-party directories are excluded, mirroring the SUT's
+    phpstan.neon.dist. This block is inert unless a coverage flag is passed on
+    the PHPUnit command line.
+  -->
+  <source>
+    <include>
+      <directory>.runtime/webroot/lib</directory>
+    </include>
+    <exclude>
+      <directory>.runtime/webroot/lib/tfpdf</directory>
+      <directory>.runtime/webroot/lib/yuiloader</directory>
+      <directory>.runtime/webroot/lib/phpqrcode</directory>
+      <directory>.runtime/webroot/lib/feed_generator</directory>
+      <directory>.runtime/webroot/lib/hsvclass</directory>
+    </exclude>
+  </source>
 </phpunit>
