@@ -1380,6 +1380,14 @@ def cmd_run_case(args: argparse.Namespace) -> int:
     (run_root / "junit").mkdir(parents=True, exist_ok=True)
     (run_root / "logs").mkdir(parents=True, exist_ok=True)
     (run_root / "summary").mkdir(parents=True, exist_ok=True)
+    # Wipe stale coverage artifacts so a rerun (e.g. with the same --run-label
+    # or any reused run directory) never silently merges old .cov files into
+    # the new report, and never leaves a stale coverage.json behind for a run
+    # that produced no coverage. Recreated lazily by run_suite() and
+    # merge_case_coverage() when fresh data is produced.
+    coverage_dir = run_root / "coverage"
+    if coverage_dir.exists():
+        shutil.rmtree(coverage_dir)
     setup_log_path = run_root / "logs" / "setup.log"
     apache_error_log_start = apache_error_log_offset()
 
