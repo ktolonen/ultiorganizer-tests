@@ -89,7 +89,7 @@ final class ExportEndpointsContractTest extends TestCase
                     'Place',
                     'GameName',
                 ],
-                ['Helsinki Heat', 'Tampere Tempest', 'Harness Field Complex', '600'],
+                ['Helsinki Heat', 'Tampere Tempest', 'Harness Field Complex', 'Round 1'],
             ],
             'resultscsv' => [
                 'resultscsv.php',
