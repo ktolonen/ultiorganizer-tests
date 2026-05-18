@@ -61,17 +61,17 @@ def get_profile(profile_id: str) -> dict:
     return json.loads(profile_path.read_text())
 
 
-def run(cmd: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None, stdout_path: Path | None = None) -> subprocess.CompletedProcess[str]:
+def run(cmd: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None, stdout_path: Path | None = None, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
     run_env = os.environ.copy()
     if env:
         run_env.update(env)
 
     if stdout_path is None:
-        return subprocess.run(cmd, cwd=cwd, env=run_env, text=True, capture_output=True, check=False)
+        return subprocess.run(cmd, cwd=cwd, env=run_env, text=True, capture_output=True, check=False, input=stdin)
 
     stdout_path.parent.mkdir(parents=True, exist_ok=True)
     with stdout_path.open("w", encoding="utf-8") as handle:
-        process = subprocess.run(cmd, cwd=cwd, env=run_env, text=True, stdout=handle, stderr=subprocess.STDOUT, check=False)
+        process = subprocess.run(cmd, cwd=cwd, env=run_env, text=True, stdout=handle, stderr=subprocess.STDOUT, check=False, input=stdin)
     text = stdout_path.read_text(encoding="utf-8")
     process.stdout = text
     process.stderr = ""
@@ -323,8 +323,13 @@ def initialize_database(case: dict, profile: dict, setup_log_path: Path) -> None
             {"output": command_output(result)},
         )
 
+    # Pipe the SQL file through stdin instead of using `source path`. The
+    # mariadb client in interactive `source` mode continues past statement-
+    # level errors and exits 0 if the source command itself completed; batch
+    # mode (stdin) aborts on the first error and exits non-zero, so a bad
+    # schema or fixture load actually fails the test run.
     schema_path = SUT_SOURCE / "sql" / "ultiorganizer.sql"
-    schema_result = run(base_cmd + [db_name, "-e", f"source {schema_path}"])
+    schema_result = run(base_cmd + [db_name], stdin=schema_path.read_text(encoding="utf-8"))
     append_log(setup_log_path, "database_schema", command_output(schema_result) or f"Loaded schema {schema_path}")
     if schema_result.returncode != 0:
         raise RunnerFailure(
@@ -334,7 +339,7 @@ def initialize_database(case: dict, profile: dict, setup_log_path: Path) -> None
         )
 
     fixture_path = FIXTURE_DIR / f"{case['fixture_pack']}.sql"
-    fixture_result = run(base_cmd + [db_name, "-e", f"source {fixture_path}"])
+    fixture_result = run(base_cmd + [db_name], stdin=fixture_path.read_text(encoding="utf-8"))
     append_log(setup_log_path, "database_fixture", command_output(fixture_result) or f"Loaded fixture {fixture_path}")
     if fixture_result.returncode != 0:
         raise RunnerFailure(
