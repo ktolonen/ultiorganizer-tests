@@ -89,13 +89,13 @@ INSERT INTO uo_scheduling_name (scheduling_id, name) VALUES
   (601, 'Round 2');
 
 INSERT INTO uo_game (
-  game_id, hometeam, visitorteam, homescore, visitorscore, reservation, time, pool, valid,
+  game_id, hometeam, visitorteam, homescore, visitorscore, reservation, time, valid,
   halftime, official, respteam, resppers, isongoing, scheduling_name_home, scheduling_name_visitor,
   name, timeslot, homedefenses, visitordefenses, hasstarted, islive, liveurl, timer_start,
   timer_pause_start, timer_paused_duration
 ) VALUES
-  (700, 300, 301, 15, 11, 500, '2026-06-01 10:00:00', 200, 1, 35, NULL, 300, NULL, 0, NULL, NULL, 600, NULL, 0, 0, 1, 0, NULL, NULL, NULL, 0),
-  (701, 301, 300, NULL, NULL, 501, '2026-06-01 14:00:00', 200, 1, 35, NULL, 301, NULL, 0, NULL, NULL, 601, NULL, 0, 0, 0, 0, NULL, NULL, NULL, 0);
+  (700, 300, 301, 15, 11, 500, '2026-06-01 10:00:00', 1, 35, NULL, 300, NULL, 0, NULL, NULL, 600, NULL, 0, 0, 1, 0, NULL, NULL, NULL, 0),
+  (701, 301, 300, NULL, NULL, 501, '2026-06-01 14:00:00', 1, 35, NULL, 301, NULL, 0, NULL, NULL, 601, NULL, 0, 0, 0, 0, NULL, NULL, NULL, 0);
 
 INSERT INTO uo_game_pool (game, pool, timetable) VALUES
   (700, 200, 1),
