@@ -16,27 +16,44 @@ final class CacheFunctionsLibTest extends TestCase
 
     // --- CacheRuntimeKey ---
 
-    public function testCacheRuntimeKeyBuildsNamespaceColonKey(): void
+    public function testCacheRuntimeKeyHasNamespacePrefixAndHashSuffix(): void
     {
-        $this->assertSame('season_info:42', CacheRuntimeKey('season_info', 42));
+        $key = CacheRuntimeKey('season_info', 42);
+        $this->assertMatchesRegularExpression('/^season_info:[0-9a-f]{32}$/', $key);
     }
 
-    public function testCacheRuntimeKeyStringifiesScalarKey(): void
+    public function testCacheRuntimeKeyIsDeterministicForSameInputs(): void
     {
-        $this->assertSame('ns:hello', CacheRuntimeKey('ns', 'hello'));
+        $this->assertSame(
+            CacheRuntimeKey('season_info', 42),
+            CacheRuntimeKey('season_info', 42)
+        );
+    }
+
+    public function testCacheRuntimeKeyHashesScalarStringInput(): void
+    {
+        $key = CacheRuntimeKey('ns', 'hello');
+        $this->assertMatchesRegularExpression('/^ns:[0-9a-f]{32}$/', $key);
+    }
+
+    public function testCacheRuntimeKeyProducesDifferentHashesForDifferentKeys(): void
+    {
+        $this->assertNotSame(
+            CacheRuntimeKey('ns', 'hello'),
+            CacheRuntimeKey('ns', 'world')
+        );
     }
 
     public function testCacheRuntimeKeyHashesArrayKey(): void
     {
         $key = CacheRuntimeKey('ns', ['a' => 1, 'b' => 2]);
-        $this->assertStringStartsWith('ns:', $key);
-        // Array key becomes an md5 hash — check format rather than exact value
         $this->assertMatchesRegularExpression('/^ns:[0-9a-f]{32}$/', $key);
     }
 
-    public function testCacheRuntimeKeyNullKeyBecomesEmptyString(): void
+    public function testCacheRuntimeKeyHashesNullInput(): void
     {
-        $this->assertSame('ns:', CacheRuntimeKey('ns', null));
+        $key = CacheRuntimeKey('ns', null);
+        $this->assertMatchesRegularExpression('/^ns:[0-9a-f]{32}$/', $key);
     }
 
     // --- CacheRemember ---

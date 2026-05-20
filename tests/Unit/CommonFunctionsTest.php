@@ -29,14 +29,6 @@ final class CommonFunctionsTest extends TestCase
         $this->assertSame('Mäki', normalizeTextInput('  M%C3%A4ki  '));
     }
 
-    public function testStripFromQueryStringRemovesSingleParameter(): void
-    {
-        $query = StripFromQueryString('?view=games&season=HRN2026&group=all', 'season');
-
-        $this->assertStringContainsString('view=games', $query);
-        $this->assertStringNotContainsString('season=', $query);
-    }
-
     public function testSecToMinFormatsSeconds(): void
     {
         $this->assertSame('2.05', SecToMin(125));

@@ -191,7 +191,8 @@ final class ExtendedCommonFunctionsLibTest extends TestCase
 
     public function testWeekdayStringCapFalseReturnsFullName(): void
     {
-        $this->markTestSkipped('WeekdayString $cap fix not yet in source — re-enable after merge');
+        // 2024-06-15 is a Saturday; $cap=false → full name
+        $this->assertSame('Saturday', WeekdayString('2024-06-15 00:00:00', false));
     }
 
     public function testWeekdayStringReturnsEmptyStringForEmptyInput(): void
