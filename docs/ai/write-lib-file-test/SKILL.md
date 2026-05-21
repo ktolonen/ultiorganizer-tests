@@ -16,6 +16,8 @@ Always read these references first:
 - `docs/fixtures.md`
 - `config/lib-test-catalog.json`
 
+To use code coverage to find uncovered branches in the target file and confirm new assertions exercised them, use `docs/ai/use-coverage-for-tests/SKILL.md`.
+
 ## Goal
 
 Maintain strict one-test-file-per-lib traceability.

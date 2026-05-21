@@ -59,6 +59,15 @@ Implementation summary for the current Ultiorganizer test harness.
 - `api` checks the versioned `/api/v1` JSON API, including OpenAPI, token failures, and fixture-backed authenticated reads.
 - `crawl` is configured per case with declarative `crawl_plans` and currently supports `follow_links`, `php_files`, and `path_probes`.
 
+## Code coverage
+
+- Coverage is collected with PCOV (installed in the `php-test` image, disabled by default) and opted in per invocation only for the in-process `unit` and `integration` suites; the HTTP-driven `export`, `api`, `smoke`, and `crawl` suites yield no coverage.
+- Coverage scope is the SUT's `lib/` tree minus the vendored third-party directories, configured via the `<source>` block in `phpunit.xml.dist`. Code exercised outside `lib/` (page entrypoints, `localization.php`, etc.) does not appear.
+- Each in-process suite writes a raw `<suite>.cov`, then `phpcov` merges them into `coverage/` under the run directory: `coverage/html/index.html` (per-file browsable), `coverage/clover.xml` (per-file line data, absolute container paths), `coverage/coverage.txt` (overall summary only), and `coverage/coverage.json` (percent consumed by `report:html`).
+- `coverage/` is wiped at the start of each run, so consulting coverage means rerunning the relevant suite first rather than trusting a stale directory.
+- Overall line coverage is low by design; per-file lib testing aims for local depth on the file under test, not a rising global percentage.
+- When authoring tests, use coverage to find uncovered branches in the target `lib/*.php` file. See `docs/phpunit.md` for the coverage details and `docs/ai/use-coverage-for-tests/SKILL.md` for the authoring workflow.
+
 ## Reporting
 
 - Canonical run artifacts live under `reports/cases/<case-id>/<run-id>/`.
