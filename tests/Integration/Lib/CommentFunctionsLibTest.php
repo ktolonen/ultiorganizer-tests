@@ -9,9 +9,9 @@ use UltiorganizerHarness\Support\LegacyApp;
 // CommentMetaHtml() and GameCommentHtml() can be exercised without loading the
 // full page-level bootstrap (gettext, locale configuration, etc.).
 if (!function_exists('utf8entities')) {
-    function utf8entities(string $s): string
+    function utf8entities(mixed $s): string
     {
-        return htmlentities($s, ENT_QUOTES, 'UTF-8');
+        return htmlentities((string) $s, ENT_QUOTES, 'UTF-8');
     }
 }
 
