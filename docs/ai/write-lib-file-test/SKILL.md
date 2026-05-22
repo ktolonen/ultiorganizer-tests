@@ -14,6 +14,7 @@ Always read these references first:
 - `docs/lib-tests.md`
 - `docs/phpunit.md`
 - `docs/fixtures.md`
+- `docs/lib-test-pitfalls.md`
 - `config/lib-test-catalog.json`
 
 To use code coverage to find uncovered branches in the target file and confirm new assertions exercised them, use `docs/ai/use-coverage-for-tests/SKILL.md`.
