@@ -601,6 +601,9 @@ def run_php_files_plan(case: dict, plan: dict, runtime_sut: Path, plan_dir: Path
         ) from exc
 
     env = crawl_plan_env(plan)
+    query_string = plan.get("query_string")
+    if isinstance(query_string, str) and query_string.strip():
+        env["WGET_QUERY_STRING"] = query_string.strip()
     base_url = str(plan.get("base_url", "http://127.0.0.1")).strip() or "http://127.0.0.1"
     script_path = WORKSPACE / "scripts" / "crawl" / "wget_php_files.sh"
     log_path = plan_dir / "wget_php_files.log"

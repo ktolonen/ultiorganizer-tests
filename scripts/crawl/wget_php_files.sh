@@ -29,6 +29,7 @@ AUTH_USER="${WGET_LOGIN_USER:-}"
 AUTH_PASS="${WGET_LOGIN_PASS:-}"
 LOGIN_URL="${WGET_LOGIN_URL:-}"
 VERIFY_URL="${WGET_VERIFY_URL:-}"
+URL_QUERY="${WGET_QUERY_STRING:-}"
 
 if [[ ! -d "$INPUT_ROOT" ]]; then
   echo "Input root '$INPUT_ROOT' does not exist or is not a directory." >&2
@@ -166,6 +167,13 @@ for path in "${php_files[@]}"; do
   dest="$OUT_DIR/$rel_path"
   tmp_dest="${dest}.part"
   url="$BASE_URL/$rel_path"
+  if [[ -n "$URL_QUERY" ]]; then
+    if [[ "$url" == *\?* ]]; then
+      url="$url&$URL_QUERY"
+    else
+      url="$url?$URL_QUERY"
+    fi
+  fi
 
   mkdir -p "$(dirname "$dest")"
   log_line "TRY  $url -> $dest"

@@ -32,7 +32,8 @@
           "id": "public-ext-php",
           "type": "php_files",
           "input_root": "ext",
-          "base_url": "http://127.0.0.1/ext"
+          "base_url": "http://127.0.0.1/ext",
+          "query_string": "season=HRN2026"
         },
         {
           "id": "superadmin-follow-links",
