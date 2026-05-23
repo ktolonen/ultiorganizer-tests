@@ -1,9 +1,12 @@
 {
   "permissions": {
     "allow": [
-      "Bash(./libtest:missing)",
-      "Bash(./libtest:triage-status)",
-      "Bash(./report:latest)"
+      "Bash(./libtest:missing *)",
+      "Bash(./libtest:triage-status *)",
+      "Bash(./report:latest *)",
+      "Bash(vendor/bin/phpstan analyse *)",
+      "Bash(./libtest:run *)",
+      "Bash(sed -n *)"
     ]
   }
 }
