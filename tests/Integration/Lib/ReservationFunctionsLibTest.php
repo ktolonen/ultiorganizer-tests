@@ -6,9 +6,9 @@ use PHPUnit\Framework\TestCase;
 use UltiorganizerHarness\Support\LegacyApp;
 
 if (!function_exists('utf8entities')) {
-    function utf8entities(string $s): string
+    function utf8entities(mixed $s): string
     {
-        return htmlentities($s, ENT_QUOTES, 'UTF-8');
+        return htmlentities((string) $s, ENT_QUOTES, 'UTF-8');
     }
 }
 
