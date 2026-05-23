@@ -137,3 +137,53 @@ fatal `mysqli_sql_exception` that looks like a harness problem but is actually a
 **Rule:** if a test path triggers an SQL column-not-found error, do not try to work around it
 by adding the column to the fixture. Record it as a triage note and test only the paths
 that do not reach the broken query. The affected branch is unreachable until the SUT is fixed.
+
+## 10. CacheRemember stores the first DB read — flush the cache before asserting stale data
+
+`SeasonInfo()` and several other SUT helpers wrap their DB query in `CacheRemember('season_info', ...)`, which stores the result in `$GLOBALS['runtime_cache']` for the lifetime of the PHP process. If an earlier test (or a prior call in the same test) loaded the season, a subsequent `DBQuery("UPDATE uo_season SET event_readonly=1 ...")` will not be visible to `isEventReadonly()` or any other function that calls `SeasonInfo()`.
+
+**Symptom:** a function that checks `isEventReadonly($season)` returns an unexpected value even though you updated the DB row immediately before the assertion.
+
+**Fix:** call `CacheForgetNamespace('season_info')` after the `DBQuery` UPDATE and again in the `finally` block when you restore the original value:
+
+```php
+DBQuery("UPDATE uo_season SET event_readonly=1 WHERE season_id='HRN2026'");
+CacheForgetNamespace('season_info');
+try {
+    $this->assertFalse(hasEditSeasonSeriesRight('HRN2026'));
+} finally {
+    DBQuery("UPDATE uo_season SET event_readonly=0 WHERE season_id='HRN2026'");
+    CacheForgetNamespace('season_info');
+}
+```
+
+`CacheForgetNamespace` is defined in `lib/cache.functions.php`, which is transitively loaded by `season.functions.php` (and therefore by any lib that loads season). It is always available in integration tests that load user, game, pool, or spirit functions.
+
+## 11. PHPUnit assertContains uses strict type comparison
+
+`assertContains(300, $array)` will fail if `$array` contains `'300'` (string), because PHPUnit 11 uses strict `===` by default. Database queries return all columns as strings via `mysqli_fetch_assoc`.
+
+**Symptom:** a test asserting that a team ID or similar integer appears in a returned array fails with "failed asserting that an array contains 300" even though the array visibly contains a `'300'` element.
+
+**Fix:** cast the array before asserting, or assert with a string literal:
+
+```php
+// Option A: cast the returned array
+$ids = array_map('intval', $result);
+$this->assertContains(300, $ids);
+
+// Option B: assert the string form
+$this->assertContains('300', $result);
+```
+
+## 12. Role management functions call SetUserSessionData when the target is the current user
+
+Several SUT functions (`AddUserRole`, `RemoveUserRole`, `AddEditSeason`, `RemoveEditSeason`, `AddSeasonUserRole`, `RemoveSeasonUserRole`, `AddPoolSelector`, `RemovePoolSelector`) contain a guard:
+
+```php
+if ($userid == $_SESSION['uid']) {
+    SetUserSessionData($userid);
+}
+```
+
+When tests call these functions for a test-user helper account (the common pattern), this branch is never hit. To cover it, call the function for `'admin'` (the value of `$_SESSION['uid']` set in `setUp`). The call refreshes the session, which is observable via `$_SESSION['userproperties']`. Always clean up DB residue in a `finally` block because the session refresh persists across test boundaries.

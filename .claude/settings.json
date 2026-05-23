@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(./libtest:missing)",
+      "Bash(./libtest:triage-status)",
+      "Bash(./report:latest)"
+    ]
+  }
+}
