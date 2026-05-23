@@ -14,6 +14,7 @@ Always read these references first:
 - `docs/phpunit.md` (the "Code coverage" section: PCOV opt-in, scope, artifacts)
 - `docs/lib-tests.md`
 - `docs/lib-test-deep-coverage.md`
+- `docs/lib-test-pitfalls.md`
 
 This skill is the workflow layer. It does not restate the harness coverage mechanics; those live in `docs/phpunit.md`.
 

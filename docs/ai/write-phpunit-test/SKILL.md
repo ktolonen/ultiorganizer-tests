@@ -15,6 +15,7 @@ Always read these references first:
 - `docs/fixtures.md`
 - `docs/smoke.md`
 - `docs/architecture.md`
+- `docs/lib-test-pitfalls.md` (when writing lib file tests)
 
 ## Purpose
 
