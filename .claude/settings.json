@@ -6,7 +6,8 @@
       "Bash(./report:latest *)",
       "Bash(vendor/bin/phpstan analyse *)",
       "Bash(./libtest:run *)",
-      "Bash(sed -n *)"
+      "Bash(sed -n *)",
+      "Bash(docker exec ultiorganizer-tests-php-test-1 *)"
     ]
   }
 }
