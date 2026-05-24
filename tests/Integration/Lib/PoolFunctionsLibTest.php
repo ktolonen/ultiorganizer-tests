@@ -250,7 +250,9 @@ final class PoolFunctionsLibTest extends TestCase
 
     public function testIsPoolLockedReturnsTrueForFixturePool(): void
     {
-        // Fixture pool 200 has played=1.
+        // Set played explicitly: other classes (e.g. GameFunctionsLibTest) call
+        // GameSetResult on pool 200, which runs PoolResolvePlayed and resets played.
+        DBQuery("UPDATE uo_pool SET played=1 WHERE pool_id=200");
         $this->assertTrue((bool) IsPoolLocked(200));
     }
 
