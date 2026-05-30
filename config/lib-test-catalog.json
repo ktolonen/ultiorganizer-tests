@@ -322,8 +322,8 @@
       "load_profile": "bootstrap_only",
       "test_path_exists": true,
       "status": "covered",
-      "triage_status": "untriaged",
-      "triage_notes": "",
+      "triage_status": "triaged",
+      "triage_notes": "Remaining ~19% gap is filesystem-fault and lock-contention paths: cache-disabled fallthrough (line 32), null-filepath fallthrough (38), fopen failure (52), recheck-inside-lock fresh path (59-61), lock-contention stale/miss (74-78), namespace-wipe when dir null (104), stats/wipe when dir null (127, 150), PersistentCacheDir mkdir failure (173/176/190/199), file_get_contents failure (213), rename failure (231). All require broken filesystem or race condition simulation; genuinely hard to reach without mocking.",
       "notes": "",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/persistent-cache.functions.php"
     },
