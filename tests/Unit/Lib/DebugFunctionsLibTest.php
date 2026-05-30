@@ -27,6 +27,57 @@ final class DebugFunctionsLibTest extends TestCase
         $this->assertStringContainsString('visible', $output);
     }
 
+    public function testDebugVarEmitsVarDumpForNonArrayWhenDebugEnabled(): void
+    {
+        global $DEBUG;
+
+        $DEBUG = true;
+        ob_start();
+        debugVar('scalar_value');
+        $output = (string) ob_get_clean();
+
+        $this->assertStringContainsString('DEBUG INFO:', $output);
+        $this->assertStringContainsString('scalar_value', $output);
+    }
+
+    public function testDebugFuncEmitsArgsWhenDebugEnabled(): void
+    {
+        global $DEBUG;
+
+        $DEBUG = true;
+        ob_start();
+        debugFunc('arg1', 42, ['k' => 'v']);
+        $output = (string) ob_get_clean();
+
+        $this->assertStringContainsString('DEBUG INFO:', $output);
+        $this->assertStringContainsString('arg1', $output);
+    }
+
+    public function testDebugFuncStaysSilentWhenDebugDisabled(): void
+    {
+        global $DEBUG;
+
+        $DEBUG = false;
+        ob_start();
+        debugFunc('hidden_arg');
+        $output = (string) ob_get_clean();
+
+        $this->assertSame('', $output);
+    }
+
+    public function testDebugMsgEmitsMessageWhenDebugEnabled(): void
+    {
+        global $DEBUG;
+
+        $DEBUG = true;
+        ob_start();
+        debugMsg('hello debug');
+        $output = (string) ob_get_clean();
+
+        $this->assertStringContainsString('DEBUG INFO:', $output);
+        $this->assertStringContainsString('hello debug', $output);
+    }
+
     public function testDebugMsgStaysSilentWhenDebugDisabled(): void
     {
         global $DEBUG;

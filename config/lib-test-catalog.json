@@ -210,8 +210,8 @@
       "load_profile": "bootstrap_only",
       "test_path_exists": true,
       "status": "covered",
-      "triage_status": "untriaged",
-      "triage_notes": "",
+      "triage_status": "triaged",
+      "triage_notes": "All paths covered (100%).",
       "notes": "",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/debug.functions.php"
     },
