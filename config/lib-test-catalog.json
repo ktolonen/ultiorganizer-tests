@@ -130,8 +130,8 @@
       "load_profile": "database_with_common",
       "test_path_exists": true,
       "status": "covered",
-      "triage_status": "ambiguous",
-      "triage_notes": "Pilot runs showed that wrapper helpers like GetPageTitle(), GetDefaultLocale(), and GetDefTimeZone() depend on broader bootstrap or localization state. The first-pass per-file test intentionally stays on GetSimpleServerConf() plus ReadBooleanSystemFlag().",
+      "triage_status": "triaged",
+      "triage_notes": "71.6% achieved (up from 44.3%). Ceiling ~73%: RenderSoftMaintenanceResponse (lines 71-112, ~31 stmts) has two exit() calls \u2014 untestable in-process (pitfall #6). die() in SetServerConf else-branch (line 195) same issue. Line 262 in getAvailableLocalizations is system-locale-dependent. SetServerConfValue UPDATE path tested via testSetServerConfInsertsNewSettingAsSuperAdmin flow.",
       "notes": "Pilot tuning showed that page-title reads also need common helper loading because utf8entities() is not declared inside the file.",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/configuration.functions.php"
     },

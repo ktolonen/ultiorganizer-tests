@@ -11,6 +11,11 @@ final class ConfigurationFunctionsLibTest extends TestCase
     {
         LegacyApp::resetRequestState();
         LegacyApp::loadLibFileUsingProfile('configuration.functions.php', 'database_with_common');
+        // The SUT sets $serverConf at require_once time. If the file was already loaded
+        // by an earlier integration test without a DB connection, the global is empty.
+        // Refresh it explicitly so getter functions read current fixture data.
+        global $serverConf;
+        $serverConf = GetSimpleServerConf();
     }
 
     protected function tearDown(): void
@@ -53,6 +58,185 @@ final class ConfigurationFunctionsLibTest extends TestCase
         $this->assertFalse(ReadBooleanSystemFlag('UO_TEST_BOOL_MISSING_FLAG', false));
         $this->assertTrue(ReadBooleanSystemFlag($constantName, false));
     }
+
+    public function testReadBooleanSystemFlagHandlesBoolConstant(): void
+    {
+        $constantName = 'UO_TEST_BOOL_TRUE_' . str_replace('.', '_', uniqid('', true));
+        define($constantName, true);
+        $this->assertTrue(ReadBooleanSystemFlag($constantName, false));
+    }
+
+    // --- Simple $serverConf getters ---
+
+    public function testGetPageTitleReturnsBaselineValue(): void
+    {
+        $this->assertStringContainsString('Ultiorganizer', GetPageTitle());
+    }
+
+    public function testGetDefaultLocaleReturnsBaselineValue(): void
+    {
+        $expected = self::expectedConfig();
+        $this->assertSame($expected['DefaultLocale'], GetDefaultLocale());
+    }
+
+    public function testGetDefTimeZoneReturnsBaselineValue(): void
+    {
+        $expected = self::expectedConfig();
+        $this->assertSame($expected['DefaultTimezone'], GetDefTimeZone());
+    }
+
+    public function testIsGameRSSEnabledReturnsFalseInBaseline(): void
+    {
+        $expected = self::expectedConfig();
+        $this->assertSame($expected['GameRSSEnabled'] === 'true', IsGameRSSEnabled());
+    }
+
+    public function testShowDefenseStatsReturnsFalseInBaseline(): void
+    {
+        $expected = self::expectedConfig();
+        $this->assertSame($expected['ShowDefenseStats'] === 'true', ShowDefenseStats());
+    }
+
+    public function testReadOnlyServerReturnsFalseInBaseline(): void
+    {
+        $this->assertFalse(ReadOnlyServer());
+    }
+
+    public function testSoftMaintenanceModeReturnsFalseInBaseline(): void
+    {
+        $this->assertFalse(SoftMaintenanceMode());
+    }
+
+    public function testGetGoogleMapsAPIKeyReturnsBaselineValue(): void
+    {
+        $this->assertSame('', GetGoogleMapsAPIKey());
+    }
+
+    // --- SoftMaintenanceRequestPrefersJson ---
+
+    public function testSoftMaintenanceRequestPrefersJsonReturnsTrueForApiScriptName(): void
+    {
+        $_SERVER['SCRIPT_NAME'] = '/api/v1/something.php';
+        $_SERVER['HTTP_ACCEPT'] = 'text/html';
+        $this->assertTrue(SoftMaintenanceRequestPrefersJson());
+        unset($_SERVER['SCRIPT_NAME'], $_SERVER['HTTP_ACCEPT']);
+    }
+
+    public function testSoftMaintenanceRequestPrefersJsonReturnsTrueForJsonPhpSuffix(): void
+    {
+        $_SERVER['SCRIPT_NAME'] = '/ext/seasons.json.php';
+        $_SERVER['HTTP_ACCEPT'] = 'text/html';
+        $this->assertTrue(SoftMaintenanceRequestPrefersJson());
+        unset($_SERVER['SCRIPT_NAME'], $_SERVER['HTTP_ACCEPT']);
+    }
+
+    public function testSoftMaintenanceRequestPrefersJsonReturnsTrueForJsonAcceptHeader(): void
+    {
+        $_SERVER['SCRIPT_NAME'] = '/index.php';
+        $_SERVER['HTTP_ACCEPT'] = 'application/json, text/plain, */*';
+        $this->assertTrue(SoftMaintenanceRequestPrefersJson());
+        unset($_SERVER['SCRIPT_NAME'], $_SERVER['HTTP_ACCEPT']);
+    }
+
+    public function testSoftMaintenanceRequestPrefersJsonReturnsFalseForHtmlRequest(): void
+    {
+        $_SERVER['SCRIPT_NAME'] = '/index.php';
+        $_SERVER['HTTP_ACCEPT'] = 'text/html,application/xhtml+xml';
+        $this->assertFalse(SoftMaintenanceRequestPrefersJson());
+        unset($_SERVER['SCRIPT_NAME'], $_SERVER['HTTP_ACCEPT']);
+    }
+
+    // --- SoftMaintenanceText ---
+
+    public function testSoftMaintenanceTextReturnsInputUnchangedWithoutTranslation(): void
+    {
+        $this->assertSame('Maintenance', SoftMaintenanceText('Maintenance'));
+    }
+
+    // --- Registration flag functions ---
+
+    public function testIsSelfRegistrationDisabledReflectsDisableSelfRegistrationConstant(): void
+    {
+        // DISABLE_SELF_REGISTRATION = true in baseline test config
+        $this->assertTrue(IsSelfRegistrationDisabled());
+    }
+
+    public function testIsEmailDisabledReturnsFalseWhenNoEmailUndefined(): void
+    {
+        // NO_EMAIL is not defined in the baseline test config
+        $this->assertFalse(IsEmailDisabled());
+    }
+
+    public function testIsPublicRegistrationDisabledReturnsTrueWhenSelfRegistrationDisabled(): void
+    {
+        $this->assertTrue(IsPublicRegistrationDisabled());
+    }
+
+    public function testIsSelfRegistrationEnabledReturnsFalseWhenPublicRegistrationDisabled(): void
+    {
+        $this->assertFalse(IsSelfRegistrationEnabled());
+    }
+
+    // --- GetServerConf ---
+
+    public function testGetServerConfReturnsRowsWithNameAndValueKeys(): void
+    {
+        $rows = GetServerConf();
+        $this->assertNotEmpty($rows);
+        $this->assertArrayHasKey('name', $rows[0]);
+        $this->assertArrayHasKey('value', $rows[0]);
+    }
+
+    // --- isRespTeamHomeTeam ---
+
+    public function testIsRespTeamHomeTeamReturnsTrueInBaseline(): void
+    {
+        $this->assertTrue(isRespTeamHomeTeam());
+    }
+
+    // --- getAvailableCustomizations ---
+
+    public function testGetAvailableCustomizationsReturnsNonEmptyList(): void
+    {
+        $customizations = getAvailableCustomizations();
+        $this->assertIsArray($customizations);
+        $this->assertNotEmpty($customizations);
+        $this->assertContains('default', $customizations);
+    }
+
+    // --- IsPersistentCacheEnabled / GetPersistentCacheTtlSeconds ---
+
+    public function testIsPersistentCacheEnabledReturnsTrueWhenSettingAbsent(): void
+    {
+        // Baseline fixture does not set PersistentCacheEnabled → defaults to true
+        $this->assertTrue(IsPersistentCacheEnabled());
+    }
+
+    public function testGetPersistentCacheTtlSecondsReturnsPositiveInteger(): void
+    {
+        $ttl = GetPersistentCacheTtlSeconds();
+        $this->assertIsInt($ttl);
+        $this->assertGreaterThan(0, $ttl);
+    }
+
+    // --- SetServerConf INSERT path (new setting) and SetServerConfValue ---
+
+    public function testSetServerConfInsertsNewSettingAsSuperAdmin(): void
+    {
+        LegacyApp::loadUserFunctions();
+        LegacyApp::loginAsAdmin();
+
+        $settingName = 'UO_HARNESS_TEST_' . uniqid();
+        try {
+            SetServerConf([['name' => $settingName, 'value' => 'harness_val']]);
+            $stored = DBQueryToValue("SELECT value FROM uo_setting WHERE name='$settingName'");
+            $this->assertSame('harness_val', $stored);
+        } finally {
+            DBQuery("DELETE FROM uo_setting WHERE name='$settingName'");
+            $_SESSION = [];
+        }
+    }
+
 
     private static function expectedConfig(): array
     {
