@@ -290,8 +290,8 @@
       "load_profile": "bootstrap_only",
       "test_path_exists": true,
       "status": "covered",
-      "triage_status": "untriaged",
-      "triage_notes": "",
+      "triage_status": "triaged",
+      "triage_notes": "96.9% achieved. Remaining 7 lines: LogPageLoad/LogVisitor disabled-return (304, 352) \u2014 static cache in IsVisitorLoggingDisabled prevents testing after first enabled call; IsVisitorLoggingDisabled null-setting path (335-336) \u2014 requires DB without that setting; EventCount DB failure path (138) \u2014 hard to trigger; LogResetVisitorCounter/PageLoadCounter non-superadmin (392, 410) \u2014 isSuperAdmin returns true once loaded in process context.",
       "notes": "Feasible shallow target; keep coverage on event-category enumeration and direct event-log inserts.",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/logging.functions.php"
     },
