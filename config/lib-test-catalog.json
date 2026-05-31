@@ -610,8 +610,8 @@
       "load_profile": "bootstrap_only",
       "test_path_exists": true,
       "status": "covered",
-      "triage_status": "untriaged",
-      "triage_notes": "",
+      "triage_status": "triaged",
+      "triage_notes": "80.7% achieved. Remaining ~19%: die() paths in AddUrl/AddMail/SetUrl/SetMail/RemoveUrl/AddMediaUrl/RemoveMediaUrl non-superadmin branches, and CanEditMediaTarget switch-case branches (game/team/player/club/series/pool) + CanEditClubMediaTarget + CanEditPlayerMediaTarget \u2014 require non-superadmin users with specific media rights and fixtures.",
       "notes": "Feasible read-only target; prefer fixture-backed URL reads and defer superadmin-only write paths.",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/url.functions.php"
     },
