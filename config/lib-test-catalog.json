@@ -594,8 +594,8 @@
       "load_profile": "bootstrap_only",
       "test_path_exists": true,
       "status": "covered",
-      "triage_status": "untriaged",
-      "triage_notes": "",
+      "triage_status": "triaged",
+      "triage_notes": "82.9% achieved. Remaining ~17%: AllTranslations body requiring $locales global and DB data (lines 72-121), autocompleteTranslate multi-word branch details (318, 332), and die() paths in Translations/ExistingTranslationKey/SetTranslation/AddTranslation/RemoveTranslation (130, 148, 178, 208, 221). Load profile widened from bootstrap_only to database_only; added utf8entities shim for unit suite.",
       "notes": "",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/translation.functions.php"
     },
