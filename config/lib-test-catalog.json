@@ -274,8 +274,8 @@
       "load_profile": "database_only",
       "test_path_exists": true,
       "status": "covered",
-      "triage_status": "untriaged",
-      "triage_notes": "",
+      "triage_status": "triaged",
+      "triage_notes": "96.4% achieved. Remaining 4 lines are die() paths in SetLocation/AddLocation/RemoveLocation else-branches (lines 122, 169, 176, 180) \u2014 genuinely hard to reach without in-process process isolation.",
       "notes": "",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/location.functions.php"
     },
