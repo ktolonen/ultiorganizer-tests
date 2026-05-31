@@ -146,8 +146,8 @@
       "load_profile": "database_only",
       "test_path_exists": true,
       "status": "covered",
-      "triage_status": "untriaged",
-      "triage_notes": "",
+      "triage_status": "triaged",
+      "triage_notes": "99.2% achieved. Remaining 4 lines are die() paths: RemoveCountry not-superadmin (160), RemoveCountry in-use (164), AddCountry not-superadmin (190), SetCountryValidity not-superadmin (219).",
       "notes": "Representative DB-backed helper target for baseline fixture assertions.",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/country.functions.php"
     },
