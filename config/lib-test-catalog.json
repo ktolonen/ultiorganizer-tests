@@ -264,6 +264,22 @@
       "sut_path": "/home/kari/dev/ultiorganizer/lib/include_only.guard.php"
     },
     {
+      "lib_file": "locale.functions.php",
+      "lib_path": "lib/locale.functions.php",
+      "subject_id": "locale.functions",
+      "test_suite": "unit",
+      "test_path": "tests/Unit/Lib/LocaleFunctionsLibTest.php",
+      "test_class": "LocaleFunctionsLibTest",
+      "strategy": "direct_helper",
+      "load_profile": "bootstrap_only",
+      "test_path_exists": false,
+      "status": "missing",
+      "triage_status": "untriaged",
+      "triage_notes": "",
+      "notes": "",
+      "sut_path": "/home/kari/dev/ultiorganizer/lib/locale.functions.php"
+    },
+    {
       "lib_file": "location.functions.php",
       "lib_path": "lib/location.functions.php",
       "subject_id": "location.functions",
@@ -466,8 +482,8 @@
       "load_profile": "database_only",
       "test_path_exists": true,
       "status": "covered",
-      "triage_status": "untriaged",
-      "triage_notes": "",
+      "triage_status": "triaged",
+      "triage_notes": "80.6% achieved. Remaining ~19%: ConfirmEnrolledTeam body (827-905) needs ClubId/AddClub/AddSeasonUserRole from club/user lib files not loaded; SeriesTeamResponsibles (939-954) dies unless user has editseason property (not just superadmin); die() paths in enrolled team functions (532,711,727,739,758,774,790,812,901); SeriesPoolTemplateSql valid-template path (585) needs a real uo_pooltemplate row.",
       "notes": "",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/series.functions.php"
     },
