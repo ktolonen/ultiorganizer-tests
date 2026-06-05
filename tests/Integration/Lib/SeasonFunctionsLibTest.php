@@ -11,12 +11,17 @@ final class SeasonFunctionsLibTest extends TestCase
     {
         LegacyApp::resetRequestState();
         LegacyApp::loadLibFileUsingProfile('season.functions.php', 'database_only');
+        ClearSeasonRuntimeCache();
+        $_SESSION['userproperties']['locale'] = 'en_GB.utf8';
     }
 
     protected function tearDown(): void
     {
+        ClearSeasonRuntimeCache();
         LegacyApp::closeDatabaseConnection();
     }
+
+    // --- SeasonSeries / SeasonPools (existing) ---
 
     public function testSeasonSeriesAndPoolsReadBaselineFixture(): void
     {
@@ -29,12 +34,384 @@ final class SeasonFunctionsLibTest extends TestCase
         $this->assertSame('Pool A', $pools[0]['poolname']);
     }
 
+    public function testSeasonSeriesAllIncludesFixtureSeries(): void
+    {
+        $all = SeasonSeries('HRN2026', false);
+        $this->assertNotEmpty($all);
+    }
+
+    public function testSeasonPoolsWithoutFilters(): void
+    {
+        $pools = SeasonPools('HRN2026', false, false);
+        $this->assertIsArray($pools);
+    }
+
+    // --- SeasonTypes ---
+
+    public function testSeasonTypesReturnsNonEmptyList(): void
+    {
+        $types = SeasonTypes();
+        $this->assertIsArray($types);
+        $this->assertNotEmpty($types);
+        $this->assertContains('outdoor', $types);
+    }
+
+    // --- ClearSeasonRuntimeCache ---
+
+    public function testClearSeasonRuntimeCacheClearsWithoutError(): void
+    {
+        SeasonInfo('HRN2026');
+        ClearSeasonRuntimeCache();
+        $this->assertIsArray(SeasonInfo('HRN2026'));
+    }
+
+    // --- CurrentSeason / CurrentSeasons ---
+
+    public function testCurrentSeasonReturnsValueOrNull(): void
+    {
+        $result = CurrentSeason();
+        $this->assertTrue($result === null || is_string($result));
+    }
+
+    public function testCurrentSeasonsReturnsArray(): void
+    {
+        $this->assertIsArray(CurrentSeasons());
+    }
+
+    public function testCurrentSeasonNameReturnsString(): void
+    {
+        $this->assertIsString(CurrentSeasonName());
+    }
+
+    // --- SeasonName / Seasontype ---
+
+    public function testSeasonNameReturnsFixtureSeasonName(): void
+    {
+        $name = SeasonName('HRN2026');
+        $this->assertIsString($name);
+        $this->assertNotEmpty($name);
+    }
+
+    public function testSeasontypeReturnsFixtureType(): void
+    {
+        $this->assertIsString(Seasontype('HRN2026'));
+    }
+
+    // --- SeasonInfo ---
+
+    public function testSeasonInfoReturnsFixtureData(): void
+    {
+        $info = SeasonInfo('HRN2026');
+        $this->assertIsArray($info);
+        $this->assertSame('HRN2026', $info['season_id']);
+    }
+
+    public function testSeasonInfoReturnsFalseForMissingId(): void
+    {
+        $this->assertFalse((bool) SeasonInfo('NOSUCHSEASON9999'));
+    }
+
+    // --- IsSeasonPublicExternal / RequireSeasonPublicExternal / SeasonHomeTeamMode ---
+
+    public function testIsSeasonPublicExternalReturnsBool(): void
+    {
+        $this->assertIsBool(IsSeasonPublicExternal('HRN2026'));
+    }
+
+    public function testSeasonHomeTeamModeReturnsInt(): void
+    {
+        $this->assertIsInt(SeasonHomeTeamMode('HRN2026'));
+    }
+
+    // --- isEventReadonly / IsSeasonInMaintenance / CanBypassEventMaintenance ---
+
+    public function testIsEventReadonlyReturnsFalseForFixtureSeason(): void
+    {
+        $this->assertFalse(isEventReadonly('HRN2026'));
+    }
+
+    public function testIsSeasonInMaintenanceReturnsBool(): void
+    {
+        $this->assertIsBool(IsSeasonInMaintenance('HRN2026'));
+    }
+
+    public function testCanBypassEventMaintenanceReturnsBool(): void
+    {
+        $this->assertIsBool(CanBypassEventMaintenance('HRN2026'));
+    }
+
+    // --- MaintenanceSeasonFromView ---
+
+    public function testMaintenanceSeasonFromViewReturnsEmptyForUnknownView(): void
+    {
+        // Returns "" (empty string) when no GET params and view not in currentSeasonViews
+        $this->assertSame('', MaintenanceSeasonFromView('nonexistent_view_xyz'));
+    }
+
+    public function testMaintenanceSeasonFromViewWithSeasonGetParam(): void
+    {
+        $_GET['season'] = 'HRN2026';
+        $result = MaintenanceSeasonFromView('pools');
+        $this->assertTrue($result === null || is_string($result));
+    }
+
+    public function testMaintenanceSeasonFromViewWithPoolGetParam(): void
+    {
+        $_GET['pool'] = '200';
+        $result = MaintenanceSeasonFromView('poolstatus');
+        $this->assertTrue($result === null || is_string($result));
+    }
+
+    // --- MaintenanceSeasonFromTeam ---
+
+    public function testMaintenanceSeasonFromTeamReturnsEmptyOrNullForMissingTeam(): void
+    {
+        $result = MaintenanceSeasonFromTeam(99999);
+        $this->assertTrue($result === null || $result === '');
+    }
+
+    public function testMaintenanceSeasonFromTeamReturnsSeasonForFixtureTeam(): void
+    {
+        $result = MaintenanceSeasonFromTeam(300);
+        $this->assertSame('HRN2026', $result);
+    }
+
+    // --- SeasonExists / SeasonNameExists ---
+
+    public function testSeasonExistsReturnsTrueForFixtureSeason(): void
+    {
+        $this->assertTrue(SeasonExists('HRN2026'));
+    }
+
+    public function testSeasonExistsReturnsFalseForMissingSeason(): void
+    {
+        $this->assertFalse(SeasonExists('NOSUCHSEASON9999'));
+    }
+
+    public function testSeasonNameExistsReturnsTrueForFixtureName(): void
+    {
+        $name = DBQueryToValue("SELECT name FROM uo_season WHERE season_id='HRN2026'");
+        $this->assertTrue(SeasonNameExists((string) $name));
+    }
+
+    public function testSeasonNameExistsReturnsFalseForMissingName(): void
+    {
+        $this->assertFalse(SeasonNameExists('No Such Season Name XYZXYZ9999'));
+    }
+
+    // --- Seasons / PublicExternalSeasons / SeasonsAllInfo / SeasonsByType / EnrollSeasons ---
+
+    public function testSeasonsWithNoFilterReturnsResult(): void
+    {
+        $result = DBFetchAllAssoc(Seasons());
+        $this->assertIsArray($result);
+        $this->assertNotEmpty($result);
+    }
+
+    public function testSeasonsWithFilterReturnsResult(): void
+    {
+        $result = DBFetchAllAssoc(Seasons(['season.season_id' => 'HRN2026']));
+        $this->assertIsArray($result);
+    }
+
+    public function testPublicExternalSeasonsReturnsArray(): void
+    {
+        $this->assertIsArray(PublicExternalSeasons());
+    }
+
+    public function testSeasonsAllInfoReturnsArray(): void
+    {
+        $this->assertIsArray(SeasonsAllInfo());
+    }
+
+    public function testSeasonsByTypeReturnsArray(): void
+    {
+        $this->assertIsArray(SeasonsByType('open'));
+    }
+
+    public function testEnrollSeasonsReturnsArray(): void
+    {
+        $this->assertIsArray(EnrollSeasons());
+    }
+
+    // --- SeasonAllPlayers / SeasonMissingPlayerProfilesCount ---
+
+    public function testSeasonAllPlayersReturnsArray(): void
+    {
+        $this->assertIsArray(SeasonAllPlayers('HRN2026'));
+    }
+
     public function testSeasonReservationsAndMissingProfilesReadFixtureState(): void
     {
         $reservations = SeasonReservations('HRN2026');
-
         $this->assertCount(2, $reservations);
         $this->assertSame('Harness Field Complex', $reservations[0]['name']);
         $this->assertSame(4, (int) SeasonMissingPlayerProfilesCount('HRN2026'));
+    }
+
+    // --- SeasonTeams ---
+
+    public function testSeasonTeamsReturnsFixtureTeams(): void
+    {
+        $teams = SeasonTeams('HRN2026');
+        $this->assertIsArray($teams);
+        $this->assertCount(2, $teams);
+    }
+
+    public function testSeasonTeamsIncludingInvalidReturnsAll(): void
+    {
+        $this->assertIsArray(SeasonTeams('HRN2026', false));
+    }
+
+    // --- SeasonReservationgroups / SeasonReservationLocations ---
+
+    public function testSeasonReservationgroupsReturnsArray(): void
+    {
+        $this->assertIsArray(SeasonReservationgroups('HRN2026'));
+    }
+
+    public function testSeasonReservationLocationsReturnsArray(): void
+    {
+        $this->assertIsArray(SeasonReservationLocations('HRN2026'));
+    }
+
+    public function testSeasonReservationLocationsWithGroupReturnsArray(): void
+    {
+        $this->assertIsArray(SeasonReservationLocations('HRN2026', 'field'));
+    }
+
+    // --- SeasonGamesNotScheduled / SeasonAllGames ---
+
+    public function testSeasonGamesNotScheduledReturnsArray(): void
+    {
+        $this->assertIsArray(SeasonGamesNotScheduled('HRN2026'));
+    }
+
+    public function testSeasonAllGamesReturnsArray(): void
+    {
+        $this->assertIsArray(SeasonAllGames('HRN2026'));
+    }
+
+    // --- SeasonTeamAdmins / SeasonAccreditationAdmins / SeasonGameAdmins / SeasonSpiritAdmins / SeasonAdmins
+    //     These die() without isSuperAdmin or editseason right — require loginAsAdmin ---
+
+    public function testSeasonAdminListingFunctionsAsSuperAdmin(): void
+    {
+        LegacyApp::loadUserFunctions();
+        LegacyApp::loginAsAdmin();
+        try {
+            $this->assertIsArray(SeasonTeamAdmins('HRN2026'));
+            $this->assertIsArray(SeasonTeamAdmins('HRN2026', true));
+            $this->assertIsArray(SeasonAccreditationAdmins('HRN2026'));
+            $this->assertIsArray(SeasonAccreditationAdmins('HRN2026', true));
+            $this->assertIsArray(SeasonGameAdmins('HRN2026'));
+            $this->assertIsArray(SeasonSpiritAdmins('HRN2026'));
+            $this->assertIsArray(SeasonAdmins('HRN2026'));
+        } finally {
+            $_SESSION = [];
+        }
+    }
+
+    // --- CanDeleteSeason ---
+
+    public function testCanDeleteSeasonReturnsFalseWhenSeriesExist(): void
+    {
+        $this->assertFalse(CanDeleteSeason('HRN2026'));
+    }
+
+    // --- Admin: SetEventReadonly, AddSeason, SetSeason, SetSeasonSpiritSettings, DeleteSeason ---
+
+    public function testSetEventReadonlyTogglesFlag(): void
+    {
+        LegacyApp::loadUserFunctions();
+        LegacyApp::loginAsAdmin();
+        try {
+            SetEventReadonly('HRN2026');
+            ClearSeasonRuntimeCache();
+            $this->assertTrue(isEventReadonly('HRN2026'));
+        } finally {
+            DBQuery("UPDATE uo_season SET event_readonly=0 WHERE season_id='HRN2026'");
+            ClearSeasonRuntimeCache();
+            $_SESSION = [];
+        }
+    }
+
+    private static function minimalSeasonParams(string $name): array
+    {
+        return [
+            'name' => $name,
+            'type' => 'outdoor',
+            'istournament' => 0,
+            'isinternational' => 0,
+            'organizer' => '',
+            'category' => '',
+            'isnationalteams' => 0,
+            'starttime' => '2030-01-01',
+            'endtime' => '2030-12-31',
+            'iscurrent' => 0,
+            'enrollopen' => 0,
+            'enroll_deadline' => '2030-01-01 00:00:00',
+            'spiritmode' => 0,
+            'showspiritpoints' => 0,
+            'showspiritcomments' => 0,
+            'showspiritpointsonlyoncomplete' => 0,
+            'lockteamspiritonsubmit' => 0,
+            'use_season_points' => 0,
+            'hide_time_on_scoresheet' => 0,
+            'hometeammode' => 0,
+            'event_readonly' => 0,
+            'maintenance_mode' => 0,
+            'api_public' => 0,
+            'timezone' => 'Europe/Helsinki',
+        ];
+    }
+
+    public function testAddSetDeleteSeasonRoundTrip(): void
+    {
+        LegacyApp::loadUserFunctions();
+        LegacyApp::loginAsAdmin();
+        $newId = 'TST' . substr(uniqid(), -7); // max 10 chars
+        try {
+            $params = self::minimalSeasonParams('Test Harness Season');
+            AddSeason($newId, $params);
+            $this->assertTrue(SeasonExists($newId));
+
+            $params['name'] = 'Updated Harness Season';
+            SetSeason($newId, $params);
+            ClearSeasonRuntimeCache();
+            $this->assertSame('Updated Harness Season', SeasonInfo($newId)['name']);
+
+            $this->assertTrue(CanDeleteSeason($newId));
+            DeleteSeason($newId);
+            $this->assertFalse(SeasonExists($newId));
+            $newId = null;
+        } finally {
+            if ($newId !== null) {
+                DBQuery("DELETE FROM uo_season WHERE season_id='" . DBEscapeString($newId) . "'");
+            }
+            ClearSeasonRuntimeCache();
+            $_SESSION = [];
+        }
+    }
+
+    public function testSetSeasonSpiritSettingsRunsWithoutError(): void
+    {
+        LegacyApp::loadUserFunctions();
+        LegacyApp::loginAsAdmin();
+        $newId = 'TST' . substr(uniqid(), -7);
+        try {
+            AddSeason($newId, self::minimalSeasonParams('Spirit Test Season'));
+            SetSeasonSpiritSettings($newId, [
+                'spirit_enabled' => 1,
+                'spirit_public' => 0,
+            ]);
+            $this->assertTrue(SeasonExists($newId));
+        } finally {
+            if (SeasonExists($newId)) {
+                DeleteSeason($newId);
+            }
+            ClearSeasonRuntimeCache();
+            $_SESSION = [];
+        }
     }
 }

@@ -450,8 +450,8 @@
       "load_profile": "database_only",
       "test_path_exists": true,
       "status": "covered",
-      "triage_status": "untriaged",
-      "triage_notes": "",
+      "triage_status": "triaged",
+      "triage_notes": "82.7% achieved. Remaining ~17%: EnforceSoftMaintenanceForView/RequireSeasonPublicExternal have exit() calls; die() paths in SeasonTeamAdmins/SeasonAccreditationAdmins/SeasonGameAdmins/SeasonSpiritAdmins/SeasonAdmins/AddSeason/SetSeason/DeleteSeason/SetEventReadonly when not superadmin; MaintenanceSeasonFromView branches for game/team/player/profile/team1 GET params; SetSeasonSpiritSettings die() path.",
       "notes": "Feasible read-only target; keep first-pass coverage on deterministic season, pool, and reservation reads.",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/season.functions.php"
     },
