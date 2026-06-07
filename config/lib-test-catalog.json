@@ -578,8 +578,8 @@
       "load_profile": "team_stack",
       "test_path_exists": true,
       "status": "covered",
-      "triage_status": "untriaged",
-      "triage_notes": "",
+      "triage_status": "triaged",
+      "triage_notes": "55.9% achieved (up from 12.3%). Covered: name/identity reads, player arrays, team listings, pool/game reads, stats/points/scoreboards, and admin AddTeam/SetTeam/SetTeamName/SetTeamOwner/rank-setters/DeleteTeam/TeamCopyRoster round-trips. Remaining ~44%: TeamMove (lines 452-593, ~140 lines playoff-tree movement) needs playoff/continuation pools with scheduling+movement rules absent from baseline fixture; UploadTeamImage/SetTeamProfileImage/RemoveTeamProfileImage need PHP-GD (not installed); AddPlayer/RemovePlayer/SetTeamProfile need the player stack + player_profile fixtures; assorted die() rights-failure branches. NOTE: uses flushQueryCaches() after writes (DBQuery* persistent cache).",
       "notes": "Mixed legacy-heavy pilot target; keep first-pass assertions on stable fixture reads instead of mutation-heavy branches.",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/team.functions.php"
     },

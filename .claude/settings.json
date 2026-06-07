@@ -7,7 +7,14 @@
       "Bash(vendor/bin/phpstan analyse *)",
       "Bash(./libtest:run *)",
       "Bash(sed -n *)",
-      "Bash(docker exec ultiorganizer-tests-php-test-1 *)"
+      "Bash(docker exec ultiorganizer-tests-php-test-1 *)",
+      "Bash(./test:unit *)",
+      "Bash(./test:integration *)",
+      "Bash(./test:filter *)",
+      "Bash(./libtest:catalog-refresh *)",
+      "Bash(./test:quick *)",
+      "Bash(./test:matrix *)",
+      "Bash(./test:case *)"
     ]
   }
 }
