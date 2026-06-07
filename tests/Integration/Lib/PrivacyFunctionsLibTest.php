@@ -1,0 +1,339 @@
+<?php
+
+declare(strict_types=1);
+
+use PHPUnit\Framework\TestCase;
+use UltiorganizerHarness\Support\LegacyApp;
+
+final class PrivacyFunctionsLibTest extends TestCase
+{
+    protected function setUp(): void
+    {
+        LegacyApp::resetRequestState();
+        // privacy.functions transitively requires common/player/user/image/url/logging
+        LegacyApp::loadLibFileUsingProfile('privacy.functions.php', 'database_only');
+        // Most privacy functions call PrivacyRequireSuperAdmin() (Forbidden-exits otherwise)
+        LegacyApp::loginAsAdmin();
+        $_SESSION['userproperties']['locale'] = 'en_GB.utf8';
+    }
+
+    protected function tearDown(): void
+    {
+        $_SESSION = [];
+        LegacyApp::closeDatabaseConnection();
+    }
+
+    private static function flushQueryCaches(): void
+    {
+        foreach (['db_query_value', 'db_query_array', 'db_query_row', 'db_query_rowcount'] as $ns) {
+            if (function_exists('CacheForgetPersistent')) {
+                CacheForgetPersistent($ns);
+            }
+            if (function_exists('CacheForgetNamespace')) {
+                CacheForgetNamespace($ns);
+            }
+        }
+    }
+
+    // ===== Pure helpers (no DB / no superadmin needed) =====
+
+    public function testPrivacySlugPassesThroughAlreadyCleanValue(): void
+    {
+        $this->assertSame('hello-world', PrivacySlug('hello-world'));
+    }
+
+    public function testPrivacySlugReplacesSpacesAndSpecialChars(): void
+    {
+        $this->assertSame('Hello-World', PrivacySlug('Hello World!'));
+    }
+
+    public function testPrivacySlugPreservesDotsUnderscoresAndDashes(): void
+    {
+        $this->assertSame('John_Smith.99', PrivacySlug('John_Smith.99'));
+    }
+
+    public function testPrivacySlugReturnsSubjectForEmptyString(): void
+    {
+        $this->assertSame('subject', PrivacySlug(''));
+        $this->assertSame('subject', PrivacySlug('---'));
+    }
+
+    public function testPrivacyScalarToTextHandlesSpecialValues(): void
+    {
+        $this->assertSame('(null)', PrivacyScalarToText(null));
+        $this->assertSame('(empty)', PrivacyScalarToText(''));
+        $this->assertSame('1', PrivacyScalarToText(true));
+        $this->assertSame('0', PrivacyScalarToText(false));
+        $this->assertSame('["a","b"]', PrivacyScalarToText(['a', 'b']));
+        $this->assertSame('line1\nline2', PrivacyScalarToText("line1\nline2"));
+        $this->assertSame('plain', PrivacyScalarToText('plain'));
+    }
+
+    public function testPrivacyIntListFiltersNonPositiveIntegers(): void
+    {
+        $this->assertSame('1,2,3', PrivacyIntList([1, '2', 3, 0, -5, 'x']));
+        $this->assertSame('', PrivacyIntList([]));
+    }
+
+    public function testPrivacyQuotedListQuotesAndEscapesNonEmptyValues(): void
+    {
+        $this->assertSame("'a','b'", PrivacyQuotedList(['a', '', 'b', '  ']));
+        $this->assertSame('', PrivacyQuotedList([]));
+    }
+
+    public function testPrivacyUserEventLogWhereBuildsOrClause(): void
+    {
+        $where = PrivacyUserEventLogWhere('admin');
+        $this->assertStringContainsString("user_id='admin'", $where);
+        $this->assertStringContainsString("id1='admin'", $where);
+        $this->assertStringContainsString("id2='admin'", $where);
+    }
+
+    public function testPrivacySanitizePlayerPrivacyRowsHidesUserIds(): void
+    {
+        $rows = [
+            ['user_id' => 'secret', 'data' => 'x'],
+            ['userid' => 'secret2', 'data' => 'y'],
+            ['data' => 'z'],
+        ];
+        $sanitized = PrivacySanitizePlayerPrivacyRows($rows);
+        $this->assertSame('(hidden)', $sanitized[0]['user_id']);
+        $this->assertSame('(hidden)', $sanitized[1]['userid']);
+        $this->assertSame('z', $sanitized[2]['data']);
+    }
+
+    public function testPrivacySanitizePlayerEventLogRowsDelegates(): void
+    {
+        $rows = [['user_id' => 'secret']];
+        $this->assertSame('(hidden)', PrivacySanitizePlayerEventLogRows($rows)[0]['user_id']);
+    }
+
+    public function testPrivacyPlayerMatchSortOrdersByNameThenIds(): void
+    {
+        $a = ['player_name' => 'Alpha', 'season_name' => '', 'series_name' => '', 'team_name' => '', 'player_id' => 1];
+        $b = ['player_name' => 'Beta', 'season_name' => '', 'series_name' => '', 'team_name' => '', 'player_id' => 2];
+        $this->assertLessThan(0, PrivacyPlayerMatchSort($a, $b));
+        $this->assertGreaterThan(0, PrivacyPlayerMatchSort($b, $a));
+    }
+
+    public function testPrivacyPlayerMatchSortTieBreaksOnPlayerId(): void
+    {
+        $base = ['player_name' => 'Same', 'season_name' => 'S', 'series_name' => 'D', 'team_name' => 'T'];
+        $a = $base + ['player_id' => 5];
+        $b = $base + ['player_id' => 9];
+        $this->assertLessThan(0, PrivacyPlayerMatchSort($a, $b));
+    }
+
+    public function testPrivacyPlayerIdentityLabelBuildsReadableLabel(): void
+    {
+        $subject = ['selected' => [
+            'firstname' => 'Ari', 'lastname' => 'Ace',
+            'teamname' => 'Helsinki Heat', 'seriesname' => 'Open', 'season_name' => 'HRN',
+        ]];
+        $label = PrivacyPlayerIdentityLabel($subject);
+        $this->assertStringContainsString('Ari Ace', $label);
+        $this->assertStringContainsString('team=Helsinki Heat', $label);
+    }
+
+    public function testPrivacyPlayerIdentityLabelHandlesUnnamedPlayer(): void
+    {
+        $subject = ['selected' => ['firstname' => '', 'lastname' => '']];
+        $this->assertStringContainsString('(unnamed player)', PrivacyPlayerIdentityLabel($subject));
+    }
+
+    public function testPrivacyAppendRowsSectionFormatsRows(): void
+    {
+        $lines = [];
+        PrivacyAppendRowsSection($lines, 'My Section', [['a' => '1', 'b' => '2']]);
+        $text = implode("\n", $lines);
+        $this->assertStringContainsString('=== My Section ===', $text);
+        $this->assertStringContainsString('Row count: 1', $text);
+        $this->assertStringContainsString('a: 1', $text);
+    }
+
+    public function testPrivacyAppendRowsSectionHandlesEmpty(): void
+    {
+        $lines = [];
+        PrivacyAppendRowsSection($lines, 'Empty', []);
+        $text = implode("\n", $lines);
+        $this->assertStringContainsString('Row count: 0', $text);
+        $this->assertStringContainsString('(none)', $text);
+    }
+
+    public function testPrivacyUserReportFilenameUsesSlug(): void
+    {
+        $this->assertSame('user-privacy-report-admin.txt', PrivacyUserReportFilename('admin'));
+    }
+
+    // ===== DB-backed report reads (superadmin set in setUp) =====
+
+    public function testPrivacyPlayerMatchesFindsFixturePlayer(): void
+    {
+        $matches = PrivacyPlayerMatches('Ace');
+        $this->assertNotEmpty($matches);
+        $names = array_column($matches, 'player_name');
+        $this->assertContains('Ari Ace', $names);
+    }
+
+    public function testPrivacyPlayerMatchesReturnsEmptyForBlankSearch(): void
+    {
+        $this->assertSame([], PrivacyPlayerMatches('   '));
+    }
+
+    public function testPrivacyPlayerMatchesReturnsEmptyForNoMatch(): void
+    {
+        $this->assertSame([], PrivacyPlayerMatches('NoSuchPlayerXYZ'));
+    }
+
+    public function testPrivacyGetPlayerSubjectReturnsSubjectForFixturePlayer(): void
+    {
+        $subject = PrivacyGetPlayerSubject(800);
+        $this->assertIsArray($subject);
+        $this->assertArrayHasKey('selected', $subject);
+        $this->assertSame(800, (int) $subject['selected']['player_id']);
+    }
+
+    public function testPrivacyGetPlayerSubjectReturnsNullForInvalidId(): void
+    {
+        $this->assertNull(PrivacyGetPlayerSubject(0));
+        $this->assertNull(PrivacyGetPlayerSubject(999999));
+    }
+
+    public function testPrivacyCollectPlayerReportDataReturnsSections(): void
+    {
+        $data = PrivacyCollectPlayerReportData(800);
+        $this->assertIsArray($data);
+        $this->assertArrayHasKey('subject', $data);
+        $this->assertArrayHasKey('player_rows', $data);
+    }
+
+    public function testPrivacyRenderPlayerReportTextProducesReport(): void
+    {
+        $report = PrivacyRenderPlayerReportText(800, 'admin');
+        $this->assertIsString($report);
+        $this->assertStringContainsString('Ultiorganizer Privacy Report', $report);
+        $this->assertStringContainsString('Subject type: player', $report);
+    }
+
+    public function testPrivacyRenderPlayerReportTextReturnsNullForMissingPlayer(): void
+    {
+        $this->assertNull(PrivacyRenderPlayerReportText(999999, 'admin'));
+    }
+
+    public function testPrivacyPlayerReportFilenameReflectsSubject(): void
+    {
+        $filename = PrivacyPlayerReportFilename(800);
+        $this->assertStringStartsWith('player-privacy-report-', $filename);
+        $this->assertStringEndsWith('.txt', $filename);
+    }
+
+    public function testPrivacyPlayerReportFilenameFallsBackForMissingPlayer(): void
+    {
+        $this->assertSame('player-privacy-report.txt', PrivacyPlayerReportFilename(999999));
+    }
+
+    public function testPrivacyLogPlayerReportExportLogsAndReturnsId(): void
+    {
+        $result = PrivacyLogPlayerReportExport(800, 'admin');
+        $this->assertNotFalse($result);
+        self::flushQueryCaches();
+        $count = DBQueryToValue("SELECT COUNT(*) FROM uo_event_log WHERE source='privacy' AND category='security'");
+        $this->assertGreaterThan(0, (int) $count);
+        DBQuery("DELETE FROM uo_event_log WHERE source='privacy'");
+    }
+
+    public function testPrivacyLogPlayerReportExportReturnsFalseForMissingPlayer(): void
+    {
+        $this->assertFalse(PrivacyLogPlayerReportExport(999999, 'admin'));
+    }
+
+    public function testPrivacyLogOperationWritesSecurityEvent(): void
+    {
+        $id = PrivacyLogOperation('admin', 'test privacy operation', 'player:800');
+        $this->assertNotFalse($id);
+        DBQuery("DELETE FROM uo_event_log WHERE event_id=" . (int) $id);
+    }
+
+    // ===== Registered-user report reads =====
+
+    public function testPrivacyUserMatchesFindsAdminUser(): void
+    {
+        $matches = PrivacyUserMatches('admin');
+        $this->assertIsArray($matches);
+        $this->assertNotEmpty($matches);
+    }
+
+    public function testPrivacyUserMatchesReturnsEmptyForBlankSearch(): void
+    {
+        $this->assertSame([], PrivacyUserMatches('   '));
+    }
+
+    public function testPrivacyGetUserSubjectReturnsAdminSubject(): void
+    {
+        $subject = PrivacyGetUserSubject('admin');
+        $this->assertIsArray($subject);
+        $this->assertArrayHasKey('user', $subject);
+    }
+
+    public function testPrivacyGetUserSubjectReturnsNullForMissingUser(): void
+    {
+        $this->assertNull(PrivacyGetUserSubject('nosuchuser_xyz'));
+    }
+
+    public function testPrivacyCollectUserReportDataReturnsSections(): void
+    {
+        $data = PrivacyCollectUserReportData('admin');
+        $this->assertIsArray($data);
+        $this->assertArrayHasKey('user_row', $data);
+    }
+
+    public function testPrivacyRenderUserReportTextProducesReport(): void
+    {
+        $report = PrivacyRenderUserReportText('admin', 'admin');
+        $this->assertIsString($report);
+        $this->assertStringContainsString('Subject type: registered user', $report);
+    }
+
+    public function testPrivacyRenderUserReportTextReturnsNullForMissingUser(): void
+    {
+        $this->assertNull(PrivacyRenderUserReportText('nosuchuser_xyz', 'admin'));
+    }
+
+    public function testPrivacyLogUserReportExportLogsAndReturnsId(): void
+    {
+        $result = PrivacyLogUserReportExport('admin', 'admin');
+        $this->assertNotFalse($result);
+        DBQuery("DELETE FROM uo_event_log WHERE source='privacy'");
+    }
+
+    public function testPrivacyLogUserReportExportReturnsFalseForMissingUser(): void
+    {
+        $this->assertFalse(PrivacyLogUserReportExport('nosuchuser_xyz', 'admin'));
+    }
+
+    // ===== Destructive: anonymize on a throwaway player =====
+
+    public function testPrivacyAnonymizePlayerOnThrowawayPlayer(): void
+    {
+        // Create a standalone player (no profile, no games) on fixture team 300
+        $playerId = (int) DBQueryInsert(
+            "INSERT INTO uo_player (firstname, lastname, team, num, accredited) VALUES ('Zoe', 'Zephyr', 300, 99, 1)"
+        );
+        try {
+            self::flushQueryCaches();
+            $result = PrivacyAnonymizePlayer($playerId, 'admin');
+            $this->assertNotFalse($result);
+            self::flushQueryCaches();
+            // The player's identifying names should be cleared/anonymized
+            $row = DBQueryToRow("SELECT firstname, lastname FROM uo_player WHERE player_id=$playerId");
+            if ($row) {
+                $this->assertNotSame('Zoe', $row['firstname']);
+            } else {
+                $this->assertTrue(true); // row removed entirely is also acceptable
+            }
+        } finally {
+            DBQuery("DELETE FROM uo_player WHERE player_id=$playerId");
+            DBQuery("DELETE FROM uo_event_log WHERE source='privacy'");
+        }
+    }
+}
