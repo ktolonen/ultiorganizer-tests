@@ -455,4 +455,103 @@ final class TeamFunctionsLibTest extends TestCase
             $_SESSION = [];
         }
     }
+
+    // --- Player add/remove and team profile (need player + logging stack) ---
+
+    private function loadPlayerStack(): void
+    {
+        LegacyApp::loadUserFunctions();
+        LegacyApp::loadLibFilesUsingProfile(
+            ['logging.functions.php', 'player.functions.php'],
+            'database_only'
+        );
+        LegacyApp::loginAsAdmin();
+    }
+
+    public function testAddAndRemovePlayerRoundTrip(): void
+    {
+        $this->loadPlayerStack();
+        $playerId = null;
+        try {
+            // No profileId → AddPlayer creates a new uo_player_profile then the player
+            $playerId = (int) AddPlayer(300, 'Test', 'Player', null, 23);
+            $this->assertGreaterThan(0, $playerId);
+            self::flushQueryCaches();
+            $names = TeamPlayerArray(300);
+            $this->assertArrayHasKey((string) $playerId, $names);
+            $this->assertSame('Test Player', $names[(string) $playerId]);
+
+            // A freshly added player has no played games → deletable
+            $this->assertTrue(CanDeletePlayer($playerId));
+
+            $result = RemovePlayer($playerId);
+            $this->assertNotFalse($result);
+            self::flushQueryCaches();
+            $this->assertArrayNotHasKey((string) $playerId, TeamPlayerArray(300));
+            $playerId = null;
+        } finally {
+            if ($playerId !== null) {
+                DBQuery("DELETE FROM uo_player WHERE player_id=$playerId");
+            }
+            $_SESSION = [];
+        }
+    }
+
+    public function testRemovePlayerReturnsFalseForMissingPlayer(): void
+    {
+        $this->loadPlayerStack();
+        try {
+            $this->assertFalse(RemovePlayer(999999));
+        } finally {
+            $_SESSION = [];
+        }
+    }
+
+    public function testCanDeletePlayerReturnsFalseForPlayerWithGames(): void
+    {
+        $this->loadPlayerStack();
+        try {
+            // Fixture player 800 has a uo_played row for game 700
+            $this->assertFalse(CanDeletePlayer(800));
+        } finally {
+            $_SESSION = [];
+        }
+    }
+
+    public function testSetTeamProfileInsertsThenUpdates(): void
+    {
+        $this->loadPlayerStack();
+        try {
+            // Insert path (no existing uo_team_profile row for team 300)
+            SetTeamProfile([
+                'team_id' => 300,
+                'abbreviation' => 'HEL',
+                'captain' => 'Ari Ace',
+                'coach' => 'Coach One',
+                'story' => 'A story',
+                'achievements' => 'None yet',
+            ]);
+            self::flushQueryCaches();
+            $profile = TeamProfile(300);
+            $this->assertIsArray($profile);
+            $this->assertSame('Ari Ace', $profile['captain']);
+
+            // Update path (row now exists)
+            SetTeamProfile([
+                'team_id' => 300,
+                'abbreviation' => 'HEL',
+                'captain' => 'Bea Blade',
+                'coach' => 'Coach Two',
+                'story' => 'Updated story',
+                'achievements' => 'Champions',
+            ]);
+            self::flushQueryCaches();
+            $updated = TeamProfile(300);
+            $this->assertSame('Bea Blade', $updated['captain']);
+            $this->assertSame('Champions', $updated['achievements']);
+        } finally {
+            DBQuery("DELETE FROM uo_team_profile WHERE team_id=300");
+            $_SESSION = [];
+        }
+    }
 }
