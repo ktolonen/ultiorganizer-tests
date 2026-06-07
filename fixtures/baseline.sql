@@ -26,6 +26,9 @@ INSERT INTO uo_season (
 );
 
 UPDATE uo_season SET api_public=1 WHERE season_id='HRN2026';
+-- Mark the season as a public event so it is reachable on public pages and via
+-- CurrentSeason(); the SUT gates private events behind the public_event flag.
+UPDATE uo_season SET public_event=1 WHERE season_id='HRN2026';
 
 INSERT INTO uo_api_token (
   token_id, token_hash, token_value, label, scope_type, scope_id, revoked, created_at, last_used

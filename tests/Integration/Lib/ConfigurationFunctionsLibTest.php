@@ -157,24 +157,28 @@ final class ConfigurationFunctionsLibTest extends TestCase
 
     public function testIsSelfRegistrationDisabledReflectsDisableSelfRegistrationConstant(): void
     {
-        // DISABLE_SELF_REGISTRATION = true in baseline test config
-        $this->assertTrue(IsSelfRegistrationDisabled());
+        // DISABLE_SELF_REGISTRATION differs per profile (true baseline, false config-overrides)
+        $expected = self::expectedConfig()['DISABLE_SELF_REGISTRATION'];
+        $this->assertSame($expected, IsSelfRegistrationDisabled());
     }
 
     public function testIsEmailDisabledReturnsFalseWhenNoEmailUndefined(): void
     {
-        // NO_EMAIL is not defined in the baseline test config
+        // NO_EMAIL is not defined in either test config
         $this->assertFalse(IsEmailDisabled());
     }
 
-    public function testIsPublicRegistrationDisabledReturnsTrueWhenSelfRegistrationDisabled(): void
+    public function testIsPublicRegistrationDisabledReflectsProfile(): void
     {
-        $this->assertTrue(IsPublicRegistrationDisabled());
+        // IsPublicRegistrationDisabled = IsSelfRegistrationDisabled || IsEmailDisabled.
+        // NO_EMAIL is undefined, so it tracks DISABLE_SELF_REGISTRATION.
+        $expected = self::expectedConfig()['DISABLE_SELF_REGISTRATION'];
+        $this->assertSame($expected, IsPublicRegistrationDisabled());
     }
 
-    public function testIsSelfRegistrationEnabledReturnsFalseWhenPublicRegistrationDisabled(): void
+    public function testIsSelfRegistrationEnabledIsInverseOfPublicRegistrationDisabled(): void
     {
-        $this->assertFalse(IsSelfRegistrationEnabled());
+        $this->assertSame(!IsPublicRegistrationDisabled(), IsSelfRegistrationEnabled());
     }
 
     // --- GetServerConf ---
