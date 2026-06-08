@@ -8,7 +8,10 @@ RUN apt-get update \
         ca-certificates \
         curl \
         git \
+        libfreetype6-dev \
+        libjpeg62-turbo-dev \
         libonig-dev \
+        libpng-dev \
         locales \
         mariadb-client \
         python3 \
@@ -16,7 +19,8 @@ RUN apt-get update \
         unzip \
         wget \
         zip \
-    && docker-php-ext-install mysqli gettext mbstring \
+    && docker-php-ext-configure gd --with-freetype --with-jpeg \
+    && docker-php-ext-install mysqli gettext mbstring gd \
     && pecl install pcov \
     && docker-php-ext-enable pcov \
     && a2enmod rewrite \

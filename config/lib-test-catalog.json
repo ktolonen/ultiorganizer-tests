@@ -243,7 +243,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "Ceiling ~36% without GD: imagejpeg, imagecreatetruecolor, imagecopyresampled are NOT installed in the php-test container. WriteJpegImage body (91-106), ConvertToJpeg processing body (115-144), CreateThumb processing body (153-206) all unreachable. RemoveImage (50-59) has die() else-branch. Load profile changed from bootstrap_only to database_only to enable GetImage/GetThumb/ImageInfo DB tests. To raise coverage, install php-gd in the Dockerfile \u2014 out of scope for this plan.",
+      "triage_notes": "81.4% (up from 36.3%) after adding php-gd to the php-test Dockerfile. Real GD image generation now exercises ConvertToJpeg/CreateThumb/WriteJpegImage for png/jpeg/gif sources and aspect-ratio branches. Remaining gap: WriteJpegImage rename-failure edge and RemoveImage die() non-superadmin path.",
       "notes": "",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/image.functions.php"
     },

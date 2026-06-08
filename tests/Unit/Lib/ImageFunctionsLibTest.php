@@ -7,6 +7,9 @@ use UltiorganizerHarness\Support\LegacyApp;
 
 final class ImageFunctionsLibTest extends TestCase
 {
+    /** @var string[] files to clean up */
+    private array $tempFiles = [];
+
     protected function setUp(): void
     {
         LegacyApp::resetRequestState();
@@ -16,17 +19,44 @@ final class ImageFunctionsLibTest extends TestCase
 
     protected function tearDown(): void
     {
+        foreach ($this->tempFiles as $f) {
+            if (is_file($f)) {
+                @unlink($f);
+            }
+        }
+        $this->tempFiles = [];
         LegacyApp::closeDatabaseConnection();
     }
 
-    // --- CanProcessImages ---
-
-    public function testCanProcessImagesReturnsBool(): void
+    private function tmp(string $suffix): string
     {
-        $this->assertIsBool(CanProcessImages());
+        $path = tempnam(sys_get_temp_dir(), 'uo_img_') . $suffix;
+        $this->tempFiles[] = $path;
+        return $path;
     }
 
-    // --- CanReadImageType ---
+    /** Create a real image file of the given type using GD; returns the path. */
+    private function makeImage(string $type, int $w = 40, int $h = 30): string
+    {
+        $img = imagecreatetruecolor($w, $h);
+        $color = imagecolorallocate($img, 120, 60, 200);
+        imagefilledrectangle($img, 0, 0, $w - 1, $h - 1, $color);
+        $path = $this->tmp('.' . $type);
+        match ($type) {
+            'jpg' => imagejpeg($img, $path),
+            'png' => imagepng($img, $path),
+            'gif' => imagegif($img, $path),
+        };
+        imagedestroy($img);
+        return $path;
+    }
+
+    // --- CanProcessImages / CanReadImageType ---
+
+    public function testCanProcessImagesReturnsTrueWithGd(): void
+    {
+        $this->assertTrue(CanProcessImages());
+    }
 
     public function testCanReadImageTypeReturnsFalseForUnknownType(): void
     {
@@ -35,11 +65,11 @@ final class ImageFunctionsLibTest extends TestCase
         $this->assertFalse(CanReadImageType(-1));
     }
 
-    public function testCanReadImageTypeReturnsBoolForKnownTypes(): void
+    public function testCanReadImageTypeReturnsTrueForSupportedTypes(): void
     {
-        $this->assertIsBool(CanReadImageType(1)); // GIF
-        $this->assertIsBool(CanReadImageType(2)); // JPEG
-        $this->assertIsBool(CanReadImageType(3)); // PNG
+        $this->assertTrue(CanReadImageType(1)); // GIF
+        $this->assertTrue(CanReadImageType(2)); // JPEG
+        $this->assertTrue(CanReadImageType(3)); // PNG
     }
 
     // --- GetImage / GetThumb / ImageInfo (DB-backed, no fixture rows) ---
@@ -59,45 +89,120 @@ final class ImageFunctionsLibTest extends TestCase
         $this->assertFalse((bool) ImageInfo(99999));
     }
 
-    // --- WriteJpegImage (filesystem early-return, no GD needed) ---
+    // --- WriteJpegImage ---
 
-    public function testWriteJpegImageReturnsFalseForNonExistentDirectory(): void
+    public function testWriteJpegImageWritesFileFromGdResource(): void
     {
-        $result = WriteJpegImage(null, '/tmp/nonexistent_dir_xyz_uo/image.jpg');
+        $img = imagecreatetruecolor(10, 10);
+        $dest = $this->tmp('.jpg');
+        @unlink($dest); // start clean
+        $result = WriteJpegImage($img, $dest);
+        imagedestroy($img);
+        $this->assertTrue($result);
+        $this->assertFileExists($dest);
+        $info = getimagesize($dest);
+        $this->assertSame(IMAGETYPE_JPEG, $info[2]);
+    }
+
+    public function testWriteJpegImageReturnsFalseForNonWritableDirectory(): void
+    {
+        $img = imagecreatetruecolor(10, 10);
+        $result = WriteJpegImage($img, '/tmp/uo_nonexistent_dir_xyz/out.jpg');
+        imagedestroy($img);
         $this->assertFalse($result);
     }
 
-    // --- ConvertToJpeg (both GD-available and GD-unavailable paths) ---
+    // --- ConvertToJpeg (real conversion for each source type) ---
 
-    public function testConvertToJpegReturnsFalseWhenGdNotAvailableOrFileInvalid(): void
+    public function testConvertToJpegFromPng(): void
     {
-        // When GD is unavailable: returns false at CanProcessImages check.
-        // When GD IS available: returns false because the file does not exist.
-        $result = ConvertToJpeg('/tmp/nonexistent_uo_image_xyz.jpg', '/tmp/out_uo.jpg');
-        $this->assertFalse($result);
+        $src = $this->makeImage('png');
+        $dst = $this->tmp('.jpg');
+        @unlink($dst);
+        $this->assertTrue(ConvertToJpeg($src, $dst));
+        $this->assertSame(IMAGETYPE_JPEG, getimagesize($dst)[2]);
     }
 
-    // --- CreateThumb (both GD-available and GD-unavailable paths) ---
-
-    public function testCreateThumbReturnsFalseWhenGdNotAvailableOrFileInvalid(): void
+    public function testConvertToJpegFromJpeg(): void
     {
-        // When GD is unavailable: returns false at CanProcessImages check (lines 149-150).
-        // When GD IS available: returns false because the file does not exist (lines 159-160).
-        $result = CreateThumb('/tmp/nonexistent_uo_image_xyz.jpg', '/tmp/out_uo.jpg', 100, 100);
-        $this->assertFalse($result);
+        $src = $this->makeImage('jpg');
+        $dst = $this->tmp('.jpg');
+        @unlink($dst);
+        $this->assertTrue(ConvertToJpeg($src, $dst));
+        $this->assertFileExists($dst);
+    }
+
+    public function testConvertToJpegFromGif(): void
+    {
+        $src = $this->makeImage('gif');
+        $dst = $this->tmp('.jpg');
+        @unlink($dst);
+        $this->assertTrue(ConvertToJpeg($src, $dst));
+        $this->assertSame(IMAGETYPE_JPEG, getimagesize($dst)[2]);
+    }
+
+    public function testConvertToJpegReturnsFalseForNonImageFile(): void
+    {
+        $src = $this->tmp('.jpg');
+        file_put_contents($src, 'not an image');
+        $this->assertFalse(ConvertToJpeg($src, $this->tmp('.jpg')));
+    }
+
+    public function testConvertToJpegReturnsFalseForMissingSource(): void
+    {
+        $this->assertFalse(ConvertToJpeg('/tmp/uo_missing_xyz.png', $this->tmp('.jpg')));
+    }
+
+    // --- CreateThumb (real resampling, aspect-ratio branches) ---
+
+    public function testCreateThumbProducesScaledJpeg(): void
+    {
+        $src = $this->makeImage('png', 80, 40);
+        $dst = $this->tmp('.jpg');
+        @unlink($dst);
+        $this->assertTrue(CreateThumb($src, $dst, 20, 20));
+        $info = getimagesize($dst);
+        $this->assertSame(IMAGETYPE_JPEG, $info[2]);
+        // Wider-than-tall source: width is constrained by aspect ratio
+        $this->assertLessThanOrEqual(20, $info[0]);
+        $this->assertLessThanOrEqual(20, $info[1]);
+    }
+
+    public function testCreateThumbHandlesTallSource(): void
+    {
+        $src = $this->makeImage('png', 30, 90); // taller than wide
+        $dst = $this->tmp('.jpg');
+        @unlink($dst);
+        $this->assertTrue(CreateThumb($src, $dst, 20, 20));
+        $this->assertSame(IMAGETYPE_JPEG, getimagesize($dst)[2]);
+    }
+
+    public function testCreateThumbFromJpegAndGifSources(): void
+    {
+        foreach (['jpg', 'gif'] as $type) {
+            $src = $this->makeImage($type, 60, 60);
+            $dst = $this->tmp('.jpg');
+            @unlink($dst);
+            $this->assertTrue(CreateThumb($src, $dst, 25, 25), "type=$type");
+        }
     }
 
     public function testCreateThumbReturnsFalseForZeroDimensions(): void
     {
-        if (!CanProcessImages()) {
-            // When GD is unavailable the CanProcessImages check fires first (line 149-150).
-            // Test the GD-unavailable early return path instead.
-            $this->assertFalse(CreateThumb('/tmp/any.jpg', '/tmp/out.jpg', 0, 100));
-            $this->assertFalse(CreateThumb('/tmp/any.jpg', '/tmp/out.jpg', 100, 0));
-        } else {
-            // GD available: zero dims are caught at lines 155-156.
-            $this->assertFalse(CreateThumb('/tmp/any.jpg', '/tmp/out.jpg', 0, 100));
-            $this->assertFalse(CreateThumb('/tmp/any.jpg', '/tmp/out.jpg', 100, 0));
-        }
+        $src = $this->makeImage('png');
+        $this->assertFalse(CreateThumb($src, $this->tmp('.jpg'), 0, 100));
+        $this->assertFalse(CreateThumb($src, $this->tmp('.jpg'), 100, 0));
+    }
+
+    public function testCreateThumbReturnsFalseForNonImageFile(): void
+    {
+        $src = $this->tmp('.png');
+        file_put_contents($src, 'garbage');
+        $this->assertFalse(CreateThumb($src, $this->tmp('.jpg'), 20, 20));
+    }
+
+    public function testCreateThumbReturnsFalseForMissingSource(): void
+    {
+        $this->assertFalse(CreateThumb('/tmp/uo_missing_xyz.png', $this->tmp('.jpg'), 20, 20));
     }
 }
