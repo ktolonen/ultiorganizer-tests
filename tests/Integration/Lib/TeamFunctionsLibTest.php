@@ -551,6 +551,8 @@ final class TeamFunctionsLibTest extends TestCase
             $this->assertSame('Champions', $updated['achievements']);
         } finally {
             DBQuery("DELETE FROM uo_team_profile WHERE team_id=300");
+            // SetTeamProfile updated uo_team.abbreviation; restore the fixture value
+            DBQuery("UPDATE uo_team SET abbreviation='HEAT' WHERE team_id=300");
             $_SESSION = [];
         }
     }
