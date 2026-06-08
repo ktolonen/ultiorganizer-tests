@@ -531,7 +531,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "65.2% achieved (up from 16.8%). Covered: all pure ranking/compare algorithms, read-only DB queries, round-robin (type 1) ResolveSeriesPoolStandings, and admin SaveFinalStandingsOrder/Assignments/Clear including disqualification + shared-placement preservation branches. Remaining ~35% is the playoff (type 2), swissdraw (type 3) and crossmatch (type 4) pool-resolution bodies (lines 15-320) plus TeamSeriesStanding placement-pool loop and FinalStandingsSeasonPointsOrder: these need fixture pools of those types with complete game/scheduling/movement data, which the single round-robin baseline pool does not provide. Covering them requires materially extending fixtures/baseline.sql (would affect many other tests) or fragile in-test multi-table pool construction. NOTE: DBQueryToValue/Array/Row/RowCount persistently cache by query string (namespaces db_query_value/array/row/rowcount); tests must flushQueryCaches() after writes before reading the same query.",
+      "triage_notes": "80.2% achieved. Adds in-test playoff(type2)/swissdraw(type3)/crossmatch(type4) pools with two teams and a played+unplayed game (unplayed keeps gamesleft>0 so playoff/crossmatch resolvers skip TeamMove). Covers ResolvePlayoff/Swissdraw/CrossMatch + ResolvePoolStandings dispatch, winner/loser/tie branches. Remaining gap: TeamMove-driven continuation movement, odd-team BYE branch, FinalStandingsSeasonPointsOrder season-points path. Uses flushQueryCaches() after writes.",
       "notes": "Prefer pure ranking helper coverage first; defer DB-driven standing resolution flows.",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/standings.functions.php"
     },
@@ -579,7 +579,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "65.1% achieved (up from 12.3%). Covered: reads, listings, stats/scoreboards, admin team write round-trips, and player add/remove + SetTeamProfile via the player+logging stack. Remaining ~35%: TeamMove (lines 452-593, ~140 lines playoff-tree movement) needs playoff/continuation pools with scheduling+movement rules absent from baseline fixture; UploadTeamImage/SetTeamProfileImage/RemoveTeamProfileImage need PHP-GD (not installed in php-test container); assorted die() rights-failure branches. Uses flushQueryCaches() after writes (DBQuery* persistent cache).",
+      "triage_notes": "69.6% achieved. Adds player add/remove, SetTeamProfile, and (GD now installed) SetTeamProfileImage/RemoveTeamProfileImage/UploadTeamImage. Remaining ~30% dominated by TeamMove (~140 lines, lines 452-593) playoff-tree movement needing continuation pools + scheduling/movement rules absent from baseline fixture; plus assorted die() rights branches. Uses flushQueryCaches() after writes.",
       "notes": "Mixed legacy-heavy pilot target; keep first-pass assertions on stable fixture reads instead of mutation-heavy branches.",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/team.functions.php"
     },

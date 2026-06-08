@@ -554,4 +554,96 @@ final class TeamFunctionsLibTest extends TestCase
             $_SESSION = [];
         }
     }
+
+    public function testSetAndRemoveTeamProfileImage(): void
+    {
+        $this->loadPlayerStack();
+        try {
+            // Seed a profile row, then set + clear its profile_image (no real files needed;
+            // RemoveTeamProfileImage only unlinks when the file exists on disk)
+            DBQuery("INSERT INTO uo_team_profile (team_id, captain) VALUES (300, 'C')");
+            SetTeamProfileImage(300, 'team-photo.jpg');
+            self::flushQueryCaches();
+            $this->assertSame('team-photo.jpg', TeamProfile(300)['profile_image']);
+
+            RemoveTeamProfileImage(300);
+            self::flushQueryCaches();
+            $this->assertEmpty(TeamProfile(300)['profile_image']);
+        } finally {
+            DBQuery("DELETE FROM uo_team_profile WHERE team_id=300");
+            $_SESSION = [];
+        }
+    }
+
+    public function testUploadTeamImageProcessesGeneratedImage(): void
+    {
+        if (!CanProcessImages()) {
+            $this->markTestSkipped('GD not available');
+        }
+        $this->loadPlayerStack();
+
+        // Generate a real JPEG and present it as an uploaded file
+        $tmp = tempnam(sys_get_temp_dir(), 'uo_upl_') . '.jpg';
+        $img = imagecreatetruecolor(60, 40);
+        imagejpeg($img, $tmp);
+        imagedestroy($img);
+        $_FILES['picture'] = ['name' => 'p.jpg', 'type' => 'image/jpeg', 'tmp_name' => $tmp, 'error' => 0, 'size' => filesize($tmp)];
+
+        $teamDir = LegacyApp::sutRoot() . '/images/uploads/teams/300';
+        try {
+            // SetTeamProfileImage (called inside UploadTeamImage) UPDATEs an existing row
+            DBQuery("INSERT INTO uo_team_profile (team_id, captain) VALUES (300, 'C')");
+            self::flushQueryCaches();
+            $result = UploadTeamImage(300);
+            // Empty string means success; the uploaded jpeg + thumb were written and recorded
+            $this->assertSame('', $result);
+            self::flushQueryCaches();
+            $stored = TeamProfile(300)['profile_image'];
+            $this->assertNotEmpty($stored);
+            $this->assertFileExists("$teamDir/$stored");
+            $this->assertFileExists("$teamDir/thumbs/$stored");
+        } finally {
+            // Remove generated files and the team dir, plus the DB row
+            foreach (glob("$teamDir/thumbs/*") ?: [] as $f) {
+                @unlink($f);
+            }
+            foreach (glob("$teamDir/*") ?: [] as $f) {
+                if (is_file($f)) {
+                    @unlink($f);
+                }
+            }
+            @rmdir("$teamDir/thumbs");
+            @rmdir($teamDir);
+            @unlink($tmp);
+            DBQuery("DELETE FROM uo_team_profile WHERE team_id=300");
+            unset($_FILES['picture']);
+            $_SESSION = [];
+        }
+    }
+
+    public function testUploadTeamImageRejectsNonImageType(): void
+    {
+        $this->loadPlayerStack();
+        $_FILES['picture'] = ['name' => 'x.txt', 'type' => 'text/plain', 'tmp_name' => '/tmp/x', 'error' => 0, 'size' => 10];
+        try {
+            $result = UploadTeamImage(300);
+            $this->assertStringContainsString('not supported', strtolower($result));
+        } finally {
+            unset($_FILES['picture']);
+            $_SESSION = [];
+        }
+    }
+
+    public function testUploadTeamImageRejectsOversizeFile(): void
+    {
+        $this->loadPlayerStack();
+        $_FILES['picture'] = ['name' => 'big.jpg', 'type' => 'image/jpeg', 'tmp_name' => '/tmp/big', 'error' => 0, 'size' => 6 * 1024 * 1024];
+        try {
+            $result = UploadTeamImage(300);
+            $this->assertStringContainsString('too large', strtolower($result));
+        } finally {
+            unset($_FILES['picture']);
+            $_SESSION = [];
+        }
+    }
 }
