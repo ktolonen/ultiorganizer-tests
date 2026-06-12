@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Client-side JavaScript engine tests. Unlike the PHPUnit/Docker suites, these
+# run on the host with Node (no DB/browser needed) and load the SUT's
+# script/*.js under a DOM stub. SUT path resolves from $SUT_PATH, the first
+# argument, or the sibling ../ultiorganizer checkout.
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+SUT_PATH="${SUT_PATH:-${1:-$ROOT/../ultiorganizer}}"
+
+if [ ! -d "$SUT_PATH" ]; then
+    echo "error: SUT path not found: $SUT_PATH" >&2
+    echo "Pass it as the first argument or set \$SUT_PATH." >&2
+    exit 2
+fi
+SUT_PATH="$(cd "$SUT_PATH" && pwd)"
+
+exec node "$ROOT/tests/Js/timekeeper-engine.test.js" "$SUT_PATH"

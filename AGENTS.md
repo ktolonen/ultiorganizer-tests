@@ -18,6 +18,7 @@ Implementation summary for the current Ultiorganizer test harness.
 - `scripts/harness.py`: host-side orchestration for preflight, `doctor`, `quick`, suites, cases, matrix runs, and report access.
 - `scripts/container_runner.py`: container-side orchestration for runtime SUT copy, config generation, DB bootstrap, fixture loading, PHP lint execution, PHPUnit suite execution, crawl execution, and report writing.
 - `tests/Unit`, `tests/Integration`, `tests/Export`, `tests/Api`, `tests/Smoke`: PHPUnit suites for helper functions, DB-backed season/team/pool/config reads, export endpoint contracts, REST API contracts, and HTTP page smoke checks.
+- `tests/Js`: host-side Node tests for shipped client-side JavaScript (no DB, browser, or container). Currently covers the Timekeeper timer engine (`script/timekeeper.js`) under a DOM stub and a fake clock. Run with `./test:js`. See `docs/js-tests.md`.
 - `mcp/server.py`: thin stdio JSON-RPC MCP wrapper over the normal script entrypoints.
 - `docs/README.md`: documentation index for the topic-oriented docs under `docs/`, including the dedicated `docs/lint.md` syntax-lint note.
 
@@ -32,6 +33,7 @@ Implementation summary for the current Ultiorganizer test harness.
 - `./test:api`
 - `./test:smoke`
 - `./test:crawl`
+- `./test:js`
 - `./test:case baseline-default`
 - `./test:matrix`
 - `./test:filter baseline-default <pattern>`

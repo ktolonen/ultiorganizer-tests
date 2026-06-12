@@ -21,6 +21,7 @@ This directory contains short topic-oriented documents for the Ultiorganizer tes
 - [Lib Test Pitfalls](lib-test-pitfalls.md): concrete gotchas with shims, process reuse, aggregate queries, exit branches, and output buffering
 - [Smoke Testing](smoke.md): deterministic public page sanity checks
 - [Crawl Testing](crawl.md): broader HTTP and security-oriented runtime probing
+- [Client JavaScript Tests](js-tests.md): host Node tests for shipped client-side JavaScript (the Timekeeper engine)
 
 ## Test Data And Cases
 
