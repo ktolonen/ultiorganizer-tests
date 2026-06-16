@@ -1413,9 +1413,25 @@ def cmd_quick(args: argparse.Namespace) -> int:
     return 0 if payload["status"] == "passed" else 1
 
 
+def run_js(sut_path: str | None) -> dict:
+    normalized = normalize_sut_path(sut_path)
+    result = run([str(ROOT / "test:js"), normalized])
+    output = extract_output(result)
+    passed = sum(1 for line in output.splitlines() if line.startswith("PASS "))
+    failed = sum(1 for line in output.splitlines() if line.startswith("FAIL "))
+    return {
+        "suite": "js",
+        "status": "passed" if result.returncode == 0 else "failed",
+        "tests": passed + failed,
+        "failures": failed,
+        "output": output,
+    }
+
+
 def cmd_matrix(args: argparse.Namespace) -> int:
+    js_result = run_js(args.sut_path)
+    exit_code = 0 if js_result["status"] == "passed" else 1
     results = []
-    exit_code = 0
     for case in load_matrix()["cases"]:
         payload = run_case(
             case["id"],
@@ -1429,7 +1445,7 @@ def cmd_matrix(args: argparse.Namespace) -> int:
         results.append(payload)
         if payload["status"] != "passed":
             exit_code = 1
-    print(json.dumps({"status": "passed" if exit_code == 0 else "failed", "cases": results}, indent=2))
+    print(json.dumps({"status": "passed" if exit_code == 0 else "failed", "js": js_result, "cases": results}, indent=2))
     return exit_code
 
 
