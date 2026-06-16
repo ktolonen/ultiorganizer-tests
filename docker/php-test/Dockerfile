@@ -31,6 +31,7 @@ RUN apt-get update \
     && update-locale \
     && rm -rf /var/lib/apt/lists/*
 
+COPY --from=node:22-slim /usr/local/bin/node /usr/local/bin/node
 COPY --from=composer:2 /usr/bin/composer /usr/local/bin/composer
 COPY docker/php-test/workspace.conf /etc/apache2/conf-available/workspace.conf
 COPY docker/php-test/disable-path-caches.ini /usr/local/etc/php/conf.d/zz-disable-path-caches.ini

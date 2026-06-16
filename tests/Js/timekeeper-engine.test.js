@@ -93,7 +93,7 @@ function actionButton(id) {
   b.addEventListener = function (ev, fn) { if (ev === "click") { actionHandlers[id] = fn; } };
   return b;
 }
-try { global.navigator = {}; } catch (_) { Object.defineProperty(global, "navigator", { value: {}, writable: true, configurable: true }); }
+Object.defineProperty(global, "navigator", { value: {}, writable: true, configurable: true });
 global.document = {
   readyState: "complete",
   getElementById: el,

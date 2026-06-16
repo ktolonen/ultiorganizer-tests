@@ -1413,9 +1413,14 @@ def cmd_quick(args: argparse.Namespace) -> int:
     return 0 if payload["status"] == "passed" else 1
 
 
-def run_js(sut_path: str | None) -> dict:
-    normalized = normalize_sut_path(sut_path)
-    result = run([str(ROOT / "test:js"), normalized])
+def run_js(sut_path: str) -> dict:
+    with harness_lock():
+        require_sut_preflight(sut_path)
+        ensure_stack(sut_path)
+        result = container_exec(
+            ["node", "/workspace/tests/Js/timekeeper-engine.test.js", "/sut-ro"],
+            sut_path,
+        )
     output = extract_output(result)
     passed = sum(1 for line in output.splitlines() if line.startswith("PASS "))
     failed = sum(1 for line in output.splitlines() if line.startswith("FAIL "))
@@ -1429,7 +1434,7 @@ def run_js(sut_path: str | None) -> dict:
 
 
 def cmd_matrix(args: argparse.Namespace) -> int:
-    js_result = run_js(args.sut_path)
+    js_result = run_js(normalize_sut_path(args.sut_path))
     exit_code = 0 if js_result["status"] == "passed" else 1
     results = []
     for case in load_matrix()["cases"]:
