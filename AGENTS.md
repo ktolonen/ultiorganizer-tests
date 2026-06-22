@@ -45,6 +45,7 @@ Implementation summary for the current Ultiorganizer test harness.
 - `./libtest:catalog-refresh`
 - `./libtest:missing`
 - `./libtest:run --lib-file <lib-file>`
+- `./libtest:coverage --lib-file <lib-file>`
 - `./libtest:scaffold --lib-file <lib-file>`
 - `./libtest:triage-status`
 
