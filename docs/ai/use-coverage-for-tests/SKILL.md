@@ -1,60 +1,94 @@
 ---
 name: use-coverage-for-tests
-description: Use harness code coverage to target and validate PHPUnit test creation for top-level Ultiorganizer lib files. Use when deciding which branches to assert, finding uncovered lines in a target lib file, or confirming new assertions actually exercised the intended code. Coverage comes from the in-process unit and integration suites only.
+description: Use harness code coverage to target and validate PHPUnit test creation for top-level Ultiorganizer lib files. Use when deciding which branches to assert, finding uncovered functions or lines in a target lib file, or confirming new assertions exercised the intended code. Invoke automatically at the start of any lib test work and after each batch of new tests — do not prompt the user.
 metadata:
   short-description: Use coverage to target PHPUnit tests
 ---
 
 # Use Coverage For Tests
 
-Use this skill when authoring or extending PHPUnit tests and you want coverage to guide what to assert and to confirm new assertions actually exercise the target code.
+Use this skill whenever you are authoring or extending PHPUnit tests for a top-level
+`lib/*.php` file. Invoke it **automatically** — the user does not need to ask for it.
 
-Always read these references first:
+## When to invoke
 
-- `docs/phpunit.md` (the "Code coverage" section: PCOV opt-in, scope, artifacts)
-- `docs/lib-tests.md`
-- `docs/lib-test-deep-coverage.md`
-- `docs/lib-test-pitfalls.md`
+- User asks to deepen, add, or improve tests for a lib file.
+- User asks to improve lib test coverage generally.
+- You are mid-task on a lib test file and need to know what is still missing.
 
-This skill is the workflow layer. It does not restate the harness coverage mechanics; those live in `docs/phpunit.md`.
+## Coverage targets
 
-## What Coverage Covers
+Per file:
+- Line coverage ≥ **80%**
+- Function coverage = **100%** (every function called at least once on the happy path)
 
-- Coverage is produced only by the in-process suites: `unit` and `integration`. The HTTP-driven `export`, `api`, `smoke`, and `crawl` suites yield no coverage. Frame test work around the in-process suites, not "unit only".
-- Coverage scope is the SUT's `lib/` tree minus vendored third-party directories. Lines exercised outside `lib/` (page entrypoints, `localization.php`, and other bootstrap files) never appear, even when your test runs them. This is the same boundary `docs/lib-test-deep-coverage.md` calls out as a frontier blocker — do not treat an entrypoint-coupled wrapper as uncovered-and-fixable when the real code lives outside `lib/`.
+Targets are stored in `config/lib-test-catalog.json` (`targets` block + optional per-entry overrides).
+The `./libtest:coverage` command reads and reports them — you never need to read the catalog directly.
 
-## Where To Read Coverage
+## What coverage covers
 
-After a run, artifacts live under `reports/cases/<case-id>/<run-id>/coverage/`:
+Coverage comes only from the in-process `unit` and `integration` suites (PCOV).
+HTTP-driven `export`, `api`, `smoke`, and `crawl` suites yield no coverage.
 
-- `coverage/html/index.html` — per-file browsable report; the reliable place to see which lines in one file are covered.
-- `coverage/clover.xml` — per-file line data for programmatic reads. File entries use absolute container paths like `/workspace/.runtime/cases/baseline-default/sut/lib/<file>.php`, so match on the `lib/<file>.php` suffix, not a host path.
-- `coverage/coverage.txt` — overall summary only (Classes / Methods / Lines %). It has no per-file or per-line detail. Do not read it to find uncovered lines.
-- `coverage/coverage.json` — overall percent / covered / total, surfaced by `report:html`.
+Coverage scope is the SUT's `lib/` tree minus vendored directories.
+Lines exercised outside `lib/` (page entrypoints, `localization.php`, bootstrap) never appear —
+do not treat an entrypoint-coupled wrapper as an uncovered-and-fixable line when the real code
+lives outside `lib/`.
 
-`coverage/` is wiped at the start of every run. Always rerun the relevant suite before consulting coverage; never trust a stale directory or a previous run's numbers.
+## The command
+
+```sh
+./libtest:coverage --lib-file <lib-filename>
+```
+
+This runs the matching test suite with coverage and emits JSON to stdout:
+
+```json
+{
+  "lib_file": "team.functions.php",
+  "line":      { "pct": 69.6, "covered": 638, "total": 917, "meets_target": false },
+  "functions": { "pct": 70.8, "covered": 46,  "total": 65,  "meets_target": false },
+  "uncovered": ["TeamMove", "AddTeamProfileUrl"],
+  "partial":   [{ "name": "TeamListAll", "pct": 64.3, "covered": 18, "total": 28 }],
+  "targets":   { "line_pct": 80, "function_pct": 100 }
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `uncovered` | Functions whose first statement was never executed — add tests |
+| `partial` | Functions entered but body not fully covered — deepen |
+| `line.meets_target` | `line.pct >= targets.line_pct` |
+| `functions.meets_target` | `functions.covered == functions.total` |
 
 ## Workflow
 
 1. Pick the target `lib/*.php` file and its matching test (see `write-lib-file-test/SKILL.md` and the catalog).
-2. Run the in-process suite that owns the test to produce fresh coverage:
-   - `./test:unit` for a unit-suite target
-   - `./test:integration` for an integration-suite target
-   - `./test:filter baseline-default <pattern>` to iterate fast on one test; it runs the integration suite scoped to matched tests and still produces coverage for what ran.
-3. Open `coverage/html/index.html` (or parse `clover.xml`) for the target file and read which lines and branches are uncovered.
-4. Add focused assertions that exercise the meaningful uncovered branches — deterministic, fixture-backed paths first.
-5. Rerun the same suite and confirm the intended lines moved from uncovered to covered.
-6. Stop when the meaningful behavior of the file is asserted, not when a number is hit.
+2. Run `./libtest:coverage --lib-file <name>` and read the JSON.
+3. Write tests targeting functions in `uncovered` first (zero → covered on the happy path), then
+   functions in `partial` (deepen the body to push line coverage toward the target).
+   Read `docs/lib-test-pitfalls.md` before writing any test.
+4. After each batch of new tests, run `./libtest:coverage --lib-file <name>` again — **do not ask
+   the user** — and re-read the JSON.
+5. Repeat steps 3–4 until both `line.meets_target` and `functions.meets_target` are `true`.
+6. If a function cannot be covered (auth-only `die()` / `exit()` with no testable happy path),
+   add a triage comment in the test file noting the gap and move on — **do not ask the user**.
 
 ## Rules
 
-- Do not chase the overall coverage percentage. It is low by design; per-file lib testing aims for local depth on the file under test.
-- Coverage tells you what code ran, not whether behavior is correct. A covered line still needs a real assertion — never add an assertion-free test just to color a line.
-- Prefer covering branches that map to deterministic, fixture-backed behavior. Defer branches that only run via `die()`/`exit()`/redirect or hidden entrypoint bootstrap; record those as triage notes instead of forcing brittle coverage (see `docs/lib-test-deep-coverage.md`).
-- Do not widen the `<source>` scope in `phpunit.xml.dist` to chase coverage of non-`lib/` code.
+- Never add an assertion-free test just to colour a line. Coverage tells you what code ran,
+  not whether the behaviour is correct.
+- Prefer branches that map to deterministic, fixture-backed behaviour. Defer branches that only
+  run via `die()` / `exit()` / redirect or hidden entrypoint bootstrap; record those as triage
+  notes (see `docs/lib-test-deep-coverage.md`).
+- Do not widen the `<source>` scope in `phpunit.xml.dist`.
 - Do not hand-edit `.runtime/` or `reports/`.
+- Do not convert a coverage-guided test task into an SUT refactor. Surface refactor needs per
+  `docs/lib-test-deep-coverage.md` rather than forcing coverage.
 
-## Boundaries
+## Also read
 
-- This skill guides test authoring with coverage; it is not for changing the coverage pipeline, the PCOV setup, or the `report:html` rendering.
-- Do not convert a coverage-guided test task into an SUT refactor. If a file genuinely needs a refactor before it is testable, surface that per `docs/lib-test-deep-coverage.md` rather than forcing coverage.
+- `docs/lib-tests.md` — naming conventions, catalog, incremental commands
+- `docs/lib-test-pitfalls.md` — concrete gotchas: shim persistence, cache flush, assertContains types
+- `docs/lib-test-deep-coverage.md` — what blocks deep coverage and what to do about it
+- `docs/phpunit.md` — PHPUnit mechanics, coverage artifact locations
