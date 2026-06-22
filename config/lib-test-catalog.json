@@ -6,6 +6,10 @@
     "test_class_suffix": "LibTest",
     "test_path_pattern": "tests/<Unit|Integration>/Lib/<DerivedClassName>LibTest.php"
   },
+  "targets": {
+    "line_pct": 80,
+    "function_pct": 100
+  },
   "entries": [
     {
       "lib_file": "accreditation.functions.php",
@@ -582,6 +586,22 @@
       "triage_notes": "69.6% achieved. Adds player add/remove, SetTeamProfile, and (GD now installed) SetTeamProfileImage/RemoveTeamProfileImage/UploadTeamImage. Remaining ~30% dominated by TeamMove (~140 lines, lines 452-593) playoff-tree movement needing continuation pools + scheduling/movement rules absent from baseline fixture; plus assorted die() rights branches. Uses flushQueryCaches() after writes.",
       "notes": "Mixed legacy-heavy pilot target; keep first-pass assertions on stable fixture reads instead of mutation-heavy branches.",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/team.functions.php"
+    },
+    {
+      "lib_file": "timekeeper.functions.php",
+      "lib_path": "lib/timekeeper.functions.php",
+      "subject_id": "timekeeper.functions",
+      "test_suite": "unit",
+      "test_path": "tests/Unit/Lib/TimekeeperFunctionsLibTest.php",
+      "test_class": "TimekeeperFunctionsLibTest",
+      "strategy": "direct_helper",
+      "load_profile": "bootstrap_only",
+      "test_path_exists": false,
+      "status": "missing",
+      "triage_status": "untriaged",
+      "triage_notes": "",
+      "notes": "",
+      "sut_path": "/home/kari/dev/ultiorganizer/lib/timekeeper.functions.php"
     },
     {
       "lib_file": "timetable.functions.php",

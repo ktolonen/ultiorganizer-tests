@@ -20,6 +20,7 @@ MATRIX_CONFIG = ROOT / "config" / "matrix.json"
 LIB_TEST_CATALOG = ROOT / "config" / "lib-test-catalog.json"
 LOCK_PATH = ROOT / ".runtime" / "harness.lock"
 SIBLING_DEFAULT_SUT_PATH = (ROOT.parent / "ultiorganizer").resolve()
+COVERAGE_TARGETS = {"line_pct": 80, "function_pct": 100}
 REQUIRED_SUT_PATHS = [
     "index.php",
     "lib/database.php",
@@ -228,6 +229,10 @@ def lib_test_entry(
     }
     if sut_path:
         entry["sut_path"] = str((Path(sut_path) / "lib" / normalized).resolve())
+    for field in ("line_target", "function_target"):
+        value = (existing_entry or {}).get(field)
+        if value is not None:
+            entry[field] = value
     return entry
 
 
@@ -255,6 +260,7 @@ def build_lib_test_catalog(sut_path: str, existing_catalog: dict | None = None) 
             "test_class_suffix": "LibTest",
             "test_path_pattern": "tests/<Unit|Integration>/Lib/<DerivedClassName>LibTest.php",
         },
+        "targets": dict(COVERAGE_TARGETS),
         "entries": entries,
     }
 
