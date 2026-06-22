@@ -12,6 +12,7 @@ import sys
 import time
 from contextlib import contextmanager
 from pathlib import Path
+from libtest_coverage import build_coverage_json
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -1645,6 +1646,36 @@ def cmd_lib_test_run(args: argparse.Namespace) -> int:
     return 0 if payload["status"] == "passed" else 1
 
 
+def cmd_lib_test_coverage(args: argparse.Namespace) -> int:
+    catalog = load_lib_test_catalog()
+    entry = select_catalog_entry(catalog, args.lib_file)
+    payload = run_case(
+        case_id=args.case_id,
+        sut_path=args.sut_path,
+        suites=entry["test_suite"],
+        test_filter=entry["test_class"],
+        run_label=args.run_label,
+        context_label=args.context_label,
+        pr_number=args.pr_number,
+        pr_head_ref=args.pr_head_ref,
+        pr_base_ref=args.pr_base_ref,
+    )
+    case_root_str = (payload.get("artifact_paths") or {}).get("case_root", "")
+    if not case_root_str:
+        raise SystemExit("Coverage: no case_root in run payload; run may have failed before producing artifacts.")
+    run_root = report_host_path(case_root_str)
+    clover_path = run_root / "coverage" / "clover.xml"
+    if not clover_path.is_file():
+        raise SystemExit(f"Coverage: clover.xml not found at {clover_path}")
+    sut_path_str = entry.get("sut_path") or str(Path(args.sut_path) / "lib" / entry["lib_file"])
+    source_path = Path(sut_path_str)
+    global_targets = catalog.get("targets", COVERAGE_TARGETS)
+    result = build_coverage_json(clover_path, source_path, entry, global_targets)
+    print(json.dumps(result, indent=2))
+    meets = result["line"]["meets_target"] and result["functions"]["meets_target"]
+    return 0 if meets else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -1741,6 +1772,11 @@ def build_parser() -> argparse.ArgumentParser:
     add_common_case_args(lib_run)
     lib_run.add_argument("--lib-file", required=True)
     lib_run.set_defaults(func=cmd_lib_test_run)
+
+    lib_coverage = subparsers.add_parser("lib-test-coverage")
+    add_common_case_args(lib_coverage)
+    lib_coverage.add_argument("--lib-file", required=True)
+    lib_coverage.set_defaults(func=cmd_lib_test_coverage)
 
     return parser
 
