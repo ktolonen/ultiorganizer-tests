@@ -26,6 +26,23 @@ final class CommonFunctionsLibTest extends TestCase
         LegacyApp::closeDatabaseConnection();
     }
 
+    /**
+     * DBQueryToValue/Array/Row/RowCount cache by query string (persistent on
+     * disk and in-process). Flush all four namespaces after a write so a
+     * subsequent read sees fresh data instead of a stale cached value.
+     */
+    private static function flushQueryCaches(): void
+    {
+        foreach (['db_query_value', 'db_query_array', 'db_query_row', 'db_query_rowcount'] as $ns) {
+            if (function_exists('CacheForgetPersistent')) {
+                CacheForgetPersistent($ns);
+            }
+            if (function_exists('CacheForgetNamespace')) {
+                CacheForgetNamespace($ns);
+            }
+        }
+    }
+
     // ---- existing tests ----
 
     public function testNormalizeTextInputDecodesAndTrimsUtf8Input(): void
@@ -631,11 +648,13 @@ final class CommonFunctionsLibTest extends TestCase
         $result = SetComment(COMMENT_TYPE_SEASON, 'HRN2026', 'Test comment');
         $this->assertTrue((bool) $result);
         // Verify it was actually stored
+        self::flushQueryCaches();
         $raw = CommentRaw(COMMENT_TYPE_SEASON, 'HRN2026');
         $this->assertSame('Test comment', $raw);
         // Delete by setting empty
         $del = SetComment(COMMENT_TYPE_SEASON, 'HRN2026', '');
         $this->assertTrue((bool) $del);
+        self::flushQueryCaches();
         $this->assertSame('', CommentRaw(COMMENT_TYPE_SEASON, 'HRN2026'));
     }
 
@@ -643,12 +662,14 @@ final class CommonFunctionsLibTest extends TestCase
     {
         // Ensure no comment exists (fixture has none for this type/id)
         SetComment(COMMENT_TYPE_SEASON, 'HRN2026', '');
+        self::flushQueryCaches();
         $this->assertSame('', CommentHTML(COMMENT_TYPE_SEASON, 'HRN2026'));
     }
 
     public function testCommentHTMLReturnsWrappedCommentWhenSet(): void
     {
         SetComment(COMMENT_TYPE_POOL, 200, 'Pool note');
+        self::flushQueryCaches();
         try {
             $result = CommentHTML(COMMENT_TYPE_POOL, 200);
             $this->assertStringContainsString('comment', $result);

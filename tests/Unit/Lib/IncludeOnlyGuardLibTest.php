@@ -81,15 +81,41 @@ PHP;
         if (!function_exists('denyDirectFileAccess')) {
             require_once $guardFile;
         }
-        // In PHPUnit context, SCRIPT_FILENAME points to phpunit, not to our fake file
-        denyDirectFileAccess('/tmp/not_the_phpunit_binary.php');
-        $this->assertTrue(true);
+        // Pin SCRIPT_FILENAME to a real, resolvable file that differs from the
+        // guarded file so both realpath() calls succeed and differ, exercising the
+        // early-return branch. Relying on the ambient SCRIPT_FILENAME is unsafe:
+        // under `vendor/bin/phpunit` it is the relative string 'vendor/bin/phpunit'
+        // whose realpath() is false, which collides with realpath() of a
+        // non-existent file and makes the guard exit() the whole test process.
+        $original = $_SERVER['SCRIPT_FILENAME'] ?? null;
+        $_SERVER['SCRIPT_FILENAME'] = __FILE__;
+        try {
+            denyDirectFileAccess($guardFile);
+            $this->assertTrue(true);
+        } finally {
+            if ($original === null) {
+                unset($_SERVER['SCRIPT_FILENAME']);
+            } else {
+                $_SERVER['SCRIPT_FILENAME'] = $original;
+            }
+        }
     }
 
     public function testDenyDirectLibAccessReturnsEarlyWhenScriptFilenameIsDifferent(): void
     {
-        denyDirectLibAccess('/tmp/not_the_phpunit_binary.php');
-        $this->assertTrue(true);
+        $guardFile = LegacyApp::sutRoot() . '/lib/include_only.guard.php';
+        $original = $_SERVER['SCRIPT_FILENAME'] ?? null;
+        $_SERVER['SCRIPT_FILENAME'] = __FILE__;
+        try {
+            denyDirectLibAccess($guardFile);
+            $this->assertTrue(true);
+        } finally {
+            if ($original === null) {
+                unset($_SERVER['SCRIPT_FILENAME']);
+            } else {
+                $_SERVER['SCRIPT_FILENAME'] = $original;
+            }
+        }
     }
 
     public function testDenyDirectFileAccessReturnsEarlyWhenScriptFilenameEmpty(): void
