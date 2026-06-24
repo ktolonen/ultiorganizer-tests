@@ -499,4 +499,14 @@ final class DatabaseMaintenanceLibTest extends TestCase
         $state = DBReadMaintenanceState();
         $this->assertSame(200, strlen($state['error']));
     }
+
+    // --- DBRunAutomaticUpgrade ---
+
+    public function testDBRunAutomaticUpgradeReturnsFalseWhenLockAlreadyHeld(): void
+    {
+        // Simulate another process holding the lock by writing a fresh lock file.
+        file_put_contents(DBMaintenanceLockPath(), (string) time());
+        $result = DBRunAutomaticUpgrade();
+        $this->assertFalse($result);
+    }
 }

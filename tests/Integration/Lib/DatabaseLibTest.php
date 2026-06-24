@@ -536,4 +536,67 @@ final class DatabaseLibTest extends TestCase
         $this->assertSame(3, $updated);
         DBSetRow('uo_location', ['fields' => $original], 'id=400');
     }
+
+    // --- DBEscapeString edge case ---
+
+    public function testDBEscapeStringHandlesInvalidUtf8(): void
+    {
+        // "\xc0\x80" is an overlong encoding — invalid UTF-8. mb_check_encoding fails
+        // so DBEscapeString calls convertToUtf8() before escaping.
+        $result = DBEscapeString("\xc0\x80");
+        $this->assertIsString($result);
+    }
+
+    // --- GetServerName ---
+
+    public function testGetServerNameReturnsServerNameWhenSet(): void
+    {
+        // bootstrapEnvironment sets $_SERVER['SERVER_NAME'] = '127.0.0.1'
+        $name = GetServerName();
+        $this->assertIsString($name);
+        $this->assertNotSame('', $name);
+    }
+
+    public function testGetServerNameFallsBackToHttpHost(): void
+    {
+        $original = $_SERVER['SERVER_NAME'] ?? null;
+        unset($_SERVER['SERVER_NAME']);
+        $originalHost = $_SERVER['HTTP_HOST'] ?? null;
+        $_SERVER['HTTP_HOST'] = 'fallback.host';
+        try {
+            $name = GetServerName();
+            $this->assertSame('fallback.host', $name);
+        } finally {
+            if ($original !== null) {
+                $_SERVER['SERVER_NAME'] = $original;
+            }
+            if ($originalHost !== null) {
+                $_SERVER['HTTP_HOST'] = $originalHost;
+            } else {
+                unset($_SERVER['HTTP_HOST']);
+            }
+        }
+    }
+
+    // --- DBAbort ---
+
+    public function testDBAbortThrowsWhenExceptionModeEnabled(): void
+    {
+        DBSetExceptionMode(true);
+        try {
+            $this->expectException(DBOperationException::class);
+            DBAbort('test context', 'SELECT 1', 'test error');
+        } finally {
+            DBSetExceptionMode(false);
+        }
+    }
+
+    // --- CheckDB ---
+
+    public function testCheckDBRunsWithoutErrorOnUpToDateSchema(): void
+    {
+        // The fixture DB schema is current; CheckDB scans for missing upgrades and finds none.
+        CheckDB();
+        $this->assertTrue(true);
+    }
 }
