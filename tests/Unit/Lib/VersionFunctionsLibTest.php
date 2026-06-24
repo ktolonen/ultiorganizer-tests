@@ -10,7 +10,12 @@ final class VersionFunctionsLibTest extends TestCase
     protected function setUp(): void
     {
         LegacyApp::resetRequestState();
-        LegacyApp::loadLibFileUsingProfile('version.functions.php', 'bootstrap_only');
+        LegacyApp::loadLibFileUsingProfile('version.functions.php', 'database_only');
+    }
+
+    protected function tearDown(): void
+    {
+        LegacyApp::closeDatabaseConnection();
     }
 
     // --- ReadVersionMetadata ---
@@ -85,5 +90,15 @@ final class VersionFunctionsLibTest extends TestCase
         $result = GetCustomizationVersionInfo();
         $this->assertSame('default', $result['id']);
         $this->assertSame('0.0', $result['version']);
+    }
+
+    // --- GetDatabaseVersionInfo ---
+
+    public function testGetDatabaseVersionInfoReturnsIntegerVersion(): void
+    {
+        $result = GetDatabaseVersionInfo();
+        $this->assertArrayHasKey('version', $result);
+        $this->assertIsInt($result['version']);
+        $this->assertGreaterThan(0, $result['version']);
     }
 }

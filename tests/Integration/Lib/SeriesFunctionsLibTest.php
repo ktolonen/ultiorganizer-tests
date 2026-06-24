@@ -515,6 +515,41 @@ final class SeriesFunctionsLibTest extends TestCase
         }
     }
 
+    // --- ConfirmEnrolledTeam ---
+    // Non-superadmin die() branch: untestable per docs/lib-test-deep-coverage.md.
+
+    public function testConfirmEnrolledTeamReturnsNullForNonExistentEnrollment(): void
+    {
+        LegacyApp::loadUserFunctions();
+        LegacyApp::loginAsAdmin();
+        try {
+            $result = ConfirmEnrolledTeam(100, 999999);
+            $this->assertNull($result);
+        } finally {
+            $_SESSION = [];
+        }
+    }
+
+    // --- SeriesTeamResponsibles ---
+    // Non-season-admin die() branch: untestable per docs/lib-test-deep-coverage.md.
+
+    public function testSeriesTeamResponsiblesReturnsArrayForSeasonAdmin(): void
+    {
+        LegacyApp::loadUserFunctions();
+        LegacyApp::loginAsAdmin();
+        $_SESSION['uid'] = 'admin';
+        // Grant 'admin' editseason right for HRN2026 so getEditSeasons returns it
+        DBQuery("INSERT INTO uo_userproperties (userid, name, value) VALUES ('admin', 'editseason', 'HRN2026')");
+        $propId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+        try {
+            $rows = SeriesTeamResponsibles(100);
+            $this->assertIsArray($rows);
+        } finally {
+            DBQuery("DELETE FROM uo_userproperties WHERE prop_id=$propId");
+            $_SESSION = [];
+        }
+    }
+
     public function testSetSeriesNameUpdatesName(): void
     {
         LegacyApp::loadUserFunctions();

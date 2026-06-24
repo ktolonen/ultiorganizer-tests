@@ -70,4 +70,41 @@ PHP;
         $this->assertSame(0, $result['exit_code'], $result['stderr']);
         $this->assertSame('after-marker', $result['stdout']);
     }
+
+    // In-process tests: load the file and call its functions to get PCOV coverage.
+    // The subprocess tests above verify the die() path; these cover the early-return paths.
+
+    public function testDenyDirectFileAccessReturnsEarlyWhenScriptFilenameIsDifferent(): void
+    {
+        // The function is defined once all SUT lib files load. If not yet loaded, load it.
+        $guardFile = LegacyApp::sutRoot() . '/lib/include_only.guard.php';
+        if (!function_exists('denyDirectFileAccess')) {
+            require_once $guardFile;
+        }
+        // In PHPUnit context, SCRIPT_FILENAME points to phpunit, not to our fake file
+        denyDirectFileAccess('/tmp/not_the_phpunit_binary.php');
+        $this->assertTrue(true);
+    }
+
+    public function testDenyDirectLibAccessReturnsEarlyWhenScriptFilenameIsDifferent(): void
+    {
+        denyDirectLibAccess('/tmp/not_the_phpunit_binary.php');
+        $this->assertTrue(true);
+    }
+
+    public function testDenyDirectFileAccessReturnsEarlyWhenScriptFilenameEmpty(): void
+    {
+        $original = $_SERVER['SCRIPT_FILENAME'] ?? null;
+        $_SERVER['SCRIPT_FILENAME'] = '';
+        try {
+            denyDirectFileAccess('/tmp/some_file.php');
+            $this->assertTrue(true);
+        } finally {
+            if ($original === null) {
+                unset($_SERVER['SCRIPT_FILENAME']);
+            } else {
+                $_SERVER['SCRIPT_FILENAME'] = $original;
+            }
+        }
+    }
 }

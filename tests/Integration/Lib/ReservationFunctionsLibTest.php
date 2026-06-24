@@ -422,4 +422,19 @@ final class ReservationFunctionsLibTest extends TestCase
         $id = $this->insertReservation(400, 'Free', 'Free Group', '2026-09-01 08:00:00', '2026-09-01 10:00:00', 'HRN2026');
         $this->assertTrue(CanDeleteReservation($id));
     }
+
+    // --- ReservationSeason ---
+
+    public function testReservationSeasonReturnsSeasonForKnownReservation(): void
+    {
+        // Reservation 500 belongs to HRN2026 in the fixture
+        $result = ReservationSeason(500);
+        $this->assertSame('HRN2026', $result);
+    }
+
+    public function testReservationSeasonReturnsNullForUnknownReservation(): void
+    {
+        $result = ReservationSeason(999999);
+        $this->assertNull($result);
+    }
 }

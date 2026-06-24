@@ -118,8 +118,8 @@
       "load_profile": "bootstrap_only",
       "test_path_exists": true,
       "status": "covered",
-      "triage_status": "untriaged",
-      "triage_notes": "",
+      "triage_status": "triaged",
+      "triage_notes": "80.8% line / 100% fn achieved. Remaining ~19%: GetURLBase non-BASEURL path unreachable (BASEURL constant defined by config.inc.php), ordinal() fallback switch unreachable (NumberFormatter always available), GetInt/GetString return-value paths unreachable (filter_input returns null in CLI), GetScriptName die() path not testable. No function coverage gaps.",
       "notes": "Stable utility-heavy target for the first pure-helper checkpoint.",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/common.functions.php"
     },
@@ -166,8 +166,8 @@
       "load_profile": "database_only",
       "test_path_exists": true,
       "status": "covered",
-      "triage_status": "untriaged",
-      "triage_notes": "",
+      "triage_status": "triaged",
+      "triage_notes": "80.1% line / 100% fn achieved. Tests cover JSON export + roundtrip import (new + replace modes), URL/comment/team-profile snapshots, and ~30 exception paths. Remaining ~20%: catch block in importFile (transaction failure path), \"existing global entity found\" paths (float-precision prevents location match), empty-fixture foreach bodies (no game events, spirit scores, defenses, season rounds, final standings in baseline fixture).",
       "notes": "",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/data.functions.php"
     },
@@ -455,7 +455,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "82.7% achieved. Remaining ~17%: EnforceSoftMaintenanceForView/RequireSeasonPublicExternal have exit() calls; die() paths in SeasonTeamAdmins/SeasonAccreditationAdmins/SeasonGameAdmins/SeasonSpiritAdmins/SeasonAdmins/AddSeason/SetSeason/DeleteSeason/SetEventReadonly when not superadmin; MaintenanceSeasonFromView branches for game/team/player/profile/team1 GET params; SetSeasonSpiritSettings die() path.",
+      "triage_notes": "80.4% line / 100% fn achieved (updated from earlier 82.7% measurement; divergence due to SUT changes). Remaining ~20%: EnforceSoftMaintenanceForView/EnforcePrivateEventAccessForView exit() paths not testable in-process; MaintenanceSeasonFromView GET-param branches unreachable via filter_input in CLI. All functions now covered.",
       "notes": "Feasible read-only target; keep first-pass coverage on deterministic season, pool, and reservation reads.",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/season.functions.php"
     },
@@ -583,7 +583,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "69.6% achieved. Adds player add/remove, SetTeamProfile, and (GD now installed) SetTeamProfileImage/RemoveTeamProfileImage/UploadTeamImage. Remaining ~30% dominated by TeamMove (~140 lines, lines 452-593) playoff-tree movement needing continuation pools + scheduling/movement rules absent from baseline fixture; plus assorted die() rights branches. Uses flushQueryCaches() after writes.",
+      "triage_notes": "84.5% line / 100% fn achieved (up from 69.6%). Remaining ~16%: TeamMove body (88 lines, requires playoff pool move config not in fixture); die() branches in TeamCopyRoster/AddTeamProfileUrl/RemoveTeamProfileUrl/SetTeam/SetTeamName/SetTeamOwner. All functions now covered.",
       "notes": "Mixed legacy-heavy pilot target; keep first-pass assertions on stable fixture reads instead of mutation-heavy branches.",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/team.functions.php"
     },
@@ -662,8 +662,8 @@
       "load_profile": "database_only",
       "test_path_exists": true,
       "status": "covered",
-      "triage_status": "untriaged",
-      "triage_notes": "",
+      "triage_status": "triaged",
+      "triage_notes": "88.7% line / 95.1% fn achieved. 5 die()-blocked functions cannot be tested in-process: FailRedirect, FailRedirectMobile, FailUnauthorized, Forbidden (all call exit()); UserAuthenticate (complex, die-adjacent). Line target met; function ceiling is 95.1%.",
       "notes": "",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/user.functions.php"
     },

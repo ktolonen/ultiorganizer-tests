@@ -1313,4 +1313,136 @@ final class UserFunctionsLibTest extends TestCase
         DBQuery("DELETE FROM uo_userproperties WHERE userid='admin' AND name='userrole' AND value IN ('testtestrole','spiritadmin:HRN2026')");
         DBQuery("DELETE FROM uo_userproperties WHERE userid='admin' AND name='editseason' AND value='HRN2026'");
     }
+
+    // ---- hasEditGamePlayersRight / hasEditGameEventsRight ----
+
+    public function testHasEditGamePlayersRightReturnsFalseWithoutRole(): void
+    {
+        LegacyApp::requireTopLevelLib('game.functions.php');
+        // No session roles set → returns false
+        $_SESSION = [];
+        $this->assertFalse(hasEditGamePlayersRight(700));
+    }
+
+    public function testHasEditGamePlayersRightReturnsTrueForSuperAdmin(): void
+    {
+        LegacyApp::requireTopLevelLib('game.functions.php');
+        LegacyApp::loginAsAdmin();
+        try {
+            $result = hasEditGamePlayersRight(700);
+            $this->assertTrue($result);
+        } finally {
+            $_SESSION = [];
+        }
+    }
+
+    public function testHasEditGameEventsRightReturnsFalseWithoutRole(): void
+    {
+        LegacyApp::requireTopLevelLib('game.functions.php');
+        $_SESSION = [];
+        $this->assertFalse(hasEditGameEventsRight(700));
+    }
+
+    public function testHasEditGameEventsRightReturnsTrueForSuperAdmin(): void
+    {
+        LegacyApp::requireTopLevelLib('game.functions.php');
+        LegacyApp::loginAsAdmin();
+        try {
+            $result = hasEditGameEventsRight(700);
+            $this->assertTrue($result);
+        } finally {
+            $_SESSION = [];
+        }
+    }
+
+    // ---- EventScopedRolePrefixes ----
+
+    public function testEventScopedRolePrefixesReturnsExpectedRoles(): void
+    {
+        $prefixes = EventScopedRolePrefixes();
+        $this->assertIsArray($prefixes);
+        $this->assertContains('seasonadmin', $prefixes);
+        $this->assertContains('seriesadmin', $prefixes);
+        $this->assertContains('teamadmin', $prefixes);
+    }
+
+    // ---- EventUserRoleCleanupPreview / DeleteEventUserRoles / DeleteUserRoleRows ----
+
+    public function testEventUserRoleCleanupPreviewReturnsSafeArrayAsSuperAdmin(): void
+    {
+        LegacyApp::loginAsAdmin();
+        try {
+            // HRN2026 has admin user as superadmin (not season-scoped) → preview returns empty or low count
+            $rows = EventUserRoleCleanupPreview('HRN2026');
+            $this->assertIsArray($rows);
+        } finally {
+            $_SESSION = [];
+        }
+    }
+
+    public function testDeleteEventUserRolesReturnZeroForSeasonWithNoScopedRoles(): void
+    {
+        LegacyApp::loginAsAdmin();
+        try {
+            // HRN2026 has no season-scoped admin roles in fixture → deletes 0
+            $result = DeleteEventUserRoles('HRN2026');
+            $this->assertSame(0, $result);
+        } finally {
+            $_SESSION = [];
+        }
+    }
+
+    public function testDeleteSelectedUsersEventRolesReturnsZeroForEmptyInput(): void
+    {
+        LegacyApp::loginAsAdmin();
+        try {
+            $result = DeleteSelectedUsersEventRoles([]);
+            $this->assertSame(0, $result);
+        } finally {
+            $_SESSION = [];
+        }
+    }
+
+    public function testDeleteSelectedUsersEventRolesReturnsZeroForBlankUserId(): void
+    {
+        LegacyApp::loginAsAdmin();
+        try {
+            $result = DeleteSelectedUsersEventRoles(['']);
+            $this->assertSame(0, $result);
+        } finally {
+            $_SESSION = [];
+        }
+    }
+
+    public function testDeleteUserRoleRowsReturnsZeroForEmptyRows(): void
+    {
+        LegacyApp::loginAsAdmin();
+        try {
+            $result = DeleteUserRoleRows([], 'test-source');
+            $this->assertSame(0, $result);
+        } finally {
+            $_SESSION = [];
+        }
+    }
+
+    // ---- Email-disabled early return (IsEmailDisabled returns true in test env) ----
+
+    public function testAddRegisterRequestReturnsFalseWhenEmailDisabled(): void
+    {
+        // IsEmailDisabled() returns true in the test container
+        $result = AddRegisterRequest('testuser_reg', 'pass123', 'Test User', 'test@example.com');
+        $this->assertFalse($result);
+    }
+
+    public function testAddExtraEmailRequestReturnsFalseWhenEmailDisabled(): void
+    {
+        $result = AddExtraEmailRequest('admin', 'extra@example.com');
+        $this->assertFalse($result);
+    }
+
+    public function testUserResetPasswordReturnsFalseWhenEmailDisabled(): void
+    {
+        $result = UserResetPassword('admin');
+        $this->assertFalse($result);
+    }
 }

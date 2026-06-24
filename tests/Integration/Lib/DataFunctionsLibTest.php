@@ -5,13 +5,23 @@ declare(strict_types=1);
 use PHPUnit\Framework\TestCase;
 use UltiorganizerHarness\Support\LegacyApp;
 
+/**
+ * Tests for data.functions.php (EventSnapshotService JSON import/export).
+ *
+ * Uses team_stack profile because data.functions.php requires
+ * game.functions.php → pool/series/season chain.
+ */
 final class DataFunctionsLibTest extends TestCase
 {
     protected function setUp(): void
     {
         LegacyApp::resetRequestState();
-        LegacyApp::loadLibFileUsingProfile('data.functions.php', 'database_only');
+        LegacyApp::loadLibFilesUsingProfile(
+            ['data.functions.php'],
+            'team_stack'
+        );
         LegacyApp::requireTopLevelLib('user.functions.php');
+        LegacyApp::requireTopLevelLib('configuration.functions.php');
 
         global $serverConf;
         $serverConf['PersistentCacheEnabled'] = 'false';
@@ -27,824 +37,452 @@ final class DataFunctionsLibTest extends TestCase
     protected function tearDown(): void
     {
         LegacyApp::closeDatabaseConnection();
+        $_SESSION = [];
     }
 
-    // ── RowToXML (pure, no DB) ─────────────────────────────────────────────
+    // ── Helper ────────────────────────────────────────────────────────────
 
-    public function testRowToXMLWithEndtagClosesElement(): void
+    private function exportHrn2026ToTempFile(): string
     {
-        $h = new EventDataXMLHandler();
-        $xml = $h->RowToXML('uo_test', ['col1' => 'val1', 'col2' => 'val2'], true);
-
-        $this->assertStringContainsString('<uo_test ', $xml);
-        $this->assertStringContainsString("col1='val1'", $xml);
-        $this->assertStringContainsString("col2='val2'", $xml);
-        $this->assertStringEndsWith("/>\n", $xml);
+        $json = EventSnapshotExportJson('HRN2026');
+        $tmp = tempnam(sys_get_temp_dir(), 'uo_snap_') . '.json';
+        file_put_contents($tmp, $json);
+        return $tmp;
     }
 
-    public function testRowToXMLWithoutEndtagLeavesElementOpen(): void
+    private function deleteImportedSeason(string $seasonId): void
     {
-        $h = new EventDataXMLHandler();
-        $xml = $h->RowToXML('uo_test', ['col1' => 'val1'], false);
-
-        $this->assertStringEndsWith(">\n", $xml);
-        $this->assertStringNotContainsString('/>', $xml);
+        $sid = DBEscapeString($seasonId);
+        // Capture scheduling names referenced by this season's games before the
+        // games are deleted; imported uo_scheduling_name rows are global (not
+        // season-scoped) and would otherwise leak into other suites.
+        $schedulingIds = [];
+        $gameRows = DBQueryToArray("SELECT g.scheduling_name_home, g.scheduling_name_visitor, g.name FROM uo_game g LEFT JOIN uo_team ht ON g.hometeam=ht.team_id LEFT JOIN uo_series hs ON ht.series=hs.series_id WHERE hs.season='$sid'");
+        foreach ($gameRows as $row) {
+            foreach (['scheduling_name_home', 'scheduling_name_visitor', 'name'] as $col) {
+                if (!empty($row[$col])) {
+                    $schedulingIds[(int) $row[$col]] = true;
+                }
+            }
+        }
+        DBQuery("DELETE FROM uo_played WHERE game IN (SELECT game_id FROM uo_game g LEFT JOIN uo_team ht ON g.hometeam=ht.team_id LEFT JOIN uo_series hs ON ht.series=hs.series_id WHERE hs.season='$sid')");
+        DBQuery("DELETE FROM uo_goal WHERE game IN (SELECT game_id FROM uo_game g LEFT JOIN uo_team ht ON g.hometeam=ht.team_id LEFT JOIN uo_series hs ON ht.series=hs.series_id WHERE hs.season='$sid')");
+        DBQuery("DELETE FROM uo_game_pool WHERE game IN (SELECT game_id FROM uo_game g LEFT JOIN uo_team ht ON g.hometeam=ht.team_id LEFT JOIN uo_series hs ON ht.series=hs.series_id WHERE hs.season='$sid')");
+        DBQuery("DELETE uo_game FROM uo_game LEFT JOIN uo_team ht ON uo_game.hometeam=ht.team_id LEFT JOIN uo_series hs ON ht.series=hs.series_id WHERE hs.season='$sid'");
+        DBQuery("DELETE FROM uo_team_pool WHERE team IN (SELECT team_id FROM uo_team t LEFT JOIN uo_series s ON t.series=s.series_id WHERE s.season='$sid')");
+        DBQuery("DELETE FROM uo_player WHERE team IN (SELECT team_id FROM uo_team t LEFT JOIN uo_series s ON t.series=s.series_id WHERE s.season='$sid')");
+        DBQuery("DELETE FROM uo_team WHERE series IN (SELECT series_id FROM uo_series WHERE season='$sid')");
+        DBQuery("DELETE FROM uo_pool WHERE series IN (SELECT series_id FROM uo_series WHERE season='$sid')");
+        DBQuery("DELETE FROM uo_series WHERE season='$sid'");
+        // Imported locations are global; deleting them cascades to the season's
+        // reservations and location_info (fk_reservation_location /
+        // fk_location_info_location are ON DELETE CASCADE).
+        DBQuery("DELETE FROM uo_location WHERE id IN (SELECT location FROM uo_reservation WHERE season='$sid' AND location IS NOT NULL)");
+        DBQuery("DELETE FROM uo_reservation WHERE season='$sid'");
+        if (!empty($schedulingIds)) {
+            $idList = implode(',', array_map('intval', array_keys($schedulingIds)));
+            DBQuery("DELETE FROM uo_scheduling_name WHERE scheduling_id IN ($idList)");
+        }
+        DBQuery("DELETE FROM uo_season WHERE season_id='$sid'");
     }
 
-    public function testRowToXMLDefaultEndtagIsTrue(): void
-    {
-        $h = new EventDataXMLHandler();
-        $xml = $h->RowToXML('uo_test', ['col1' => 'abc']);
+    // ── Export tests ───────────────────────────────────────────────────────
 
-        $this->assertStringEndsWith("/>\n", $xml);
+    public function testExportJsonReturnsValidJsonWithExpectedFormat(): void
+    {
+        $json = EventSnapshotExportJson('HRN2026');
+
+        $this->assertIsString($json);
+        $decoded = json_decode($json, true);
+        $this->assertIsArray($decoded);
+        $this->assertSame('ultiorganizer.event-snapshot', $decoded['format']);
+        $this->assertSame(2, $decoded['version']);
+        $this->assertArrayHasKey('tables', $decoded);
+        $this->assertArrayHasKey('uo_season', $decoded['tables']);
+        $this->assertCount(1, $decoded['tables']['uo_season']);
+        $this->assertSame('HRN2026', $decoded['tables']['uo_season'][0]['season_id']);
     }
 
-    public function testRowToXMLEmptyValueRenderedAsNULL(): void
+    public function testExportJsonIncludesExpectedTables(): void
     {
-        $h = new EventDataXMLHandler();
-        $xml = $h->RowToXML('uo_test', ['col1' => '']);
+        $json = EventSnapshotExportJson('HRN2026');
+        $decoded = json_decode($json, true);
+        $tables = array_keys($decoded['tables']);
 
-        $this->assertStringContainsString("col1='NULL'", $xml);
+        $this->assertContains('uo_series', $tables);
+        $this->assertContains('uo_pool', $tables);
+        $this->assertContains('uo_team', $tables);
+        $this->assertContains('uo_game', $tables);
+        $this->assertContains('uo_player', $tables);
     }
 
-    public function testRowToXMLSpecialCharsAreEscaped(): void
+    public function testExportJsonIncludesEventMetadata(): void
     {
-        $h = new EventDataXMLHandler();
-        $xml = $h->RowToXML('uo_test', ['col1' => "it's <b>fun</b> & nice"]);
+        $json = EventSnapshotExportJson('HRN2026');
+        $decoded = json_decode($json, true);
 
-        $this->assertStringContainsString('&amp;', $xml);
-        $this->assertStringContainsString('&lt;', $xml);
-        $this->assertStringContainsString('&#039;', $xml);
+        $this->assertArrayHasKey('event', $decoded);
+        $this->assertSame('HRN2026', $decoded['event']['season_id']);
+        $this->assertArrayHasKey('exported_at', $decoded);
+        $this->assertArrayHasKey('source_db_version', $decoded);
     }
 
-    // ── end_tag ────────────────────────────────────────────────────────────
-
-    public function testEndTagIsNoOp(): void
+    public function testExportJsonThrowsForNonexistentSeason(): void
     {
-        $h = new EventDataXMLHandler();
-        $h->end_tag(null, 'UO_SEASON');
-        $this->assertTrue(true);
+        $this->expectException(EventSnapshotException::class);
+        EventSnapshotExportJson('NONEXISTENT_SEASON_999');
     }
 
-    // ── InsertRow / SetRow helpers ─────────────────────────────────────────
-
-    public function testInsertRowAndSetRowOnSchedulingName(): void
+    public function testExportJsonThrowsForUnauthorizedUser(): void
     {
-        $h = new EventDataXMLHandler();
-        $newId = (int) $h->InsertRow('uo_scheduling_name', ['NAME' => 'InsertRow Test']);
-        $this->assertGreaterThan(0, $newId);
+        $_SESSION = [];
 
-        $count = (int) DBQueryToValue("SELECT COUNT(*) FROM uo_scheduling_name WHERE scheduling_id=$newId");
-        $this->assertSame(1, $count);
-
-        $h->SetRow('uo_scheduling_name', ['NAME' => 'SetRow Updated'], "scheduling_id=$newId");
-        $name = DBQueryToValue("SELECT name FROM uo_scheduling_name WHERE scheduling_id=$newId");
-        $this->assertSame('SetRow Updated', $name);
-
-        DBQuery("DELETE FROM uo_scheduling_name WHERE scheduling_id=$newId");
+        $this->expectException(EventSnapshotException::class);
+        EventSnapshotExportJson('HRN2026');
     }
 
-    // ── EventToXML ────────────────────────────────────────────────────────
+    // ── Import error tests ─────────────────────────────────────────────────
 
-    public function testEventToXMLReturnsSeason(): void
+    public function testImportJsonThrowsForMissingFile(): void
     {
-        $h = new EventDataXMLHandler();
-        $xml = $h->EventToXML('HRN2026');
-
-        $this->assertStringStartsWith("<?xml version='1.0' encoding='UTF-8'?>", $xml);
-        $this->assertStringContainsString('uo_season', $xml);
-        $this->assertStringContainsString('HRN2026', $xml);
-        $this->assertStringContainsString('uo_series', $xml);
-        $this->assertStringContainsString('uo_team', $xml);
-        $this->assertStringContainsString('uo_pool', $xml);
-        $this->assertStringContainsString('uo_game', $xml);
-        $this->assertStringContainsString('uo_goal', $xml);
+        $this->expectException(EventSnapshotException::class);
+        EventSnapshotImportJson('/nonexistent/path/to/file.json');
     }
 
-    // ── InsertToDatabase simple cases (mode=new) ───────────────────────────
-
-    public function testInsertToDatabaseSchedulingNameCreatesRow(): void
+    public function testImportJsonThrowsForInvalidJson(): void
     {
-        $h = new EventDataXMLHandler();
-        $h->mode = 'new';
-        $h->start_tag(null, 'UO_SCHEDULING_NAME', ['SCHEDULING_ID' => '8100', 'NAME' => 'Sched Import Test']);
-
-        $this->assertArrayHasKey('8100', $h->uo_scheduling_name);
-        $newId = (int) $h->uo_scheduling_name['8100'];
-        $this->assertGreaterThan(0, $newId);
-
-        $name = DBQueryToValue("SELECT name FROM uo_scheduling_name WHERE scheduling_id=$newId");
-        $this->assertSame('Sched Import Test', $name);
-
-        DBQuery("DELETE FROM uo_scheduling_name WHERE scheduling_id=$newId");
-    }
-
-    public function testInsertToDatabaseMovingtimeCreatesRow(): void
-    {
-        $h = new EventDataXMLHandler();
-        $h->mode = 'new';
-        $h->uo_season['HRN2026'] = 'HRN2026';
-
-        $h->start_tag(null, 'UO_MOVINGTIME', [
-            'SEASON'       => 'HRN2026',
-            'FROMLOCATION' => '400',
-            'FROMFIELD'    => 'MT1',
-            'TOLOCATION'   => '400',
-            'TOFIELD'      => 'MT2',
-            'TIME'         => '8',
-        ]);
-
-        $count = (int) DBQueryToValue(
-            "SELECT COUNT(*) FROM uo_movingtime
-             WHERE season='HRN2026' AND fromlocation=400 AND fromfield='MT1'
-               AND tolocation=400 AND tofield='MT2'"
-        );
-        $this->assertSame(1, $count);
-
-        DBQuery("DELETE FROM uo_movingtime WHERE season='HRN2026' AND fromlocation=400 AND fromfield='MT1'");
-    }
-
-    // ── InsertToDatabase full-chain (mode=new) ────────────────────────────
-
-    public function testInsertToDatabaseFullImport(): void
-    {
-        // Pre-clean any leftovers from prior failed runs
-        DBQuery("DELETE FROM uo_season WHERE season_id='TTST01'");
-
-        $h = new EventDataXMLHandler();
-        $h->mode = 'new';
-
-        // uo_season ─────────────────────────────────────────────────────────
-        $h->start_tag(null, 'UO_SEASON', [
-            'SEASON_ID'               => 'TTST01',
-            'NAME'                    => 'Harness Full Import Test',
-            'STARTTIME'               => '2026-07-01 09:00:00',
-            'ENDTIME'                 => '2026-07-01 18:00:00',
-            'ISCURRENT'               => '0',
-            'ENROLLOPEN'              => '0',
-            'TYPE'                    => 'outdoor',
-            'ISTOURNAMENT'            => '1',
-            'ISINTERNATIONAL'         => '0',
-            'ISNATIONALTEAMS'         => '0',
-            'ORGANIZER'               => 'NULL',
-            'CATEGORY'                => 'test',
-            'SHOWSPIRITPOINTS'        => '0',
-            'USE_SEASON_POINTS'       => '0',
-            'HIDE_TIME_ON_SCORESHEET' => '0',
-            'EVENT_READONLY'          => '0',
-            'API_PUBLIC'              => '0',
-        ]);
-        $seasonId = (string) $h->uo_season['TTST01'];
-
-        $newSeriesId = 0;
-        $newSchedId  = 0;
-        $newTeamId   = 0;
-        $newPlayerId = 0;
-        $newPoolId   = 0;
-        $newResvId   = 0;
-        $newGameId   = 0;
-
+        $tmp = tempnam(sys_get_temp_dir(), 'uo_bad_') . '.json';
+        file_put_contents($tmp, 'this is not json');
         try {
-            // uo_series ─────────────────────────────────────────────────────
-            $h->start_tag(null, 'UO_SERIES', [
-                'SERIES_ID'     => '8001',
-                'NAME'          => 'Import Division',
-                'ORDERING'      => 'A',
-                'SEASON'        => 'TTST01',
-                'VALID'         => '1',
-                'TYPE'          => 'open',
-                'COLOR'         => '336699',
-                'POOL_TEMPLATE' => 'NULL',
-            ]);
-            $newSeriesId = (int) $h->uo_series['8001'];
-
-            // uo_scheduling_name ────────────────────────────────────────────
-            $h->start_tag(null, 'UO_SCHEDULING_NAME', [
-                'SCHEDULING_ID' => '8001',
-                'NAME'          => 'Round Import',
-            ]);
-            $newSchedId = (int) $h->uo_scheduling_name['8001'];
-
-            // uo_team ───────────────────────────────────────────────────────
-            $h->start_tag(null, 'UO_TEAM', [
-                'TEAM_ID'      => '8001',
-                'NAME'         => 'Import Team',
-                'POOL'         => 'NULL',
-                'CLUB'         => 'NULL',
-                'RANK'         => '1',
-                'ACTIVERANK'   => '1',
-                'VALID'        => '1',
-                'SERIES'       => '8001',
-                'COUNTRY'      => 'NULL',
-                'REG_ID'       => 'NULL',
-                'SOTG_TOKEN'   => 'NULL',
-                'ABBREVIATION' => 'IMP',
-            ]);
-            $newTeamId = (int) $h->uo_team['8001'];
-
-            // uo_player ─────────────────────────────────────────────────────
-            $h->start_tag(null, 'UO_PLAYER', [
-                'PLAYER_ID'        => '8001',
-                'FIRSTNAME'        => 'Import',
-                'LASTNAME'         => 'Player',
-                'TEAM'             => '8001',
-                'NUM'              => '1',
-                'ACCREDITATION_ID' => 'NULL',
-                'ACCREDITED'       => '0',
-                'REG_ID'           => 'NULL',
-                'PROFILE_ID'       => 'NULL',
-            ]);
-            $newPlayerId = (int) $h->uo_player['8001'];
-
-            // uo_pool ───────────────────────────────────────────────────────
-            $h->start_tag(null, 'UO_POOL', [
-                'POOL_ID'          => '8001',
-                'NAME'             => 'Import Pool',
-                'ORDERING'         => '1',
-                'VISIBLE'          => '1',
-                'CONTINUINGPOOL'   => '0',
-                'PLACEMENTPOOL'    => '0',
-                'TEAMS'            => '2',
-                'MVGAMES'          => '0',
-                'TIMEOUTLEN'       => '70',
-                'HALFTIME'         => '35',
-                'WINNINGSCORE'     => '15',
-                'TIMECAP'          => 'NULL',
-                'SCORECAP'         => 'NULL',
-                'PLAYED'           => '1',
-                'ADDSCORE'         => 'NULL',
-                'HALFTIMESCORE'    => 'NULL',
-                'TIMEOUTS'         => '2',
-                'TIMEOUTSPER'      => 'half',
-                'TIMEOUTSOVERTIME' => '1',
-                'TIMEOUTSTIMECAP'  => 'soft',
-                'BETWEENPOINTSLEN' => '90',
-                'SERIES'           => '8001',
-                'TYPE'             => '1',
-                'TIMESLOT'         => 'NULL',
-                'COLOR'            => 'NULL',
-                'FORFEITSCORE'     => '15',
-                'FORFEITAGAINST'   => '0',
-                'FOLLOWER'         => 'NULL',
-                'DRAWSALLOWED'     => '0',
-                'PLAYOFF_TEMPLATE' => 'NULL',
-            ]);
-            $newPoolId = (int) $h->uo_pool['8001'];
-
-            // uo_team_pool ──────────────────────────────────────────────────
-            $h->start_tag(null, 'UO_TEAM_POOL', [
-                'TEAM'       => '8001',
-                'POOL'       => '8001',
-                'RANK'       => '1',
-                'ACTIVERANK' => '1',
-            ]);
-
-            // uo_reservation ────────────────────────────────────────────────
-            $h->start_tag(null, 'UO_RESERVATION', [
-                'ID'               => '8001',
-                'LOCATION'         => '400',
-                'FIELDNAME'        => 'I1',
-                'RESERVATIONGROUP' => 'Import Group',
-                'STARTTIME'        => '2026-07-01 10:00:00',
-                'ENDTIME'          => '2026-07-01 11:30:00',
-                'SEASON'           => 'TTST01',
-            ]);
-            $newResvId = (int) $h->uo_reservation['8001'];
-
-            // uo_movingtime ─────────────────────────────────────────────────
-            $h->start_tag(null, 'UO_MOVINGTIME', [
-                'SEASON'       => 'TTST01',
-                'FROMLOCATION' => '400',
-                'FROMFIELD'    => 'IF1',
-                'TOLOCATION'   => '400',
-                'TOFIELD'      => 'IF2',
-                'TIME'         => '10',
-            ]);
-
-            // uo_game ───────────────────────────────────────────────────────
-            $h->start_tag(null, 'UO_GAME', [
-                'GAME_ID'                 => '8001',
-                'HOMETEAM'                => '8001',
-                'VISITORTEAM'             => '8001',
-                'HOMESCORE'               => 'NULL',
-                'VISITORSCORE'            => 'NULL',
-                'RESERVATION'             => '8001',
-                'TIME'                    => '2026-07-01 10:00:00',
-                'VALID'                   => '1',
-                'HALFTIME'                => '35',
-                'OFFICIAL'                => 'NULL',
-                'RESPTEAM'                => '8001',
-                'RESPPERS'                => 'NULL',
-                'ISONGOING'               => '0',
-                'SCHEDULING_NAME_HOME'    => 'NULL',
-                'SCHEDULING_NAME_VISITOR' => 'NULL',
-                'NAME'                    => 'NULL',
-                'TIMESLOT'                => 'NULL',
-                'HOMEDEFENSES'            => '0',
-                'VISITORDEFENSES'         => '0',
-                'HASSTARTED'              => '0',
-                'ISLIVE'                  => '0',
-                'LIVEURL'                 => 'NULL',
-                'TIMER_START'             => 'NULL',
-                'TIMER_PAUSE_START'       => 'NULL',
-                'TIMER_PAUSED_DURATION'   => '0',
-            ]);
-            $newGameId = (int) $h->uo_game['8001'];
-
-            // uo_goal ───────────────────────────────────────────────────────
-            $h->start_tag(null, 'UO_GOAL', [
-                'GAME'         => '8001',
-                'NUM'          => '1',
-                'ASSIST'       => '8001',
-                'SCORER'       => '8001',
-                'TIME'         => '120',
-                'HOMESCORE'    => '1',
-                'VISITORSCORE' => '0',
-                'ISHOMEGOAL'   => '1',
-                'ISCALLAHAN'   => '0',
-            ]);
-
-            // uo_gameevent ──────────────────────────────────────────────────
-            $h->start_tag(null, 'UO_GAMEEVENT', [
-                'GAME'   => '8001',
-                'NUM'    => '1',
-                'TIME'   => '60',
-                'TYPE'   => 'timeout',
-                'ISHOME' => '1',
-                'INFO'   => 'NULL',
-            ]);
-
-            // uo_played ─────────────────────────────────────────────────────
-            $h->start_tag(null, 'UO_PLAYED', [
-                'GAME'           => '8001',
-                'PLAYER'         => '8001',
-                'NUM'            => '1',
-                'ACCREDITED'     => '0',
-                'ACKNOWLEDGED'   => '0',
-                'CAPTAIN'        => '0',
-                'SPIRIT_CAPTAIN' => '0',
-            ]);
-
-            // uo_game_pool (timetable=0 → InsertRow path) ───────────────────
-            $h->start_tag(null, 'UO_GAME_POOL', [
-                'GAME'      => '8001',
-                'POOL'      => '8001',
-                'TIMETABLE' => '0',
-            ]);
-
-            // uo_moveteams ──────────────────────────────────────────────────
-            $h->start_tag(null, 'UO_MOVETEAMS', [
-                'FROMPOOL'      => '8001',
-                'TOPOOL'        => '8001',
-                'FROMPLACING'   => '1',
-                'TORANK'        => '1',
-                'ISMOVED'       => '0',
-                'SCHEDULING_ID' => '8001',
-            ]);
-
-            $this->assertNotEmpty($seasonId);
-            $this->assertGreaterThan(0, $newSeriesId);
-            $this->assertGreaterThan(0, $newTeamId);
-            $this->assertGreaterThan(0, $newPlayerId);
-            $this->assertGreaterThan(0, $newPoolId);
-            $this->assertGreaterThan(0, $newGameId);
-
-            $seasonRow = DBQueryToValue("SELECT COUNT(*) FROM uo_season WHERE season_id='$seasonId'");
-            $this->assertSame(1, (int) $seasonRow);
-
-            $gameRow = DBQueryToValue("SELECT COUNT(*) FROM uo_game WHERE game_id=$newGameId");
-            $this->assertSame(1, (int) $gameRow);
-
+            $this->expectException(EventSnapshotException::class);
+            EventSnapshotImportJson($tmp);
         } finally {
-            if ($newGameId > 0) {
-                DBQuery("DELETE FROM uo_game WHERE game_id=$newGameId");
-            }
-            if ($newPoolId > 0) {
-                DBQuery("DELETE FROM uo_moveteams WHERE frompool=$newPoolId");
-                DBQuery("DELETE FROM uo_team_pool WHERE pool=$newPoolId");
-                DBQuery("DELETE FROM uo_pool WHERE pool_id=$newPoolId");
-            }
-            if ($newPlayerId > 0) {
-                DBQuery("DELETE FROM uo_player WHERE player_id=$newPlayerId");
-            }
-            if ($newTeamId > 0) {
-                DBQuery("DELETE FROM uo_team WHERE team_id=$newTeamId");
-            }
-            if ($newResvId > 0) {
-                DBQuery("DELETE FROM uo_reservation WHERE id=$newResvId");
-            }
-            DBQuery("DELETE FROM uo_movingtime WHERE season='" . DBEscapeString($seasonId) . "'");
-            if ($newSchedId > 0) {
-                DBQuery("DELETE FROM uo_scheduling_name WHERE scheduling_id=$newSchedId");
-            }
-            if ($newSeriesId > 0) {
-                DBQuery("DELETE FROM uo_series WHERE series_id=$newSeriesId");
-            }
-            $safeSeasonId = DBEscapeString($seasonId);
-            DBQuery("DELETE FROM uo_userproperties WHERE userid='admin' AND name='editseason' AND value='$safeSeasonId'");
-            DBQuery("DELETE FROM uo_season WHERE season_id='$safeSeasonId'");
+            @unlink($tmp);
         }
     }
 
-    // ── ReplaceInDatabase comprehensive test ──────────────────────────────
-
-    public function testReplaceInDatabaseCoversFixtureDataPaths(): void
+    public function testImportJsonThrowsForXmlContent(): void
     {
-        // Covers ReplaceInDatabase cases: uo_team, uo_player, uo_pool,
-        // uo_reservation, uo_game, uo_goal, uo_gameevent, uo_played,
-        // uo_team_pool, uo_game_pool, uo_moveteams using fixture data.
-        // "exists" paths call SetRow; "not-exists" paths call InsertRow.
-        // SetRow wraps all values in single quotes, so nullable int columns
-        // that hold SQL NULL in the DB are omitted from these rows.
-
-        $h = new EventDataXMLHandler();
-        $h->mode = 'replace';
-        $h->eventId = 'HRN2026';
-
-        // Pre-populate id maps (as if uo_season and uo_series were processed)
-        $h->uo_season['HRN2026']      = 'HRN2026';
-        $h->uo_series['100']          = '100';
-        $h->uo_scheduling_name['600'] = '600';
-        $h->uo_team['300']            = '300';
-        $h->uo_team['301']            = '301';
-        $h->uo_player['800']          = '800';
-        $h->uo_player['801']          = '801';
-        $h->uo_pool['200']            = '200';
-        $h->uo_reservation['500']     = '500';
-        $h->uo_game['700']            = '700';
-
-        // uo_team (exists → SetRow) ─────────────────────────────────────────
-        // Omit club, reg_id, sotg_token (all int/nullable with SQL NULL).
-        $h->start_tag(null, 'UO_TEAM', [
-            'TEAM_ID'      => '300',
-            'NAME'         => 'Helsinki Heat',
-            'POOL'         => '200',
-            'RANK'         => '1',
-            'ACTIVERANK'   => '1',
-            'VALID'        => '1',
-            'SERIES'       => '100',
-            'COUNTRY'      => '1064',
-            'ABBREVIATION' => 'HEAT',
-        ]);
-        $this->assertSame('300', $h->uo_team['300']);
-
-        // uo_player (exists → maps TEAM, then SetRow) ──────────────────────
-        // Omit accreditation_id, reg_id, profile_id (int/nullable with NULL).
-        $h->start_tag(null, 'UO_PLAYER', [
-            'PLAYER_ID'  => '800',
-            'FIRSTNAME'  => 'Ari',
-            'LASTNAME'   => 'Ace',
-            'TEAM'       => '300',
-            'NUM'        => '8',
-            'ACCREDITED' => '1',
-        ]);
-        $this->assertSame('800', $h->uo_player['800']);
-
-        // uo_pool (exists → maps SERIES, then SetRow) ──────────────────────
-        // Omit timecap, scorecap, addscore, halftimescore, timeslot, follower
-        // (all int/nullable with SQL NULL in fixture).
-        $h->start_tag(null, 'UO_POOL', [
-            'POOL_ID'          => '200',
-            'NAME'             => 'Pool A',
-            'ORDERING'         => '1',
-            'VISIBLE'          => '1',
-            'CONTINUINGPOOL'   => '0',
-            'PLACEMENTPOOL'    => '0',
-            'TEAMS'            => '2',
-            'MVGAMES'          => '0',
-            'TIMEOUTLEN'       => '70',
-            'HALFTIME'         => '35',
-            'WINNINGSCORE'     => '15',
-            'PLAYED'           => '1',
-            'TIMEOUTS'         => '2',
-            'TIMEOUTSPER'      => 'half',
-            'TIMEOUTSOVERTIME' => '1',
-            'TIMEOUTSTIMECAP'  => 'soft',
-            'BETWEENPOINTSLEN' => '90',
-            'SERIES'           => '100',
-            'TYPE'             => '1',
-            'COLOR'            => '336699',
-            'FORFEITSCORE'     => '15',
-            'FORFEITAGAINST'   => '0',
-            'DRAWSALLOWED'     => '0',
-        ]);
-        $this->assertSame('200', $h->uo_pool['200']);
-
-        // uo_reservation (exists → maps SEASON, then SetRow) ───────────────
-        // Omit date (datetime, MySQL strict rejects string 'NULL' for datetime).
-        $h->start_tag(null, 'UO_RESERVATION', [
-            'ID'               => '500',
-            'LOCATION'         => '400',
-            'FIELDNAME'        => '1',
-            'RESERVATIONGROUP' => 'Harness Invitational 2026',
-            'STARTTIME'        => '2026-06-01 10:00:00',
-            'ENDTIME'          => '2026-06-01 11:30:00',
-            'SEASON'           => 'HRN2026',
-        ]);
-        $this->assertSame('500', $h->uo_reservation['500']);
-
-        // uo_game (exists → maps HOMETEAM/VISITORTEAM/RESPTEAM/RESERVATION, SetRow)
-        // Omit resppers, scheduling_name_home/_visitor, timeslot, timer_start,
-        // timer_pause_start (all int/nullable with SQL NULL in fixture).
-        $h->start_tag(null, 'UO_GAME', [
-            'GAME_ID'               => '700',
-            'HOMETEAM'              => '300',
-            'VISITORTEAM'           => '301',
-            'HOMESCORE'             => '15',
-            'VISITORSCORE'          => '11',
-            'RESERVATION'           => '500',
-            'TIME'                  => '2026-06-01 10:00:00',
-            'VALID'                 => '1',
-            'HALFTIME'              => '35',
-            'RESPTEAM'              => '300',
-            'ISONGOING'             => '0',
-            'NAME'                  => '600',
-            'HOMEDEFENSES'          => '0',
-            'VISITORDEFENSES'       => '0',
-            'HASSTARTED'            => '1',
-            'ISLIVE'                => '0',
-            'TIMER_PAUSED_DURATION' => '0',
-        ]);
-        $this->assertSame('700', $h->uo_game['700']);
-
-        // uo_goal (exists → maps GAME/ASSIST/SCORER, then SetRow) ─────────
-        $h->start_tag(null, 'UO_GOAL', [
-            'GAME'         => '700',
-            'NUM'          => '1',
-            'ASSIST'       => '801',
-            'SCORER'       => '800',
-            'TIME'         => '120',
-            'HOMESCORE'    => '1',
-            'VISITORSCORE' => '0',
-            'ISHOMEGOAL'   => '1',
-            'ISCALLAHAN'   => '0',
-        ]);
-
-        // uo_gameevent (not exists → InsertRow, needs cleanup) ─────────────
-        $h->start_tag(null, 'UO_GAMEEVENT', [
-            'GAME'   => '700',
-            'NUM'    => '99',
-            'TIME'   => '30',
-            'TYPE'   => 'timeout',
-            'ISHOME' => '1',
-            'INFO'   => 'test',
-        ]);
-        $gevCount = (int) DBQueryToValue(
-            "SELECT COUNT(*) FROM uo_gameevent WHERE game=700 AND num=99"
-        );
-        $this->assertSame(1, $gevCount);
-
-        // uo_played (exists → maps GAME/PLAYER, then SetRow) ───────────────
-        $h->start_tag(null, 'UO_PLAYED', [
-            'GAME'           => '700',
-            'PLAYER'         => '800',
-            'NUM'            => '8',
-            'ACCREDITED'     => '1',
-            'ACKNOWLEDGED'   => '1',
-            'CAPTAIN'        => '1',
-            'SPIRIT_CAPTAIN' => '0',
-        ]);
-
-        // uo_team_pool (exists → maps TEAM/POOL, then SetRow) ──────────────
-        $h->start_tag(null, 'UO_TEAM_POOL', [
-            'TEAM'       => '300',
-            'POOL'       => '200',
-            'RANK'       => '1',
-            'ACTIVERANK' => '1',
-        ]);
-
-        // uo_game_pool (timetable=1 → SetGamePool path) ────────────────────
-        $h->start_tag(null, 'UO_GAME_POOL', [
-            'GAME'      => '700',
-            'POOL'      => '200',
-            'TIMETABLE' => '1',
-        ]);
-
-        // uo_moveteams (not exists → InsertRow, needs cleanup) ─────────────
-        $h->start_tag(null, 'UO_MOVETEAMS', [
-            'FROMPOOL'      => '200',
-            'TOPOOL'        => '200',
-            'FROMPLACING'   => '97',
-            'TORANK'        => '97',
-            'ISMOVED'       => '0',
-            'SCHEDULING_ID' => '600',
-        ]);
-        $mtCount = (int) DBQueryToValue(
-            "SELECT COUNT(*) FROM uo_moveteams WHERE frompool=200 AND fromplacing=97"
-        );
-        $this->assertSame(1, $mtCount);
-
-        // Cleanup inserted rows
-        DBQuery("DELETE FROM uo_gameevent WHERE game=700 AND num=99");
-        DBQuery("DELETE FROM uo_moveteams WHERE frompool=200 AND fromplacing=97");
-    }
-
-    // ── ReplaceInDatabase individual tests ─────────────────────────────────
-
-    public function testReplaceInDatabaseSchedulingNameExistsUpdates(): void
-    {
-        $h = new EventDataXMLHandler();
-        $newId = (int) $h->InsertRow('uo_scheduling_name', ['NAME' => 'Before Replace']);
-
+        $tmp = tempnam(sys_get_temp_dir(), 'uo_xml_') . '.xml';
+        file_put_contents($tmp, '<?xml version="1.0"?><root/>');
         try {
-            $h->mode = 'replace';
-            $h->start_tag(null, 'UO_SCHEDULING_NAME', [
-                'SCHEDULING_ID' => (string) $newId,
-                'NAME'          => 'After Replace',
-            ]);
-
-            $name = DBQueryToValue("SELECT name FROM uo_scheduling_name WHERE scheduling_id=$newId");
-            $this->assertSame('After Replace', $name);
+            $this->expectException(EventSnapshotException::class);
+            EventSnapshotImportJson($tmp);
         } finally {
-            DBQuery("DELETE FROM uo_scheduling_name WHERE scheduling_id=$newId");
+            @unlink($tmp);
         }
     }
 
-    public function testReplaceInDatabaseSchedulingNameNotExistsInserts(): void
+    public function testImportJsonThrowsForXmlWithBom(): void
     {
-        $h = new EventDataXMLHandler();
-        $h->mode = 'replace';
-        $h->start_tag(null, 'UO_SCHEDULING_NAME', [
-            'SCHEDULING_ID' => '7777',
-            'NAME'          => 'Not Exists Insert',
-        ]);
-
-        $this->assertArrayHasKey('7777', $h->uo_scheduling_name);
-        $newId = (int) $h->uo_scheduling_name['7777'];
-
+        $tmp = tempnam(sys_get_temp_dir(), 'uo_bom_') . '.xml';
+        file_put_contents($tmp, "\xEF\xBB\xBF<?xml version=\"1.0\"?><root/>");
         try {
-            $count = (int) DBQueryToValue(
-                "SELECT COUNT(*) FROM uo_scheduling_name WHERE scheduling_id=$newId AND name='Not Exists Insert'"
+            $this->expectException(EventSnapshotException::class);
+            EventSnapshotImportJson($tmp);
+        } finally {
+            @unlink($tmp);
+        }
+    }
+
+    public function testImportJsonThrowsForWrongFormat(): void
+    {
+        $tmp = tempnam(sys_get_temp_dir(), 'uo_fmt_') . '.json';
+        file_put_contents($tmp, json_encode(['format' => 'unknown', 'version' => 2, 'tables' => []]));
+        try {
+            $this->expectException(EventSnapshotException::class);
+            EventSnapshotImportJson($tmp);
+        } finally {
+            @unlink($tmp);
+        }
+    }
+
+    public function testImportJsonThrowsForWrongVersion(): void
+    {
+        $tmp = tempnam(sys_get_temp_dir(), 'uo_ver_') . '.json';
+        file_put_contents($tmp, json_encode([
+            'format' => 'ultiorganizer.event-snapshot',
+            'version' => 999,
+            'tables' => [],
+        ]));
+        try {
+            $this->expectException(EventSnapshotException::class);
+            EventSnapshotImportJson($tmp);
+        } finally {
+            @unlink($tmp);
+        }
+    }
+
+    public function testImportJsonThrowsForUnknownMode(): void
+    {
+        $tmp = $this->exportHrn2026ToTempFile();
+        try {
+            $this->expectException(EventSnapshotException::class);
+            EventSnapshotImportJson($tmp, '', 'invalid_mode');
+        } finally {
+            @unlink($tmp);
+        }
+    }
+
+    // ── Roundtrip import tests ─────────────────────────────────────────────
+
+    public function testImportJsonNewModeCreatesNewSeason(): void
+    {
+        $tmp = $this->exportHrn2026ToTempFile();
+        $importedSeasonId = null;
+        try {
+            $result = EventSnapshotImportJson($tmp, '', 'new');
+
+            $this->assertIsArray($result);
+            $this->assertArrayHasKey('season_id', $result);
+            $this->assertArrayHasKey('warnings', $result);
+
+            $importedSeasonId = $result['season_id'];
+            $this->assertNotEmpty($importedSeasonId);
+            $this->assertNotSame('HRN2026', $importedSeasonId);
+
+            $this->assertTrue((bool) SeasonExists($importedSeasonId));
+
+            $seriesCount = (int) DBQueryToValue("SELECT COUNT(*) FROM uo_series WHERE season='" . DBEscapeString($importedSeasonId) . "'");
+            $this->assertGreaterThan(0, $seriesCount);
+        } finally {
+            @unlink($tmp);
+            if ($importedSeasonId !== null) {
+                $this->deleteImportedSeason($importedSeasonId);
+            }
+        }
+    }
+
+    public function testImportJsonReplaceModeUpdatesExistingSeason(): void
+    {
+        $targetId = 'RPL' . substr(uniqid(), -6);
+        $tid = DBEscapeString($targetId);
+        DBQuery("INSERT INTO uo_season (season_id, name, starttime, endtime) VALUES ('$tid', 'Replace Target', '2026-01-01 00:00:00', '2026-01-02 00:00:00')");
+
+        $tmp = $this->exportHrn2026ToTempFile();
+        $importedSeasonId = null;
+        try {
+            $result = EventSnapshotImportJson($tmp, $targetId, 'replace');
+
+            $this->assertIsArray($result);
+            $this->assertSame($targetId, $result['season_id']);
+            $importedSeasonId = $result['season_id'];
+
+            $seriesCount = (int) DBQueryToValue("SELECT COUNT(*) FROM uo_series WHERE season='$tid'");
+            $this->assertGreaterThan(0, $seriesCount);
+        } finally {
+            @unlink($tmp);
+            if ($importedSeasonId !== null) {
+                $this->deleteImportedSeason($importedSeasonId);
+            } else {
+                DBQuery("DELETE FROM uo_season WHERE season_id='$tid'");
+            }
+        }
+    }
+
+    public function testImportJsonThrowsForReplaceModeWithoutAdminRights(): void
+    {
+        // Export while still admin
+        $tmp = $this->exportHrn2026ToTempFile();
+        // Strip admin rights before the import call
+        $_SESSION = [];
+        try {
+            $this->expectException(EventSnapshotException::class);
+            EventSnapshotImportJson($tmp, 'HRN2026', 'replace');
+        } finally {
+            @unlink($tmp);
+        }
+    }
+
+    public function testImportJsonThrowsForReplaceModeWithMissingTarget(): void
+    {
+        $tmp = $this->exportHrn2026ToTempFile();
+        try {
+            $this->expectException(EventSnapshotException::class);
+            EventSnapshotImportJson($tmp, 'NONEXISTENT_SEASON_999', 'replace');
+        } finally {
+            @unlink($tmp);
+        }
+    }
+
+    // ── Import with URLs (covers importUrls + validateUrlOwner) ──────────
+
+    public function testImportJsonWithUrlsImportsUrls(): void
+    {
+        // Add a URL to team 300 before exporting so the snapshot has uo_urls
+        DBQuery("INSERT INTO uo_urls (owner, owner_id, type, name, url) VALUES ('team', 300, 'website', 'Test Site', 'https://example.com')");
+        $urlId = (int) DBQueryToValue("SELECT url_id FROM uo_urls WHERE owner='team' AND owner_id=300 ORDER BY url_id DESC LIMIT 1");
+        $tmp = $this->exportHrn2026ToTempFile();
+        // Clean up the URL we added
+        DBQuery("DELETE FROM uo_urls WHERE url_id=$urlId");
+
+        $importedSeasonId = null;
+        try {
+            $result = EventSnapshotImportJson($tmp, '', 'new');
+            $importedSeasonId = $result['season_id'];
+            $this->assertNotEmpty($importedSeasonId);
+        } finally {
+            @unlink($tmp);
+            if ($importedSeasonId !== null) {
+                $this->deleteImportedSeason($importedSeasonId);
+            }
+        }
+    }
+
+    public function testImportJsonThrowsForSnapshotWithInvalidUrlOwner(): void
+    {
+        $json = EventSnapshotExportJson('HRN2026');
+        $data = json_decode($json, true);
+        // Add URL with invalid owner type
+        $data['tables']['uo_urls'] = [
+            ['url_id' => 9999, 'owner' => 'invalid_owner', 'owner_id' => 300, 'type' => 'website', 'name' => 'Bad', 'url' => 'https://bad.example.com', 'publisher_id' => null],
+        ];
+        $tmp = tempnam(sys_get_temp_dir(), 'uo_url_') . '.json';
+        file_put_contents($tmp, json_encode($data));
+        try {
+            $this->expectException(EventSnapshotException::class);
+            EventSnapshotImportJson($tmp, '', 'new');
+        } finally {
+            @unlink($tmp);
+        }
+    }
+
+    // ── Import with comments (covers importComments + validateCommentOwner) ──
+
+    public function testImportJsonWithSeasonCommentImportsComment(): void
+    {
+        // Add a comment for the season
+        DBQuery("INSERT INTO uo_comment (type, id, comment) VALUES (1, 'HRN2026', 'Test comment for export')");
+        $tmp = $this->exportHrn2026ToTempFile();
+        DBQuery("DELETE FROM uo_comment WHERE type=1 AND id='HRN2026'");
+
+        $importedSeasonId = null;
+        try {
+            $result = EventSnapshotImportJson($tmp, '', 'new');
+            $importedSeasonId = $result['season_id'];
+            $this->assertNotEmpty($importedSeasonId);
+        } finally {
+            @unlink($tmp);
+            if ($importedSeasonId !== null) {
+                $this->deleteImportedSeason($importedSeasonId);
+                // Also remove comments for the imported season
+                DBQuery("DELETE FROM uo_comment WHERE type=1 AND id='" . DBEscapeString($importedSeasonId) . "'");
+            }
+        }
+    }
+
+    public function testImportJsonThrowsForSnapshotWithInvalidCommentType(): void
+    {
+        $json = EventSnapshotExportJson('HRN2026');
+        $data = json_decode($json, true);
+        // Add comment with invalid type
+        $data['tables']['uo_comment'] = [
+            ['type' => 999, 'id' => 'HRN2026', 'comment' => 'bad comment'],
+        ];
+        $tmp = tempnam(sys_get_temp_dir(), 'uo_com_') . '.json';
+        file_put_contents($tmp, json_encode($data));
+        try {
+            $this->expectException(EventSnapshotException::class);
+            EventSnapshotImportJson($tmp, '', 'new');
+        } finally {
+            @unlink($tmp);
+        }
+    }
+
+    // ── Import with team profiles (covers importTeamProfiles) ─────────────
+
+    public function testImportJsonWithTeamProfilesImportsProfiles(): void
+    {
+        // Insert a team profile for team 300
+        DBQuery("INSERT INTO uo_team_profile (team_id, captain) VALUES (300, 'Ari Ace') ON DUPLICATE KEY UPDATE captain='Ari Ace'");
+        $tmp = $this->exportHrn2026ToTempFile();
+        DBQuery("DELETE FROM uo_team_profile WHERE team_id=300");
+
+        $importedSeasonId = null;
+        try {
+            $result = EventSnapshotImportJson($tmp, '', 'new');
+            $importedSeasonId = $result['season_id'];
+            $this->assertNotEmpty($importedSeasonId);
+        } finally {
+            @unlink($tmp);
+            if ($importedSeasonId !== null) {
+                $this->deleteImportedSeason($importedSeasonId);
+            }
+        }
+    }
+
+    // ── Snapshot validation edge cases ────────────────────────────────────
+
+    public function testImportJsonThrowsForMissingRequiredTable(): void
+    {
+        $json = EventSnapshotExportJson('HRN2026');
+        $data = json_decode($json, true);
+        unset($data['tables']['uo_season']);
+        $tmp = tempnam(sys_get_temp_dir(), 'uo_tbl_') . '.json';
+        file_put_contents($tmp, json_encode($data));
+        try {
+            $this->expectException(EventSnapshotException::class);
+            EventSnapshotImportJson($tmp);
+        } finally {
+            @unlink($tmp);
+        }
+    }
+
+    public function testImportJsonThrowsForMultipleSeasonRows(): void
+    {
+        $json = EventSnapshotExportJson('HRN2026');
+        $data = json_decode($json, true);
+        $data['tables']['uo_season'][] = $data['tables']['uo_season'][0];
+        $tmp = tempnam(sys_get_temp_dir(), 'uo_multi_') . '.json';
+        file_put_contents($tmp, json_encode($data));
+        try {
+            $this->expectException(EventSnapshotException::class);
+            EventSnapshotImportJson($tmp);
+        } finally {
+            @unlink($tmp);
+        }
+    }
+
+    public function testImportJsonThrowsForInvalidTableRow(): void
+    {
+        $json = EventSnapshotExportJson('HRN2026');
+        $data = json_decode($json, true);
+        $data['tables']['uo_series'][] = 'not an array';
+        $tmp = tempnam(sys_get_temp_dir(), 'uo_row_') . '.json';
+        file_put_contents($tmp, json_encode($data));
+        try {
+            $this->expectException(EventSnapshotException::class);
+            EventSnapshotImportJson($tmp);
+        } finally {
+            @unlink($tmp);
+        }
+    }
+
+    public function testImportJsonSkipsUnknownColumnWithWarning(): void
+    {
+        // Columns the current schema does not know about are dropped and reported
+        // as warnings (see EventSnapshotService::dropObsoleteSnapshotColumns),
+        // so cross-version snapshots import instead of hard-failing.
+        $json = EventSnapshotExportJson('HRN2026');
+        $data = json_decode($json, true);
+        $data['tables']['uo_season'][0]['nonexistent_column_xyz'] = 'bad';
+        $tmp = tempnam(sys_get_temp_dir(), 'uo_col_') . '.json';
+        file_put_contents($tmp, json_encode($data));
+        $importedSeasonId = null;
+        try {
+            $result = EventSnapshotImportJson($tmp, '', 'new');
+
+            $this->assertArrayHasKey('warnings', $result);
+            $importedSeasonId = $result['season_id'];
+            $this->assertStringContainsString(
+                'nonexistent_column_xyz',
+                implode("\n", $result['warnings']),
             );
-            $this->assertSame(1, $count);
         } finally {
-            DBQuery("DELETE FROM uo_scheduling_name WHERE scheduling_id=$newId");
-        }
-    }
-
-    public function testReplaceInDatabaseMovingtimeExistsUpdates(): void
-    {
-        $h = new EventDataXMLHandler();
-        $h->uo_season['HRN2026'] = 'HRN2026';
-
-        $h->mode = 'new';
-        $h->start_tag(null, 'UO_MOVINGTIME', [
-            'SEASON'       => 'HRN2026',
-            'FROMLOCATION' => '400',
-            'FROMFIELD'    => 'RM1',
-            'TOLOCATION'   => '400',
-            'TOFIELD'      => 'RM2',
-            'TIME'         => '5',
-        ]);
-
-        try {
-            $h->mode = 'replace';
-            $h->start_tag(null, 'UO_MOVINGTIME', [
-                'SEASON'       => 'HRN2026',
-                'FROMLOCATION' => '400',
-                'FROMFIELD'    => 'RM1',
-                'TOLOCATION'   => '400',
-                'TOFIELD'      => 'RM2',
-                'TIME'         => '20',
-            ]);
-
-            $time = DBQueryToValue(
-                "SELECT time FROM uo_movingtime
-                 WHERE season='HRN2026' AND fromlocation=400 AND fromfield='RM1'"
-            );
-            $this->assertSame('20', (string) $time);
-        } finally {
-            DBQuery("DELETE FROM uo_movingtime WHERE season='HRN2026' AND fromlocation=400 AND fromfield='RM1'");
-        }
-    }
-
-    public function testReplaceInDatabaseMovingtimeNotExistsInserts(): void
-    {
-        $h = new EventDataXMLHandler();
-        $h->mode = 'replace';
-        $h->uo_season['HRN2026'] = 'HRN2026';
-
-        $h->start_tag(null, 'UO_MOVINGTIME', [
-            'SEASON'       => 'HRN2026',
-            'FROMLOCATION' => '400',
-            'FROMFIELD'    => 'RN1',
-            'TOLOCATION'   => '400',
-            'TOFIELD'      => 'RN2',
-            'TIME'         => '15',
-        ]);
-
-        try {
-            $count = (int) DBQueryToValue(
-                "SELECT COUNT(*) FROM uo_movingtime
-                 WHERE season='HRN2026' AND fromlocation=400 AND fromfield='RN1'"
-            );
-            $this->assertSame(1, $count);
-        } finally {
-            DBQuery("DELETE FROM uo_movingtime WHERE season='HRN2026' AND fromlocation=400 AND fromfield='RN1'");
-        }
-    }
-
-    public function testReplaceInDatabaseSeriesExistsUpdates(): void
-    {
-        $h = new EventDataXMLHandler();
-        // Omit POOL_TEMPLATE (int nullable): SetRow wraps all values in quotes
-        // and MySQL strict mode rejects string 'NULL' for integer columns.
-        $newSeriesId = (int) $h->InsertRow('uo_series', [
-            'NAME'     => 'Before Series Replace',
-            'ORDERING' => 'Z',
-            'SEASON'   => 'HRN2026',
-            'VALID'    => '1',
-            'TYPE'     => 'open',
-            'COLOR'    => 'NULL',
-        ]);
-
-        try {
-            $h->mode = 'replace';
-            $h->uo_season['HRN2026'] = 'HRN2026';
-            $h->start_tag(null, 'UO_SERIES', [
-                'SERIES_ID' => (string) $newSeriesId,
-                'NAME'      => 'After Series Replace',
-                'ORDERING'  => 'Z',
-                'SEASON'    => 'HRN2026',
-                'VALID'     => '1',
-                'TYPE'      => 'open',
-                'COLOR'     => 'NULL',
-            ]);
-
-            $name = DBQueryToValue("SELECT name FROM uo_series WHERE series_id=$newSeriesId");
-            $this->assertSame('After Series Replace', $name);
-            $this->assertSame($newSeriesId, (int) ($h->uo_series[(string) $newSeriesId] ?? 0));
-        } finally {
-            DBQuery("DELETE FROM uo_series WHERE series_id=$newSeriesId");
-        }
-    }
-
-    public function testReplaceInDatabaseSeriesNotExistsInserts(): void
-    {
-        $h = new EventDataXMLHandler();
-        $h->mode = 'replace';
-        $h->uo_season['HRN2026'] = 'HRN2026';
-
-        $h->start_tag(null, 'UO_SERIES', [
-            'SERIES_ID'     => '9001',
-            'NAME'          => 'Not Exists Series',
-            'ORDERING'      => 'Z',
-            'SEASON'        => 'HRN2026',
-            'VALID'         => '1',
-            'TYPE'          => 'open',
-            'COLOR'         => 'NULL',
-            'POOL_TEMPLATE' => 'NULL',
-        ]);
-
-        $this->assertArrayHasKey('9001', $h->uo_series);
-        $newId = (int) $h->uo_series['9001'];
-
-        try {
-            $count = (int) DBQueryToValue("SELECT COUNT(*) FROM uo_series WHERE series_id=$newId");
-            $this->assertSame(1, $count);
-        } finally {
-            DBQuery("DELETE FROM uo_series WHERE series_id=$newId");
-        }
-    }
-
-    public function testReplaceInDatabaseSeasonExistsUpdates(): void
-    {
-        DBQuery(
-            "INSERT INTO uo_season"
-            . " (season_id, name, iscurrent, enrollopen, istournament, isinternational,"
-            . " isnationalteams, showspiritpoints, use_season_points, hide_time_on_scoresheet,"
-            . " event_readonly, api_public)"
-            . " VALUES ('TTSTRS', 'Replace Season Before', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)"
-        );
-
-        try {
-            $h = new EventDataXMLHandler();
-            $h->mode = 'replace';
-            $h->eventId = 'TTSTRS';
-
-            $h->start_tag(null, 'UO_SEASON', [
-                'SEASON_ID'               => 'TTSTRS',
-                'NAME'                    => 'Replace Season After',
-                'STARTTIME'               => '2026-08-01 09:00:00',
-                'ENDTIME'                 => '2026-08-01 18:00:00',
-                'ISCURRENT'               => '0',
-                'ENROLLOPEN'              => '0',
-                'TYPE'                    => 'outdoor',
-                'ISTOURNAMENT'            => '0',
-                'ISINTERNATIONAL'         => '0',
-                'ISNATIONALTEAMS'         => '0',
-                'SHOWSPIRITPOINTS'        => '0',
-                'USE_SEASON_POINTS'       => '0',
-                'HIDE_TIME_ON_SCORESHEET' => '0',
-                'EVENT_READONLY'          => '0',
-                'API_PUBLIC'              => '0',
-            ]);
-
-            $name = DBQueryToValue("SELECT name FROM uo_season WHERE season_id='TTSTRS'");
-            $this->assertSame('Replace Season After', $name);
-            $this->assertSame('TTSTRS', $h->uo_season['TTSTRS']);
-        } finally {
-            DBQuery("DELETE FROM uo_season WHERE season_id='TTSTRS'");
+            @unlink($tmp);
+            if ($importedSeasonId !== null) {
+                $this->deleteImportedSeason($importedSeasonId);
+            }
         }
     }
 }

@@ -648,4 +648,380 @@ final class TeamFunctionsLibTest extends TestCase
             $_SESSION = [];
         }
     }
+
+    // ---- TeamMove ----
+
+    public function testTeamMoveReturnsEarlyWhenNoMoveConfigured(): void
+    {
+        // Pool 10 (VIS2026) has no playoff moves → PoolGetMoveToPool returns falsy → early return
+        TeamMove(300, 10);
+        $this->assertTrue(true);
+    }
+
+    // ---- TeamAbbreviation ----
+
+    public function testTeamAbbreviationReturnsAbbreviationForKnownTeam(): void
+    {
+        // Team 300 (Harness FC) set up in fixture
+        $abbrev = TeamAbbreviation(300);
+        $this->assertNotNull($abbrev);
+    }
+
+    public function testTeamAbbreviationReturnsNullForUnknownTeam(): void
+    {
+        $abbrev = TeamAbbreviation(999999);
+        $this->assertNull($abbrev);
+    }
+
+    // ---- TeamsToCsv ----
+
+    public function testTeamsToCsvReturnsCsvStringForKnownSeason(): void
+    {
+        $result = TeamsToCsv('HRN2026', ';');
+        $this->assertIsString($result);
+    }
+
+    // ---- AddTeamProfileUrl / RemoveTeamProfileUrl ----
+
+    public function testAddAndRemoveTeamProfileUrl(): void
+    {
+        LegacyApp::loadUserFunctions();
+        LegacyApp::loginAsAdmin();
+        try {
+            $addResult = AddTeamProfileUrl(300, 'website', 'https://example.com', 'Example');
+            $this->assertNotFalse($addResult);
+
+            // Retrieve the inserted url_id
+            $urlId = DBQueryToValue("SELECT url_id FROM uo_urls WHERE owner='team' AND owner_id=300 AND type='website' ORDER BY url_id DESC LIMIT 1");
+            $this->assertNotNull($urlId);
+
+            $removeResult = RemoveTeamProfileUrl(300, (int) $urlId);
+            $this->assertNotFalse($removeResult);
+        } finally {
+            DBQuery("DELETE FROM uo_urls WHERE owner='team' AND owner_id=300 AND type='website'");
+            $_SESSION = [];
+        }
+    }
+
+    // ---- GetTeamPlayers (additional $_GET branches) ----
+
+    public function testGetTeamPlayersWithQueryKey(): void
+    {
+        $_GET = ['query' => '300'];
+        try {
+            $result = GetTeamPlayers();
+            $this->assertIsArray($result);
+        } finally {
+            $_GET = [];
+        }
+    }
+
+    public function testGetTeamPlayersWithQKey(): void
+    {
+        $_GET = ['q' => '300'];
+        try {
+            $result = GetTeamPlayers();
+            $this->assertIsArray($result);
+        } finally {
+            $_GET = [];
+        }
+    }
+
+    public function testGetTeamPlayersWithSearchKey(): void
+    {
+        $_GET = ['search' => '300'];
+        try {
+            $result = GetTeamPlayers();
+            $this->assertIsArray($result);
+        } finally {
+            $_GET = [];
+        }
+    }
+
+    // ---- TeamCopyRoster ----
+
+    public function testTeamCopyRosterAsAdminCopiesPlayers(): void
+    {
+        LegacyApp::loadUserFunctions();
+        LegacyApp::loginAsAdmin();
+        $newTeamId = null;
+        try {
+            $newTeamId = (int) AddTeam([
+                'name' => 'CopyTarget', 'pool' => null, 'rank' => 1, 'valid' => 1,
+                'series' => 100, 'country' => 0, 'club' => null, 'abbreviation' => 'CT',
+            ]);
+            // Copy from team 300 which has 2 players → covers foreach body with INSERT
+            TeamCopyRoster(300, $newTeamId);
+            self::flushQueryCaches();
+            $players = DBQueryToArray("SELECT player_id FROM uo_player WHERE team=$newTeamId");
+            $this->assertCount(2, $players);
+        } finally {
+            if ($newTeamId !== null) {
+                DBQuery("DELETE FROM uo_player WHERE team=$newTeamId");
+                DBQuery("DELETE FROM uo_team WHERE team_id=$newTeamId");
+            }
+            $_SESSION = [];
+        }
+    }
+
+    // ---- TeamPlayedGames (additional sorting branches) ----
+
+    public function testTeamPlayedGamesWithTeamSorting(): void
+    {
+        $result = TeamPlayedGames('Harness FC', 'open', 'team');
+        $this->assertIsArray($result);
+    }
+
+    public function testTeamPlayedGamesWithResultSorting(): void
+    {
+        $result = TeamPlayedGames('Harness FC', 'open', 'result');
+        $this->assertIsArray($result);
+    }
+
+    public function testTeamPlayedGamesWithSerieSorting(): void
+    {
+        $result = TeamPlayedGames('Harness FC', 'open', 'serie');
+        $this->assertIsArray($result);
+    }
+
+    public function testTeamPlayedGamesWithCurSeasonTrue(): void
+    {
+        $result = TeamPlayedGames('Harness FC', 'open', 'name', true);
+        $this->assertIsArray($result);
+    }
+
+    // ---- GetAllPlayedGames (additional sorting branches) ----
+
+    public function testGetAllPlayedGamesWithTeamSorting(): void
+    {
+        $result = GetAllPlayedGamesArray(300, 301, 'open', 'team');
+        $this->assertIsArray($result);
+    }
+
+    public function testGetAllPlayedGamesWithResultSorting(): void
+    {
+        $result = GetAllPlayedGamesArray(300, 301, 'open', 'result');
+        $this->assertIsArray($result);
+    }
+
+    public function testGetAllPlayedGamesWithSeriesSorting(): void
+    {
+        $result = GetAllPlayedGamesArray(300, 301, 'open', 'series');
+        $this->assertIsArray($result);
+    }
+
+    // ---- SetTeam (additional country branches) ----
+
+    public function testSetTeamWithPositiveCountryCoversBranch(): void
+    {
+        LegacyApp::loadUserFunctions();
+        LegacyApp::loginAsAdmin();
+        $teamId = null;
+        try {
+            $teamId = (int) AddTeam([
+                'name' => 'Country Team', 'pool' => null, 'rank' => 1, 'valid' => 1,
+                'series' => 100, 'country' => 0, 'club' => null, 'abbreviation' => 'COT',
+            ]);
+            // country_id 1000 (Afghanistan) exists in the production country table
+            SetTeam([
+                'team_id' => $teamId, 'name' => 'Country Team', 'pool' => null,
+                'abbreviation' => 'COT', 'rank' => 1, 'valid' => 1, 'series' => 100,
+                'country' => 1000, 'club' => null,
+            ]);
+            $this->assertTrue(true);
+        } finally {
+            if ($teamId !== null) {
+                DBQuery("DELETE FROM uo_team WHERE team_id=$teamId");
+            }
+            $_SESSION = [];
+        }
+    }
+
+    public function testSetTeamWithNegativeOneCountrySetsNull(): void
+    {
+        LegacyApp::loadUserFunctions();
+        LegacyApp::loginAsAdmin();
+        $teamId = null;
+        try {
+            $teamId = (int) AddTeam([
+                'name' => 'NoCountry Team', 'pool' => null, 'rank' => 1, 'valid' => 1,
+                'series' => 100, 'country' => 1000, 'club' => null, 'abbreviation' => 'NCT',
+            ]);
+            SetTeam([
+                'team_id' => $teamId, 'name' => 'NoCountry Team', 'pool' => null,
+                'abbreviation' => 'NCT', 'rank' => 1, 'valid' => 1, 'series' => 100,
+                'country' => -1, 'club' => null,
+            ]);
+            self::flushQueryCaches();
+            $info = TeamInfo($teamId);
+            $this->assertNull($info['country']);
+        } finally {
+            if ($teamId !== null) {
+                DBQuery("DELETE FROM uo_team WHERE team_id=$teamId");
+            }
+            $_SESSION = [];
+        }
+    }
+
+    // ---- TeamScoreBoard (additional paths) ----
+
+    public function testTeamScoreBoardArrayWithNullPools(): void
+    {
+        // Covers else branch (no pool filter) in TeamScoreBoard
+        $result = TeamScoreBoardArray(300, false, 'total', null);
+        $this->assertIsArray($result);
+    }
+
+    public function testTeamScoreBoardArrayWithGoalSorting(): void
+    {
+        $result = TeamScoreBoardArray(300, [200], 'goal', null);
+        $this->assertIsArray($result);
+    }
+
+    public function testTeamScoreBoardArrayWithCallahanSorting(): void
+    {
+        $result = TeamScoreBoardArray(300, [200], 'callahan', null);
+        $this->assertIsArray($result);
+    }
+
+    public function testTeamScoreBoardArrayWithPassSorting(): void
+    {
+        $result = TeamScoreBoardArray(300, [200], 'pass', null);
+        $this->assertIsArray($result);
+    }
+
+    public function testTeamScoreBoardArrayWithGamesSorting(): void
+    {
+        $result = TeamScoreBoardArray(300, [200], 'games', null);
+        $this->assertIsArray($result);
+    }
+
+    public function testTeamScoreBoardArrayWithTeamSorting(): void
+    {
+        $result = TeamScoreBoardArray(300, [200], 'team', null);
+        $this->assertIsArray($result);
+    }
+
+    public function testTeamScoreBoardArrayWithNameSorting(): void
+    {
+        $result = TeamScoreBoardArray(300, [200], 'name', null);
+        $this->assertIsArray($result);
+    }
+
+    public function testTeamScoreBoardArrayWithNumSorting(): void
+    {
+        $result = TeamScoreBoardArray(300, [200], 'num', null);
+        $this->assertIsArray($result);
+    }
+
+    public function testTeamScoreBoardArrayWithGoalavgSorting(): void
+    {
+        $result = TeamScoreBoardArray(300, [200], 'goalavg', null);
+        $this->assertIsArray($result);
+    }
+
+    public function testTeamScoreBoardArrayWithPassavgSorting(): void
+    {
+        $result = TeamScoreBoardArray(300, [200], 'passavg', null);
+        $this->assertIsArray($result);
+    }
+
+    public function testTeamScoreBoardArrayWithTotalavgSorting(): void
+    {
+        $result = TeamScoreBoardArray(300, [200], 'totalavg', null);
+        $this->assertIsArray($result);
+    }
+
+    public function testTeamScoreBoardArrayWithLimit(): void
+    {
+        $result = TeamScoreBoardArray(300, [200], 'total', 5);
+        $this->assertIsArray($result);
+    }
+
+    // ---- TeamScoreBoardWithDefenses (additional paths) ----
+
+    public function testTeamScoreBoardWithDefensesNullPools(): void
+    {
+        // Covers else branch in TeamScoreBoardWithDefenses
+        $result = TeamScoreBoardWithDefenses(300, false, 'total', null);
+        $this->assertIsArray($result);
+    }
+
+    public function testTeamScoreBoardWithDefensesDeftotalSorting(): void
+    {
+        $result = TeamScoreBoardWithDefenses(300, [200], 'deftotal', null);
+        $this->assertIsArray($result);
+    }
+
+    public function testTeamScoreBoardWithDefensesGoalSorting(): void
+    {
+        $result = TeamScoreBoardWithDefenses(300, [200], 'goal', null);
+        $this->assertIsArray($result);
+    }
+
+    public function testTeamScoreBoardWithDefensesCallahanSorting(): void
+    {
+        $result = TeamScoreBoardWithDefenses(300, [200], 'callahan', null);
+        $this->assertIsArray($result);
+    }
+
+    public function testTeamScoreBoardWithDefensesPassSorting(): void
+    {
+        $result = TeamScoreBoardWithDefenses(300, [200], 'pass', null);
+        $this->assertIsArray($result);
+    }
+
+    public function testTeamScoreBoardWithDefensesGamesSorting(): void
+    {
+        $result = TeamScoreBoardWithDefenses(300, [200], 'games', null);
+        $this->assertIsArray($result);
+    }
+
+    public function testTeamScoreBoardWithDefensesTeamSorting(): void
+    {
+        $result = TeamScoreBoardWithDefenses(300, [200], 'team', null);
+        $this->assertIsArray($result);
+    }
+
+    public function testTeamScoreBoardWithDefensesNameSorting(): void
+    {
+        $result = TeamScoreBoardWithDefenses(300, [200], 'name', null);
+        $this->assertIsArray($result);
+    }
+
+    public function testTeamScoreBoardWithDefensesWithLimit(): void
+    {
+        $result = TeamScoreBoardWithDefenses(300, [200], 'total', 3);
+        $this->assertIsArray($result);
+    }
+
+    // ---- TeamListAll (onlyold and '#' namefilter branches) ----
+
+    public function testTeamListAllWithOnlyoldTrueGroupedTrue(): void
+    {
+        // Covers grouped=true, onlyold=true → RIGHT JOIN branch
+        $result = TeamListAll(true, true);
+        $this->assertNotFalse($result);
+    }
+
+    public function testTeamListAllWithHashNamefilterGroupedTrue(): void
+    {
+        // Covers grouped=true + namefilter="#" → REGEXP branch
+        $result = TeamListAll(true, false, '#');
+        $this->assertNotFalse($result);
+    }
+
+    public function testTeamListAllWithOnlyoldNonGrouped(): void
+    {
+        // Covers grouped=false, onlyold=true → RIGHT JOIN branch
+        $result = TeamListAll(false, true);
+        $this->assertNotFalse($result);
+    }
+
+    public function testTeamListAllWithHashNamefilterNonGrouped(): void
+    {
+        // Covers grouped=false + namefilter="#" → REGEXP branch
+        $result = TeamListAll(false, false, '#');
+        $this->assertNotFalse($result);
+    }
 }

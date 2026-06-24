@@ -14,7 +14,10 @@
       "Bash(./libtest:catalog-refresh *)",
       "Bash(./test:quick *)",
       "Bash(./test:matrix *)",
-      "Bash(./test:case *)"
+      "Bash(./test:case *)",
+      "Bash(./libtest:coverage *)",
+      "Bash(./libtest:scaffold *)",
+      "Bash(./test:js *)"
     ]
   }
 }

@@ -62,4 +62,28 @@ final class SessionFunctionsLibTest extends TestCase
         unset($_SERVER['HTTPS'], $_SERVER['SERVER_PORT']);
         $this->assertFalse(isHttpsRequest());
     }
+
+    // --- regenerateSessionId ---
+
+    public function testRegenerateSessionIdDoesNothingWhenSessionNotActive(): void
+    {
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            session_write_close();
+        }
+        regenerateSessionId();
+        $this->assertNotSame(PHP_SESSION_ACTIVE, session_status());
+    }
+
+    public function testRegenerateSessionIdSucceedsWhenSessionActive(): void
+    {
+        if (session_status() !== PHP_SESSION_ACTIVE) {
+            session_start();
+        }
+        try {
+            regenerateSessionId();
+            $this->assertSame(PHP_SESSION_ACTIVE, session_status());
+        } finally {
+            session_write_close();
+        }
+    }
 }

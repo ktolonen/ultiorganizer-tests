@@ -38,4 +38,19 @@ final class SessionFunctionsLibTest extends TestCase
         $this->assertSame(PHP_SESSION_ACTIVE, session_status());
         $this->assertSame('UO_SESSID', session_name());
     }
+
+    public function testRegenerateSessionIdDoesNothingWhenNoActiveSession(): void
+    {
+        $this->assertNotSame(PHP_SESSION_ACTIVE, session_status());
+        regenerateSessionId();
+        $this->assertNotSame(PHP_SESSION_ACTIVE, session_status());
+    }
+
+    public function testRegenerateSessionIdSucceedsWhenSessionIsActive(): void
+    {
+        startSecureSession();
+        $this->assertSame(PHP_SESSION_ACTIVE, session_status());
+        regenerateSessionId();
+        $this->assertSame(PHP_SESSION_ACTIVE, session_status());
+    }
 }

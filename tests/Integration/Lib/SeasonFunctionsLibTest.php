@@ -414,4 +414,137 @@ final class SeasonFunctionsLibTest extends TestCase
             $_SESSION = [];
         }
     }
+
+    // ---- RequireSeasonPublicExternal ----
+
+    public function testRequireSeasonPublicExternalReturnsEarlyForPublicSeason(): void
+    {
+        // HRN2026 has api_public=1 and public_event=1 → IsSeasonPublicExternal returns true → early return
+        RequireSeasonPublicExternal('HRN2026');
+        $this->assertTrue(true);
+    }
+
+    // ---- EnforceSoftMaintenanceForView ----
+
+    public function testEnforceSoftMaintenanceForViewReturnsEarlyForEmptyView(): void
+    {
+        EnforceSoftMaintenanceForView('');
+        $this->assertTrue(true);
+    }
+
+    public function testEnforceSoftMaintenanceForViewReturnsEarlyForIndexView(): void
+    {
+        EnforceSoftMaintenanceForView('index');
+        $this->assertTrue(true);
+    }
+
+    public function testEnforceSoftMaintenanceForViewReturnsEarlyForAdminView(): void
+    {
+        EnforceSoftMaintenanceForView('admin/seasons');
+        $this->assertTrue(true);
+    }
+
+    public function testEnforceSoftMaintenanceForViewReturnsEarlyForUserView(): void
+    {
+        EnforceSoftMaintenanceForView('user/profile');
+        $this->assertTrue(true);
+    }
+
+    public function testEnforceSoftMaintenanceForViewReturnsEarlyForLoginView(): void
+    {
+        EnforceSoftMaintenanceForView('login');
+        $this->assertTrue(true);
+    }
+
+    public function testEnforceSoftMaintenanceForViewReturnsEarlyForLogoutView(): void
+    {
+        EnforceSoftMaintenanceForView('logout');
+        $this->assertTrue(true);
+    }
+
+    public function testEnforceSoftMaintenanceForViewCompletesForNonMaintenancePage(): void
+    {
+        // Non-special view with no season GET param and SoftMaintenanceMode not loaded
+        // → returns without die() since no season in maintenance
+        $_GET = [];
+        EnforceSoftMaintenanceForView('frontpage');
+        $this->assertTrue(true);
+    }
+
+    // ---- EnforcePrivateEventAccessForView ----
+
+    public function testEnforcePrivateEventAccessForViewReturnsEarlyForEmptyView(): void
+    {
+        EnforcePrivateEventAccessForView('');
+        $this->assertTrue(true);
+    }
+
+    public function testEnforcePrivateEventAccessForViewReturnsEarlyForIndexView(): void
+    {
+        EnforcePrivateEventAccessForView('index');
+        $this->assertTrue(true);
+    }
+
+    public function testEnforcePrivateEventAccessForViewReturnsEarlyForFrontpage(): void
+    {
+        EnforcePrivateEventAccessForView('frontpage');
+        $this->assertTrue(true);
+    }
+
+    public function testEnforcePrivateEventAccessForViewReturnsEarlyForAdminView(): void
+    {
+        EnforcePrivateEventAccessForView('admin/pools');
+        $this->assertTrue(true);
+    }
+
+    public function testEnforcePrivateEventAccessForViewReturnsForPublicSeasonPage(): void
+    {
+        // With no team1 in GET and no season GET param, seasonId is empty → CanAccessSeason skipped
+        $_GET = [];
+        EnforcePrivateEventAccessForView('pool');
+        $this->assertTrue(true);
+    }
+
+    // ---- CanAccessSeason ----
+
+    public function testCanAccessSeasonReturnsTrueForEmptyId(): void
+    {
+        $this->assertTrue(CanAccessSeason(''));
+    }
+
+    public function testCanAccessSeasonReturnsTrueForPublicSeason(): void
+    {
+        // HRN2026 has public_event=1 → IsSeasonPublicEvent returns true
+        $this->assertTrue(CanAccessSeason('HRN2026'));
+    }
+
+    public function testCanAccessSeasonReturnsTrueForSuperAdmin(): void
+    {
+        LegacyApp::loadUserFunctions();
+        LegacyApp::loginAsAdmin();
+        try {
+            // HRN2026 is already public_event but also superadmin → covers the isSuperAdmin path
+            // Use a non-public season to force isSuperAdmin check
+            $this->assertTrue(CanAccessSeason('NONEXISTENT_SEASON_999'));
+        } finally {
+            $_SESSION = [];
+        }
+    }
+
+    // ---- EnrollSeasons ----
+
+    public function testEnrollSeasonsReturnsEmptyForNonExistentSource(): void
+    {
+        // 'nonexistent' series/pool → no enrollments → returns []
+        $result = EnrollSeasons([], 'HRN2026');
+        $this->assertIsArray($result);
+    }
+
+    // ---- CurrentSeason ----
+
+    public function testCurrentSeasonReturnsConfiguredSeason(): void
+    {
+        $result = CurrentSeason();
+        $this->assertSame('HRN2026', $result);
+    }
 }

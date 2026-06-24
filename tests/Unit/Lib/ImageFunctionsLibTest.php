@@ -205,4 +205,14 @@ final class ImageFunctionsLibTest extends TestCase
     {
         $this->assertFalse(CreateThumb('/tmp/uo_missing_xyz.png', $this->tmp('.jpg'), 20, 20));
     }
+
+    // --- RemoveImage ---
+    // Non-superadmin branch calls die() — untestable in-process per docs/lib-test-deep-coverage.md.
+
+    public function testRemoveImageAsSuperAdminOnNonExistentIdReturnsTrue(): void
+    {
+        LegacyApp::loginAsAdmin();
+        $result = RemoveImage(999999);
+        $this->assertTrue((bool) $result);
+    }
 }

@@ -1386,4 +1386,50 @@ final class PoolFunctionsLibTest extends TestCase
         $result = PlayoffTemplate(4, 1);
         $this->assertIsString($result);
     }
+
+    // --- SetPoolDetails ---
+    // Non-superadmin branch calls die() — untestable per docs/lib-test-deep-coverage.md.
+
+    public function testSetPoolDetailsUpdatesSingleFieldAsSuperAdmin(): void
+    {
+        $before = PoolInfo(200);
+        try {
+            SetPoolDetails(200, ['visible' => 1]);
+            $after = PoolInfo(200);
+            $this->assertSame('1', (string) $after['visible']);
+        } finally {
+            // Restore original visible value
+            DBQuery(sprintf("UPDATE uo_pool SET visible=%d WHERE pool_id=200", (int) $before['visible']));
+        }
+    }
+
+    // --- SetPoolFollowersVisibility ---
+
+    public function testSetPoolFollowersVisibilityRunsWithoutErrorOnPoolWithNoFollowers(): void
+    {
+        // Pool 200 has follower=NULL → PoolPlayoffFollowersArray returns [] → no iterations
+        SetPoolFollowersVisibility(200, 1);
+        $this->assertTrue(true);
+    }
+
+    // --- PoolConfirmMoves ---
+
+    public function testPoolConfirmMovesRunsWithoutErrorOnFixturePool(): void
+    {
+        // Pool 200: no uo_moveteams → PoolMakeMoves is a no-op; CheckBYE finds no BYE teams.
+        // ResolvePoolStandings recalculates standings (idempotent for played fixtures).
+        PoolConfirmMoves(200);
+        $this->assertTrue(true);
+    }
+
+    // --- GeneratePlayoffPools ---
+    // Non-superadmin branch calls die() — untestable per docs/lib-test-deep-coverage.md.
+
+    public function testGeneratePlayoffPoolsReturnsEmptyArrayForSmallPool(): void
+    {
+        // Pool 200 has 2 teams (rounds=1, for-loop skipped) → returns []
+        $result = GeneratePlayoffPools(200, false);
+        $this->assertIsArray($result);
+        $this->assertEmpty($result);
+    }
 }

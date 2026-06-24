@@ -397,4 +397,52 @@ final class UrlFunctionsLibTest extends TestCase
         $fakeUrl = ['publisher_id' => 0, 'ismedialink' => '1'];
         $this->assertFalse(CanRemoveMediaUrl($fakeUrl));
     }
+
+    // --- CanEditClubMediaTarget ---
+
+    public function testCanEditClubMediaTargetReturnsFalseForClubWithNoTeams(): void
+    {
+        LegacyApp::loadUserFunctions();
+        LegacyApp::loginAsAdmin();
+        // No teams in fixture have club=9999
+        $this->assertFalse(CanEditClubMediaTarget(9999));
+    }
+
+    public function testCanEditClubMediaTargetReturnsTrueForClubWithTeamAsSuperAdmin(): void
+    {
+        LegacyApp::loadUserFunctions();
+        LegacyApp::loginAsAdmin();
+        // Create club 9999 (fk_team_club requires a real parent row) and
+        // temporarily associate team 300 with it.
+        DBQuery("INSERT INTO uo_club (club_id, name) VALUES (9999, 'Harness Test Club')");
+        DBQuery("UPDATE uo_team SET club=9999 WHERE team_id=300");
+        try {
+            $this->assertTrue(CanEditClubMediaTarget(9999));
+        } finally {
+            DBQuery("UPDATE uo_team SET club=NULL WHERE team_id=300");
+            DBQuery("DELETE FROM uo_club WHERE club_id=9999");
+        }
+    }
+
+    // --- CanEditPlayerMediaTarget ---
+
+    public function testCanEditPlayerMediaTargetReturnsFalseForProfileWithNoPlayer(): void
+    {
+        LegacyApp::loadUserFunctions();
+        LegacyApp::loginAsAdmin();
+        // No player with profile_id=999999 in fixture
+        $this->assertFalse(CanEditPlayerMediaTarget(999999));
+    }
+
+    public function testCanEditPlayerMediaTargetReturnsTrueWhenPlayerAdminForProfile(): void
+    {
+        LegacyApp::loadUserFunctions();
+        // Set playeradmin role for profile 42
+        $_SESSION['userproperties']['userrole']['playeradmin'][42] = 1;
+        try {
+            $this->assertTrue(CanEditPlayerMediaTarget(42));
+        } finally {
+            unset($_SESSION['userproperties']['userrole']['playeradmin'][42]);
+        }
+    }
 }

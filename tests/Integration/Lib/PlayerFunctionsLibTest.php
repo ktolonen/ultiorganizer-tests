@@ -660,4 +660,28 @@ final class PlayerFunctionsLibTest extends TestCase
         $csv = PlayersToCsv('HRN2026', ',');
         $this->assertIsString($csv);
     }
+
+    // --- UploadPlayerImage ---
+
+    public function testUploadPlayerImageRejectsOversizeFile(): void
+    {
+        $_FILES['picture'] = ['name' => 'big.jpg', 'type' => 'image/jpeg', 'tmp_name' => '/tmp/big', 'error' => 0, 'size' => 6 * 1024 * 1024];
+        try {
+            $result = UploadPlayerImage(800);
+            $this->assertStringContainsString('too large', strtolower(strip_tags($result)));
+        } finally {
+            unset($_FILES['picture']);
+        }
+    }
+
+    public function testUploadPlayerImageRejectsNonImageType(): void
+    {
+        $_FILES['picture'] = ['name' => 'x.txt', 'type' => 'text/plain', 'tmp_name' => '/tmp/x', 'error' => 0, 'size' => 100];
+        try {
+            $result = UploadPlayerImage(800);
+            $this->assertStringContainsString('not supported', strtolower(strip_tags($result)));
+        } finally {
+            unset($_FILES['picture']);
+        }
+    }
 }

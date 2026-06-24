@@ -1057,4 +1057,51 @@ final class SpiritFunctionsLibTest extends TestCase
         $visitorId = SpiritTeamIdForCommentType(700, COMMENT_TYPE_SPIRIT_VISITOR);
         $this->assertSame(301, (int) $visitorId);
     }
+
+    // --- SpiritTokenSaveComment ---
+
+    public function testSpiritTokenSaveCommentReturnsFalseForInvalidGameId(): void
+    {
+        $result = SpiritTokenSaveComment(0, 300, 'good game');
+        $this->assertFalse($result);
+    }
+
+    public function testSpiritTokenSaveCommentReturnsFalseWhenGameNotStarted(): void
+    {
+        // Game 701 has hasstarted=0, so SpiritTokenCanSubmit rejects the
+        // submission even though team 301 is a participant and the season has
+        // spiritmode enabled.
+        $result = SpiritTokenSaveComment(701, 301, 'good game');
+        $this->assertFalse($result);
+    }
+
+    // --- SpiritTimeoutGameRowsBySeason ---
+
+    public function testSpiritTimeoutGameRowsBySeasonReturnsArray(): void
+    {
+        $rows = SpiritTimeoutGameRowsBySeason('HRN2026');
+        $this->assertIsArray($rows);
+    }
+
+    public function testSpiritTimeoutGameRowsBySeasonReturnsEmptyForNoTimeouts(): void
+    {
+        // Fixture has no spirit timeouts
+        $rows = SpiritTimeoutGameRowsBySeason('HRN2026');
+        $this->assertEmpty($rows);
+    }
+
+    // --- GameSetSpiritPoints ---
+
+    public function testGameSetSpiritPointsReturnsTrueAsSuperAdminForFixtureGame(): void
+    {
+        // As superadmin, hasSpiritEditRight → CanEditSpiritSubmission → true
+        $result = GameSetSpiritPoints(700, 300, true, [], []);
+        $this->assertTrue($result);
+    }
+
+    public function testGameSetSpiritPointsReturnsFalseForNonExistentGame(): void
+    {
+        $result = GameSetSpiritPoints(999999, 300, true, [], []);
+        $this->assertFalse($result);
+    }
 }

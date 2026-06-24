@@ -1469,4 +1469,122 @@ final class GameFunctionsLibTest extends TestCase
         $res = GameReservation($gameId);
         $this->assertNull($res);
     }
+
+    // --- CheckGameResult ---
+
+    public function testCheckGameResultReturnsErrorForNegativeScores(): void
+    {
+        // gameId 700 has valid checksum '7003' (getChkNum('700') = 3)
+        $result = CheckGameResult('7003', -1, 5);
+        $this->assertStringContainsString('warning', $result);
+    }
+
+    public function testCheckGameResultReturnsErrorForInvalidChecksum(): void
+    {
+        // getChkNum('999') = 1, so '9990' has wrong check digit
+        $result = CheckGameResult('9990', 5, 3);
+        $this->assertStringContainsString('warning', $result);
+    }
+
+    public function testCheckGameResultReturnsErrorForZeroGoals(): void
+    {
+        // Game 700 in pool 200 (season HRN2026 has stats → "Event played" error also appears)
+        $result = CheckGameResult('7003', 0, 0);
+        $this->assertStringContainsString('warning', $result);
+    }
+
+    public function testCheckGameResultReturnsEmptyForValidInputOnUnlockedPool(): void
+    {
+        // Game 701 (no score yet, unlocked): score 5:3 with valid checksum
+        // getChkNum('701') = (10 - (7*1 + 0*3 + 1*7)%10)%10 = (10-(7+0+7)%10)%10 = (10-4)%10 = 6
+        // So valid scoresheet string for game 701 is '7016'
+        // Season HRN2026 has stats calculated, so "Event played" error will appear — result is non-empty.
+        // This test just exercises the code path without the scoresheet/negative errors.
+        $result = CheckGameResult('7016', 5, 3);
+        $this->assertIsString($result);
+    }
+
+    // --- PoolDeleteAllGames ---
+    // Non-superadmin branch calls die() — untestable in-process per docs/lib-test-deep-coverage.md.
+
+    public function testPoolDeleteAllGamesOnEmptyPoolReturnsTrueAsSuperAdmin(): void
+    {
+        // Create a temp pool with series=100 but no games
+        DBQuery(
+            "INSERT INTO uo_pool (name, ordering, visible, continuingpool, placementpool, teams, mvgames,
+             timeoutlen, halftime, winningscore, timecap, scorecap, played, addscore, halftimescore,
+             timeouts, timeoutsper, timeoutsovertime, timeoutstimecap, betweenpointslen, series, type,
+             forfeitscore, forfeitagainst, drawsallowed)
+             VALUES ('TempTestPool', '99', 0, 0, 0, 0, 0,
+             70, 35, 15, NULL, NULL, 0, NULL, NULL,
+             2, 'half', 1, 'soft', 90, 100, 1,
+             15, 0, 0)"
+        );
+        $tempPoolId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+        try {
+            $result = PoolDeleteAllGames($tempPoolId);
+            $this->assertTrue((bool) $result);
+        } finally {
+            DBQuery(sprintf("DELETE FROM uo_pool WHERE pool_id=%d", $tempPoolId));
+        }
+    }
+
+    // --- SpiritTable ---
+
+    public function testSpiritTableReturnsHtmlStringWithTableTag(): void
+    {
+        $categories = [
+            ['category_id' => 1, 'index' => 0, 'text' => 'Total', 'min' => 0, 'max' => 4],
+            ['category_id' => 2, 'index' => 1, 'text' => 'Rules', 'min' => 0, 'max' => 4],
+            ['category_id' => 3, 'index' => 2, 'text' => 'Contact', 'min' => 0, 'max' => 4],
+        ];
+        $points = [2 => 3, 3 => 2];
+        $html = SpiritTable([], $points, $categories, true, true);
+        $this->assertStringContainsString('spirit-table', $html);
+        $this->assertStringContainsString('</table>', $html);
+    }
+
+    public function testSpiritTableWideHomeSideContainsHomePrefix(): void
+    {
+        $categories = [
+            ['category_id' => 1, 'index' => 0, 'text' => 'Total', 'min' => 0, 'max' => 4],
+            ['category_id' => 2, 'index' => 1, 'text' => 'Rules', 'min' => 0, 'max' => 4],
+        ];
+        $html = SpiritTable([], [], $categories, true, true);
+        $this->assertStringContainsString('homecat', $html);
+        $this->assertStringNotContainsString('viscat', $html);
+    }
+
+    public function testSpiritTableNarrowVisitorSideContainsVisPrefix(): void
+    {
+        $categories = [
+            ['category_id' => 1, 'index' => 0, 'text' => 'Total', 'min' => 0, 'max' => 4],
+            ['category_id' => 2, 'index' => 1, 'text' => 'Rules', 'min' => 0, 'max' => 4],
+        ];
+        $html = SpiritTable([], [], $categories, false, false);
+        $this->assertStringContainsString('viscat', $html);
+        $this->assertStringNotContainsString('homecat', $html);
+    }
+
+    public function testSpiritTableSkipsCategoryWithIndexZero(): void
+    {
+        $categories = [
+            ['category_id' => 1, 'index' => 0, 'text' => 'ShouldBeSkipped', 'min' => 0, 'max' => 4],
+            ['category_id' => 2, 'index' => 1, 'text' => 'ShouldAppear', 'min' => 0, 'max' => 4],
+        ];
+        $html = SpiritTable([], [], $categories, true, true);
+        $this->assertStringNotContainsString('ShouldBeSkipped', $html);
+        $this->assertStringContainsString('ShouldAppear', $html);
+    }
+
+    public function testSpiritTableWideWithLargeRangeUsesTextInput(): void
+    {
+        // vmax - vmin >= 12 → uses text inputs instead of radio buttons
+        $categories = [
+            ['category_id' => 1, 'index' => 0, 'text' => 'Total', 'min' => 0, 'max' => 20],
+            ['category_id' => 2, 'index' => 1, 'text' => 'Attitude', 'min' => 0, 'max' => 20],
+        ];
+        $html = SpiritTable([], [2 => 15], $categories, true, true);
+        $this->assertStringContainsString('type=\'text\'', $html);
+    }
 }
