@@ -407,7 +407,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "75.9% achieved (up from 2.1%). Reclassified from unit/bootstrap_only to integration/database_only. Covers all pure helpers plus DB-backed player/user report collection+rendering, export logging, and anonymize on a throwaway player. Remaining ~24%: PrivacyDownloadTextFile exit(), PrivacyRequireSuperAdmin Forbidden() path, profile-image filesystem removal (UPLOAD_DIR/GD), and PrivacyDeleteUserData deep branches. Uses flushQueryCaches() after writes.",
+      "triage_notes": "82.8% line / 96.6% fn \u2014 ceiling at PrivacyDownloadTextFile (header()+echo+exit()). All other functions covered: pure helpers, DB-backed player/user report collection and rendering, export logging, PrivacyRemovePlayerProfileImageByProfileId (filesystem creation/removal), PrivacyRemoveEmptyDirectory, PrivacyDeleteUserData (throwaway user), and anonymize on a throwaway player.",
       "notes": "",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/privacy.functions.php"
     },

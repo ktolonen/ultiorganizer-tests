@@ -311,6 +311,85 @@ final class PrivacyFunctionsLibTest extends TestCase
         $this->assertFalse(PrivacyLogUserReportExport('nosuchuser_xyz', 'admin'));
     }
 
+    // ===== PrivacyRemovePlayerProfileImageByProfileId / PrivacyRemoveEmptyDirectory =====
+
+    public function testPrivacyRemovePlayerProfileImageEarlyReturnOnZeroProfileId(): void
+    {
+        PrivacyRemovePlayerProfileImageByProfileId(0, 'photo.jpg');
+        $this->assertTrue(true);
+    }
+
+    public function testPrivacyRemovePlayerProfileImageEarlyReturnOnEmptyFilename(): void
+    {
+        PrivacyRemovePlayerProfileImageByProfileId(1, '');
+        $this->assertTrue(true);
+    }
+
+    public function testPrivacyRemovePlayerProfileImageDeletesBothFilesWhenPresent(): void
+    {
+        $uploadDir = constant('UPLOAD_DIR');
+        $profileId = 88888;
+        $filename = 'test_privacy.jpg';
+        $imageDir = $uploadDir . "players/$profileId";
+        $thumbDir = $imageDir . '/thumbs';
+
+        mkdir($thumbDir, 0777, true);
+        file_put_contents($thumbDir . '/' . $filename, 'fake-thumb');
+        file_put_contents($imageDir . '/' . $filename, 'fake-image');
+
+        try {
+            PrivacyRemovePlayerProfileImageByProfileId($profileId, $filename);
+
+            $this->assertFileDoesNotExist($thumbDir . '/' . $filename);
+            $this->assertFileDoesNotExist($imageDir . '/' . $filename);
+            // Empty directories are also removed by the function
+            $this->assertDirectoryDoesNotExist($thumbDir);
+            $this->assertDirectoryDoesNotExist($imageDir);
+        } finally {
+            // Clean up in case the function didn't fully remove things
+            foreach ([$thumbDir . '/' . $filename, $imageDir . '/' . $filename] as $f) {
+                if (is_file($f)) {
+                    unlink($f);
+                }
+            }
+            foreach ([$thumbDir, $imageDir] as $d) {
+                if (is_dir($d)) {
+                    rmdir($d);
+                }
+            }
+        }
+    }
+
+    public function testPrivacyRemovePlayerProfileImageHandlesMissingFilesGracefully(): void
+    {
+        // profileId/filename valid but no files on disk — should not throw
+        PrivacyRemovePlayerProfileImageByProfileId(88889, 'nonexistent.jpg');
+        $this->assertTrue(true);
+    }
+
+    // ===== PrivacyDeleteUserData =====
+
+    public function testPrivacyDeleteUserDataReturnsFalseForMissingUser(): void
+    {
+        $this->assertFalse(PrivacyDeleteUserData('no_such_user_xyz', 'admin'));
+    }
+
+    public function testPrivacyDeleteUserDataDeletesThrowawayUser(): void
+    {
+        DBQuery("INSERT INTO uo_users (userid, name, email) VALUES ('privacy_del_test', 'Delete Me', 'del@test.invalid')");
+        self::flushQueryCaches();
+        try {
+            $result = PrivacyDeleteUserData('privacy_del_test', 'admin');
+            $this->assertTrue($result);
+            self::flushQueryCaches();
+            $row = DBQueryToRow("SELECT userid FROM uo_users WHERE userid='privacy_del_test'");
+            $this->assertNull($row);
+        } finally {
+            DBQuery("DELETE FROM uo_users WHERE userid='privacy_del_test'");
+            DBQuery("DELETE FROM uo_event_log WHERE source='privacy'");
+        }
+    }
+
     // ===== Destructive: anonymize on a throwaway player =====
 
     public function testPrivacyAnonymizePlayerOnThrowawayPlayer(): void
