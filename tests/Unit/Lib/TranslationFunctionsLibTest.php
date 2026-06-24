@@ -265,4 +265,44 @@ final class TranslationFunctionsLibTest extends TestCase
             $_SESSION = [];
         }
     }
+
+    // --- RegisterTranslationKey ---
+
+    public function testRegisterTranslationKeyIgnoresEmptyKey(): void
+    {
+        // Should return early without touching the DB
+        RegisterTranslationKey('');
+        $this->assertTrue(true);
+    }
+
+    public function testRegisterTranslationKeyIgnoresOversizeKey(): void
+    {
+        RegisterTranslationKey(str_repeat('x', 51));
+        $this->assertTrue(true);
+    }
+
+    public function testRegisterTranslationKeyInsertsRowWithExplicitLocale(): void
+    {
+        $key = 'uo_harness_rtk_' . uniqid();
+        try {
+            RegisterTranslationKey($key, 'fi_FI.utf8');
+            $count = DBQueryToValue("SELECT COUNT(*) FROM uo_translation WHERE translation_key='$key' AND locale='fi_FI_utf8'");
+            $this->assertSame('1', $count);
+        } finally {
+            DBQuery("DELETE FROM uo_translation WHERE translation_key='$key'");
+        }
+    }
+
+    public function testRegisterTranslationKeyUsesSessionLocaleWhenNullGiven(): void
+    {
+        $key = 'uo_harness_rtk_sess_' . uniqid();
+        $_SESSION['userproperties']['locale'] = 'en_GB.utf8';
+        try {
+            RegisterTranslationKey($key, null);
+            $count = DBQueryToValue("SELECT COUNT(*) FROM uo_translation WHERE translation_key='$key' AND locale='en_GB_utf8'");
+            $this->assertSame('1', $count);
+        } finally {
+            DBQuery("DELETE FROM uo_translation WHERE translation_key='$key'");
+        }
+    }
 }

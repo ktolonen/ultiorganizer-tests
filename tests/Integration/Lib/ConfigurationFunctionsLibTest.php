@@ -241,6 +241,22 @@ final class ConfigurationFunctionsLibTest extends TestCase
         }
     }
 
+    public function testSetServerConfValueWritesSingleSetting(): void
+    {
+        LegacyApp::loadUserFunctions();
+        LegacyApp::loginAsAdmin();
+
+        $settingName = 'UO_HARNESS_SCV_' . uniqid();
+        try {
+            SetServerConfValue($settingName, 'single_val');
+            $stored = DBQueryToValue("SELECT value FROM uo_setting WHERE name='$settingName'");
+            $this->assertSame('single_val', $stored);
+        } finally {
+            DBQuery("DELETE FROM uo_setting WHERE name='$settingName'");
+            $_SESSION = [];
+        }
+    }
+
 
     private static function expectedConfig(): array
     {

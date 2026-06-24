@@ -1445,4 +1445,21 @@ final class UserFunctionsLibTest extends TestCase
         $result = UserResetPassword('admin');
         $this->assertFalse($result);
     }
+
+    // --- UserAuthenticate ---
+
+    public function testUserAuthenticateReturnsFalseOnWrongPasswordWithNoFailcallback(): void
+    {
+        $result = UserAuthenticate('admin', 'definitely-wrong-password', null);
+        $this->assertFalse($result);
+    }
+
+    public function testUserAuthenticateInvokesFailcallbackOnWrongPassword(): void
+    {
+        $called = false;
+        UserAuthenticate('admin', 'wrong', static function () use (&$called): void {
+            $called = true;
+        });
+        $this->assertTrue($called);
+    }
 }

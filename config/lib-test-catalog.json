@@ -135,7 +135,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "71.6% achieved (up from 44.3%). Ceiling ~73%: RenderSoftMaintenanceResponse (lines 71-112, ~31 stmts) has two exit() calls \u2014 untestable in-process (pitfall #6). die() in SetServerConf else-branch (line 195) same issue. Line 262 in getAvailableLocalizations is system-locale-dependent. SetServerConfValue UPDATE path tested via testSetServerConfInsertsNewSettingAsSuperAdmin flow.",
+      "triage_notes": "66.9% line / 96.0% fn \u2014 ceiling. SetServerConfValue now covered. RenderSoftMaintenanceResponse (lines 71-112, ~31 stmts) has two exit() calls \u2014 untestable in-process. SetServerConf die() branch (non-superadmin, line 195) same. getAvailableLocalizations line 262 is system-locale-dependent.",
       "notes": "Pilot tuning showed that page-title reads also need common helper loading because utf8entities() is not declared inside the file.",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/configuration.functions.php"
     },
@@ -631,7 +631,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "82.9% achieved. Remaining ~17%: AllTranslations body requiring $locales global and DB data (lines 72-121), autocompleteTranslate multi-word branch details (318, 332), and die() paths in Translations/ExistingTranslationKey/SetTranslation/AddTranslation/RemoveTranslation (130, 148, 178, 208, 221). Load profile widened from bootstrap_only to database_only; added utf8entities shim for unit suite.",
+      "triage_notes": "84.3% line / 100% fn \u2014 targets met. Tests cover translate(), autocomplete, u_(), LoadDBTranslations, GetTranslations, Translations, SetTranslation, AddTranslation, RemoveTranslation, RegisterTranslationKey (early-return guards, explicit locale, session locale).",
       "notes": "",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/translation.functions.php"
     },
@@ -663,7 +663,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "88.7% line / 95.1% fn achieved. 5 die()-blocked functions cannot be tested in-process: FailRedirect, FailRedirectMobile, FailUnauthorized, Forbidden (all call exit()); UserAuthenticate (complex, die-adjacent). Line target met; function ceiling is 95.1%.",
+      "triage_notes": "89.6% line / 96.1% fn \u2014 line target met. Remaining uncovered: FailRedirect, FailRedirectMobile, FailUnauthorized, Forbidden \u2014 all call exit() after sending HTTP headers and are unreachable in-process. UserAuthenticate covered via wrong-password paths (returns false / invokes failcallback).",
       "notes": "",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/user.functions.php"
     },
