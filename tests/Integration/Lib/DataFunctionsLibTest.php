@@ -485,4 +485,22 @@ final class DataFunctionsLibTest extends TestCase
             }
         }
     }
+
+    // ── EventSnapshotImportInfo tests ─────────────────────────────────────
+
+    public function testImportInfoReturnsSeasonMetadata(): void
+    {
+        $tmp = $this->exportHrn2026ToTempFile();
+        try {
+            $info = EventSnapshotImportInfo($tmp);
+            $this->assertIsArray($info);
+            $this->assertSame('HRN2026', $info['season_id']);
+            $this->assertArrayHasKey('name', $info);
+            $this->assertArrayHasKey('exists', $info);
+            $this->assertArrayHasKey('warnings', $info);
+            $this->assertTrue($info['exists']);
+        } finally {
+            @unlink($tmp);
+        }
+    }
 }

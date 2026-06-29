@@ -7,7 +7,7 @@
     "test_path_pattern": "tests/<Unit|Integration>/Lib/<DerivedClassName>LibTest.php"
   },
   "targets": {
-    "line_pct": 80,
+    "line_pct": 90,
     "function_pct": 100
   },
   "entries": [
@@ -439,7 +439,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "Meets \u226580% line and 100% fn targets. Tests cover search query construction and result formatting.",
+      "triage_notes": "80.6% line / 100% fn \u2014 ceiling. PlayerResults (lines 659\u2013736, 3.4% covered) contains a SUT bug: GROUP_CONCAT(DISTINCT email) references a column that exists only in uo_player_profile, but the query never joins that table. Any call with $_POST['searchplayer'] set throws Unknown column 'email' in 'SELECT'. Body is untestable until SUT is fixed. All other Search*/Results functions (except PlayerResults body) are covered.",
       "notes": "",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/search.functions.php"
     },

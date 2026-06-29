@@ -284,6 +284,25 @@ final class StatisticalFunctionsLibTest extends TestCase
         $this->assertTrue(true);
     }
 
+    public function testCalcPlayerStatsWritesStatsForPlayerWithProfile(): void
+    {
+        // Give player 800 (Ari Ace, team 300, played game 700 in HRN2026) a profile_id
+        // so CalcPlayerStats covers the INSERT/UPDATE path (lines 452-500).
+        DBQuery("INSERT INTO uo_player_profile (email) VALUES ('ari.ace@calcstats.test')");
+        $profileId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+        DBQuery("UPDATE uo_player SET profile_id=$profileId WHERE player_id=800");
+        try {
+            CalcPlayerStats('HRN2026');
+            $row = DBQueryToArray("SELECT player_id, games FROM uo_player_stats WHERE player_id=800");
+            $this->assertCount(1, $row);
+            $this->assertGreaterThan(0, (int) $row[0]['games']);
+        } finally {
+            DBQuery("DELETE FROM uo_player_stats WHERE player_id=800");
+            DBQuery("UPDATE uo_player SET profile_id=NULL WHERE player_id=800");
+            DBQuery("DELETE FROM uo_player_profile WHERE profile_id=$profileId");
+        }
+    }
+
     // --- CalcSeriesStats ---
 
     public function testCalcSeriesStatsRunsWithoutErrorOnFixtureSeason(): void

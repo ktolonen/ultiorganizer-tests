@@ -1044,6 +1044,20 @@ final class SpiritFunctionsLibTest extends TestCase
         $this->assertFalse($result);
     }
 
+    public function testSpiritSubmissionLockedReturnsFalseWhenLockFlagSetButNoSubmission(): void
+    {
+        // lockteamspiritonsubmit is on uo_season (joined into SpiritGameRow via LEFT JOIN).
+        // Set it to 1 → TeamSpiritSubmissionComplete called; no scores → false.
+        // Covers line 874 (return TeamSpiritSubmissionComplete path).
+        DBQuery("UPDATE uo_season SET lockteamspiritonsubmit=1 WHERE season_id='HRN2026'");
+        try {
+            $result = SpiritSubmissionLocked(700, 300);
+            $this->assertFalse($result);
+        } finally {
+            DBQuery("UPDATE uo_season SET lockteamspiritonsubmit=0 WHERE season_id='HRN2026'");
+        }
+    }
+
     // --- SpiritTeamIdForCommentType ---
 
     public function testSpiritTeamIdForCommentTypeReturnsHomeTeamId(): void
@@ -1103,5 +1117,167 @@ final class SpiritFunctionsLibTest extends TestCase
     {
         $result = GameSetSpiritPoints(999999, 300, true, [], []);
         $this->assertFalse($result);
+    }
+
+    // --- HasFullGameSpiritEditRight / SpiritEntryTeamForUser non-admin paths ---
+
+    public function testHasFullGameSpiritEditRightViaSeriesAdmin(): void
+    {
+        // Non-superadmin with seriesadmin:100 covers lines 199-212 in
+        // HasFullGameSpiritEditRight (hasSpiritEditRight=false, isEventReadonly=false,
+        // then GameSeries/GameReservation checks).
+        LegacyApp::requireTopLevelLib('game.functions.php');
+        unset($_SESSION['userproperties']['userrole']['superadmin']);
+        unset($_SESSION['userproperties']['userrole']['seasonadmin']);
+        $_SESSION['userproperties']['userrole']['seriesadmin'][100] = 1;
+        try {
+            $result = HasFullGameSpiritEditRight(700);
+            $this->assertTrue($result);
+        } finally {
+            unset($_SESSION['userproperties']['userrole']['seriesadmin']);
+            $_SESSION['userproperties']['userrole']['superadmin'] = true;
+            $_SESSION['userproperties']['userrole']['seasonadmin']['HRN2026'] = 1;
+        }
+    }
+
+    public function testHasFullGameSpiritEditRightViaGameAdmin(): void
+    {
+        // gameadmin[700] covers the third isset check in HasFullGameSpiritEditRight.
+        LegacyApp::requireTopLevelLib('game.functions.php');
+        unset($_SESSION['userproperties']['userrole']['superadmin']);
+        unset($_SESSION['userproperties']['userrole']['seasonadmin']);
+        $_SESSION['userproperties']['userrole']['gameadmin'][700] = 1;
+        try {
+            $result = HasFullGameSpiritEditRight(700);
+            $this->assertTrue($result);
+        } finally {
+            unset($_SESSION['userproperties']['userrole']['gameadmin']);
+            $_SESSION['userproperties']['userrole']['superadmin'] = true;
+            $_SESSION['userproperties']['userrole']['seasonadmin']['HRN2026'] = 1;
+        }
+    }
+
+    public function testSpiritEntryTeamForUserReturnsTeamIdForTeamAdmin(): void
+    {
+        // teamadmin:300 (home) — HasFullGameSpiritViewRight returns false, then
+        // hasEditPlayersRight(300)=true, hasEditPlayersRight(301)=false → returns 300.
+        LegacyApp::requireTopLevelLib('game.functions.php');
+        unset($_SESSION['userproperties']['userrole']['superadmin']);
+        unset($_SESSION['userproperties']['userrole']['seasonadmin']);
+        $_SESSION['userproperties']['userrole']['teamadmin'][300] = 1;
+        try {
+            $result = SpiritEntryTeamForUser(700);
+            $this->assertSame(300, $result);
+        } finally {
+            unset($_SESSION['userproperties']['userrole']['teamadmin']);
+            $_SESSION['userproperties']['userrole']['superadmin'] = true;
+            $_SESSION['userproperties']['userrole']['seasonadmin']['HRN2026'] = 1;
+        }
+    }
+
+    public function testSpiritEntryTeamForUserReturnsBothTeamsAdmin(): void
+    {
+        // teamadmin:300 AND teamadmin:301 → both added → count=2 → returns 0.
+        LegacyApp::requireTopLevelLib('game.functions.php');
+        unset($_SESSION['userproperties']['userrole']['superadmin']);
+        unset($_SESSION['userproperties']['userrole']['seasonadmin']);
+        $_SESSION['userproperties']['userrole']['teamadmin'][300] = 1;
+        $_SESSION['userproperties']['userrole']['teamadmin'][301] = 1;
+        try {
+            $result = SpiritEntryTeamForUser(700);
+            $this->assertSame(0, $result);
+        } finally {
+            unset($_SESSION['userproperties']['userrole']['teamadmin']);
+            $_SESSION['userproperties']['userrole']['superadmin'] = true;
+            $_SESSION['userproperties']['userrole']['seasonadmin']['HRN2026'] = 1;
+        }
+    }
+
+    public function testCanEditSpiritSubmissionViaOpposingTeamAdmin(): void
+    {
+        // teamadmin:301 (visitor) allows editing spirit for home team (300) scoring for 301.
+        // Covers lines 913-929: $homeTeam=300, $visitorTeam=301, teamId=300=homeTeam
+        // → responsibleTeamId=301 → hasEditPlayersRight(301)=true → return true.
+        LegacyApp::requireTopLevelLib('game.functions.php');
+        unset($_SESSION['userproperties']['userrole']['superadmin']);
+        unset($_SESSION['userproperties']['userrole']['seasonadmin']);
+        $_SESSION['userproperties']['userrole']['teamadmin'][301] = 1;
+        try {
+            $result = CanEditSpiritSubmission(700, 300);
+            $this->assertTrue($result);
+        } finally {
+            unset($_SESSION['userproperties']['userrole']['teamadmin']);
+            $_SESSION['userproperties']['userrole']['superadmin'] = true;
+            $_SESSION['userproperties']['userrole']['seasonadmin']['HRN2026'] = 1;
+        }
+    }
+
+    public function testCanViewSpiritScoresForGameWithNonAdmin(): void
+    {
+        // Non-admin user: hasSpiritToolsRight=false → covers line 1025-1026
+        // (showspiritpoints=0 in fixture → return false).
+        LegacyApp::requireTopLevelLib('game.functions.php');
+        unset($_SESSION['userproperties']['userrole']['superadmin']);
+        unset($_SESSION['userproperties']['userrole']['seasonadmin']);
+        try {
+            $result = CanViewSpiritScoresForGame(700);
+            $this->assertFalse($result);
+        } finally {
+            $_SESSION['userproperties']['userrole']['superadmin'] = true;
+            $_SESSION['userproperties']['userrole']['seasonadmin']['HRN2026'] = 1;
+        }
+    }
+
+    public function testCanViewSpiritScoresForGameWithShowSpiritEnabled(): void
+    {
+        // Set showspiritpoints=1 on season and show_spirit=1 on game → covers lines 1028-1032.
+        LegacyApp::requireTopLevelLib('game.functions.php');
+        DBQuery("UPDATE uo_season SET showspiritpoints=1 WHERE season_id='HRN2026'");
+        DBQuery("UPDATE uo_game SET show_spirit=1 WHERE game_id=700");
+        CacheForgetNamespace('season_info');
+        unset($_SESSION['userproperties']['userrole']['superadmin']);
+        unset($_SESSION['userproperties']['userrole']['seasonadmin']);
+        try {
+            $result = CanViewSpiritScoresForGame(700);
+            $this->assertTrue($result);
+        } finally {
+            DBQuery("UPDATE uo_season SET showspiritpoints=0 WHERE season_id='HRN2026'");
+            DBQuery("UPDATE uo_game SET show_spirit=0 WHERE game_id=700");
+            CacheForgetNamespace('season_info');
+            $_SESSION['userproperties']['userrole']['superadmin'] = true;
+            $_SESSION['userproperties']['userrole']['seasonadmin']['HRN2026'] = 1;
+        }
+    }
+
+    public function testSpiritEntryUrlIncludesTeamParamWhenSingleTeamAdmin(): void
+    {
+        // teamadmin:300 only → SpiritEntryTeamForUser returns 300 → teamId > 0
+        // → SpiritEntryUrl appends &team=300 (covers line 276).
+        LegacyApp::requireTopLevelLib('game.functions.php');
+        unset($_SESSION['userproperties']['userrole']['superadmin']);
+        unset($_SESSION['userproperties']['userrole']['seasonadmin']);
+        $_SESSION['userproperties']['userrole']['teamadmin'][300] = 1;
+        try {
+            $url = SpiritEntryUrl(700);
+            $this->assertStringContainsString('&team=300', $url);
+        } finally {
+            unset($_SESSION['userproperties']['userrole']['teamadmin']);
+            $_SESSION['userproperties']['userrole']['superadmin'] = true;
+            $_SESSION['userproperties']['userrole']['seasonadmin']['HRN2026'] = 1;
+        }
+    }
+
+    public function testCalcTeamSpiritStatsReturnsEarlyForNoSpiritMode(): void
+    {
+        // INSERT a temp season with spiritmode=0 → CalcTeamSpiritStats hits the
+        // empty spiritmode early return (lines 2153-2154).
+        DBQuery("INSERT INTO uo_season (season_id, name, spiritmode) VALUES ('SPIRITTEST', 'SpiritTest', 0)");
+        try {
+            CalcTeamSpiritStats('SPIRITTEST');
+            $this->assertTrue(true);
+        } finally {
+            DBQuery("DELETE FROM uo_season WHERE season_id='SPIRITTEST'");
+            CacheForgetNamespace('season_info');
+        }
     }
 }

@@ -185,6 +185,59 @@ final class TranslationFunctionsLibTest extends TestCase
         $this->assertIsArray($result);
     }
 
+    public function testGetAutocompleteTranslationsWithQueryParam(): void
+    {
+        $_GET['query'] = 'team';
+        $result = GetAutocompleteTranslations();
+        $this->assertIsArray($result);
+    }
+
+    public function testGetAutocompleteTranslationsWithQParam(): void
+    {
+        $_GET['q'] = 'game';
+        $result = GetAutocompleteTranslations();
+        $this->assertIsArray($result);
+    }
+
+    // --- AllTranslations() with $locales populated ---
+
+    public function testAllTranslationsReturnsResultsForKnownTerm(): void
+    {
+        global $locales;
+        $locales = ['en_GB.utf8' => 'English'];
+        $result = AllTranslations('team', false);
+        $this->assertIsArray($result);
+        $this->assertArrayHasKey('en_GB_utf8', $result);
+    }
+
+    public function testAllTranslationsAutocompleteReturnsArrayPerLocale(): void
+    {
+        global $locales;
+        $locales = ['en_GB.utf8' => 'English'];
+        $result = AllTranslations('team', true);
+        $this->assertIsArray($result);
+        $this->assertArrayHasKey('en_GB_utf8', $result);
+    }
+
+    public function testAllTranslationsReturnsNoneEntryWhenNoTranslationFound(): void
+    {
+        global $locales;
+        $locales = ['en_GB.utf8' => 'English'];
+        // Key unlikely to have a translation → 'None' entry added.
+        $result = AllTranslations('xyzzy_no_match_' . uniqid(), false);
+        $this->assertIsArray($result);
+        // At least one entry returned (the 'None' fallback).
+        $this->assertNotEmpty($result);
+    }
+
+    public function testAllTranslationsReturnsEmptyForBlankSearch(): void
+    {
+        global $locales;
+        $locales = ['en_GB.utf8' => 'English'];
+        $this->assertSame([], AllTranslations('', false));
+        $this->assertSame([], AllTranslations('  ', false));
+    }
+
     // --- Admin translation functions (require hasTranslationRight) ---
 
     public function testTranslationsReturnsArrayAsSuperAdmin(): void

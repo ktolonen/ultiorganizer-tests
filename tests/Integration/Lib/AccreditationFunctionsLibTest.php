@@ -216,6 +216,39 @@ final class AccreditationFunctionsLibTest extends TestCase
         $this->assertFalse((bool) $result);
     }
 
+    public function testCheckUserAdminMatchingUserInsertsAdminRow(): void
+    {
+        // profile_id=88877 not yet in uo_userproperties → proceeds to email check.
+        // email matches fixture 'admin' user → inserts playeradmin row → returns true.
+        $profileId = 88877;
+        DBQuery("DELETE FROM uo_userproperties WHERE name='userrole' AND value='playeradmin:$profileId'");
+        $playerInfo = ['profile_id' => $profileId, 'email' => 'admin@example.com'];
+        try {
+            $result = checkUserAdmin($playerInfo);
+            $this->assertTrue($result);
+            $count = (int) DBQueryToValue("SELECT COUNT(*) FROM uo_userproperties WHERE name='userrole' AND value='playeradmin:$profileId'");
+            $this->assertSame(1, $count);
+        } finally {
+            DBQuery("DELETE FROM uo_userproperties WHERE name='userrole' AND value='playeradmin:$profileId'");
+        }
+    }
+
+    public function testCheckUserAdminReturnsEarlyWhenAlreadyAdministered(): void
+    {
+        // Pre-insert an admin row → function finds it and returns early (void/null).
+        $profileId = 88878;
+        DBQuery("INSERT INTO uo_userproperties (userid, name, value) VALUES ('admin', 'userrole', 'playeradmin:$profileId')");
+        $playerInfo = ['profile_id' => $profileId, 'email' => 'admin@example.com'];
+        try {
+            $result = checkUserAdmin($playerInfo);
+            // early return; no additional insert expected
+            $count = (int) DBQueryToValue("SELECT COUNT(*) FROM uo_userproperties WHERE name='userrole' AND value='playeradmin:$profileId'");
+            $this->assertSame(1, $count);
+        } finally {
+            DBQuery("DELETE FROM uo_userproperties WHERE name='userrole' AND value='playeradmin:$profileId'");
+        }
+    }
+
     // --- AccreditPlayerByAccrId ---
 
     public function testAccreditPlayerByAccrIdIsNoOpForUnknownAccrId(): void
@@ -225,12 +258,63 @@ final class AccreditationFunctionsLibTest extends TestCase
         $this->assertTrue(true);
     }
 
+    public function testAccreditPlayerByAccrIdAccreditsWhenPlayerFound(): void
+    {
+        // Give testPlayerId a known accreditation_id and clear accredited flag.
+        $accrId = 'harness-accr-' . $this->testPlayerId;
+        DBQuery(sprintf("UPDATE uo_player SET accreditation_id='%s', accredited=0 WHERE player_id=%d",
+            DBEscapeString($accrId), $this->testPlayerId));
+
+        AccreditPlayerByAccrId($accrId, 100, 'test-by-accrid');
+
+        $accredited = (int) DBQueryToValue(sprintf("SELECT accredited FROM uo_player WHERE player_id=%d", $this->testPlayerId));
+        $this->assertSame(1, $accredited);
+    }
+
+    public function testAccreditPlayerByAccrIdSkipsAlreadyAccredited(): void
+    {
+        // Player is already accredited → inner if(!accredited) skips AccreditPlayer.
+        $accrId = 'harness-accr-skip-' . $this->testPlayerId;
+        DBQuery(sprintf("UPDATE uo_player SET accreditation_id='%s', accredited=1 WHERE player_id=%d",
+            DBEscapeString($accrId), $this->testPlayerId));
+
+        AccreditPlayerByAccrId($accrId, 100, 'test-skip');
+
+        // Still accredited, no log entry added (would fail if AccreditPlayer were called on already-accredited).
+        $accredited = (int) DBQueryToValue(sprintf("SELECT accredited FROM uo_player WHERE player_id=%d", $this->testPlayerId));
+        $this->assertSame(1, $accredited);
+    }
+
     // --- DeAccreditPlayerByAccrId ---
 
     public function testDeAccreditPlayerByAccrIdIsNoOpForUnknownAccrId(): void
     {
         DeAccreditPlayerByAccrId('nonexistent-id', 100, 'test-deaccrid');
         $this->assertTrue(true);
+    }
+
+    public function testDeAccreditPlayerByAccrIdDeaccreditsWhenPlayerFound(): void
+    {
+        $accrId = 'harness-deaccr-' . $this->testPlayerId;
+        DBQuery(sprintf("UPDATE uo_player SET accreditation_id='%s', accredited=1 WHERE player_id=%d",
+            DBEscapeString($accrId), $this->testPlayerId));
+
+        DeAccreditPlayerByAccrId($accrId, 100, 'test-deaccrid');
+
+        $accredited = (int) DBQueryToValue(sprintf("SELECT accredited FROM uo_player WHERE player_id=%d", $this->testPlayerId));
+        $this->assertSame(0, $accredited);
+    }
+
+    public function testDeAccreditPlayerByAccrIdSkipsAlreadyDeaccredited(): void
+    {
+        $accrId = 'harness-deaccr-skip-' . $this->testPlayerId;
+        DBQuery(sprintf("UPDATE uo_player SET accreditation_id='%s', accredited=0 WHERE player_id=%d",
+            DBEscapeString($accrId), $this->testPlayerId));
+
+        DeAccreditPlayerByAccrId($accrId, 100, 'test-deaccr-skip');
+
+        $accredited = (int) DBQueryToValue(sprintf("SELECT accredited FROM uo_player WHERE player_id=%d", $this->testPlayerId));
+        $this->assertSame(0, $accredited);
     }
 
     // --- SeasonAccreditationLog ---

@@ -398,7 +398,8 @@ final class ReservationFunctionsLibTest extends TestCase
     public function testUnscheduledTeamsWithNoAdminRolesReturnsEmpty(): void
     {
         // Non-superadmin with no season/series admin roles → criteria is empty → returns [].
-        $_SESSION['userproperties']['userrole']['superadmin'] = false;
+        // Must unset (not set to false) because isSuperAdmin() uses isset().
+        unset($_SESSION['userproperties']['userrole']['superadmin']);
         unset($_SESSION['userproperties']['userrole']['seasonadmin']);
         unset($_SESSION['userproperties']['userrole']['seriesadmin']);
 
@@ -408,6 +409,55 @@ final class ReservationFunctionsLibTest extends TestCase
 
         $this->assertIsArray($result);
         $this->assertCount(0, $result);
+    }
+
+    public function testUnscheduledTeamsWithSeasonadminRoleExecutesQuery(): void
+    {
+        unset($_SESSION['userproperties']['userrole']['superadmin']);
+        $_SESSION['userproperties']['userrole']['seasonadmin'] = ['HRN2026' => 1];
+        unset($_SESSION['userproperties']['userrole']['seriesadmin']);
+
+        ob_start();
+        $result = UnscheduledTeams();
+        ob_end_clean();
+
+        $_SESSION['userproperties']['userrole']['superadmin'] = true;
+        unset($_SESSION['userproperties']['userrole']['seasonadmin']);
+
+        $this->assertIsArray($result);
+    }
+
+    public function testUnscheduledTeamsWithSeriesadminRoleExecutesQuery(): void
+    {
+        unset($_SESSION['userproperties']['userrole']['superadmin']);
+        unset($_SESSION['userproperties']['userrole']['seasonadmin']);
+        $_SESSION['userproperties']['userrole']['seriesadmin'] = ['100' => 1];
+
+        ob_start();
+        $result = UnscheduledTeams();
+        ob_end_clean();
+
+        $_SESSION['userproperties']['userrole']['superadmin'] = true;
+        unset($_SESSION['userproperties']['userrole']['seriesadmin']);
+
+        $this->assertIsArray($result);
+    }
+
+    public function testUnscheduledTeamsWithBothAdminRolesAddsOrClause(): void
+    {
+        // Covers the `if (!$first) { $criteria .= " OR "; }` path.
+        unset($_SESSION['userproperties']['userrole']['superadmin']);
+        $_SESSION['userproperties']['userrole']['seasonadmin'] = ['HRN2026' => 1];
+        $_SESSION['userproperties']['userrole']['seriesadmin'] = ['100' => 1];
+
+        ob_start();
+        $result = UnscheduledTeams();
+        ob_end_clean();
+
+        $_SESSION['userproperties']['userrole']['superadmin'] = true;
+        unset($_SESSION['userproperties']['userrole']['seasonadmin'], $_SESSION['userproperties']['userrole']['seriesadmin']);
+
+        $this->assertIsArray($result);
     }
 
     // --- CanDeleteReservation ---

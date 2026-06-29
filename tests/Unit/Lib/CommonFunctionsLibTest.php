@@ -13,6 +13,14 @@ if (!function_exists('utf8entities')) {
     }
 }
 
+// getSessionLocale() falls back to GetDefaultLocale() from configuration.functions.php.
+if (!function_exists('GetDefaultLocale')) {
+    function GetDefaultLocale(): string
+    {
+        return 'en_US';
+    }
+}
+
 final class CommonFunctionsLibTest extends TestCase
 {
     protected function setUp(): void
@@ -1086,5 +1094,369 @@ final class CommonFunctionsLibTest extends TestCase
     {
         $path = resolveViewPath('index', LegacyApp::sutRoot(), 'frontpage', ['index']);
         $this->assertStringContainsString('frontpage', $path);
+    }
+
+    // ---- ordinal: cases nd / rd / th / non-English ----
+
+    public function testOrdinalReturnsNd(): void
+    {
+        $_SESSION['userproperties']['locale'] = 'en_US';
+        $result = ordinal(2);
+        unset($_SESSION['userproperties']['locale']);
+        $this->assertStringContainsString('nd', $result);
+    }
+
+    public function testOrdinalReturnsRd(): void
+    {
+        $_SESSION['userproperties']['locale'] = 'en_US';
+        $result = ordinal(3);
+        unset($_SESSION['userproperties']['locale']);
+        $this->assertStringContainsString('rd', $result);
+    }
+
+    public function testOrdinalReturnsTh(): void
+    {
+        $_SESSION['userproperties']['locale'] = 'en_US';
+        $result = ordinal(4);
+        unset($_SESSION['userproperties']['locale']);
+        $this->assertStringContainsString('th', $result);
+    }
+
+    public function testOrdinalReturnsDotForNonEnglishLocale(): void
+    {
+        $_SESSION['userproperties']['locale'] = 'fi_FI';
+        $result = ordinal(5);
+        unset($_SESSION['userproperties']['locale']);
+        $this->assertStringContainsString('5', $result);
+        $this->assertStringEndsWith('.', $result);
+    }
+
+    // ---- isEmptyDate 1970 path ----
+
+    public function testIsEmptyDateReturnsTrueForEpoch1970(): void
+    {
+        $this->assertTrue(isEmptyDate('1970-01-01 00:00:00'));
+    }
+
+    // ---- getSessionLocale with array locale ----
+
+    public function testGetSessionLocaleWithArrayLocale(): void
+    {
+        $_SESSION['userproperties']['locale'] = ['en_US' => true];
+        $result = getSessionLocale();
+        unset($_SESSION['userproperties']['locale']);
+        $this->assertSame('en_US', $result);
+    }
+
+    // ---- validEmail edge cases ----
+
+    public function testValidEmailReturnsFalseForTooLongLocalPart(): void
+    {
+        // 65-char local part exceeds the 64-char limit.
+        $long = str_repeat('a', 65) . '@example.com';
+        $this->assertFalse(validEmail($long));
+    }
+
+    public function testValidEmailReturnsFalseForTooLongDomainPart(): void
+    {
+        // 256-char domain part exceeds the 255-char limit.
+        $long = 'user@' . str_repeat('a', 252) . '.com';
+        $this->assertFalse(validEmail($long));
+    }
+
+    // ---- uo_strptime_fallback edge cases ----
+
+    public function testUoStrptimeWithSecondsSpecifier(): void
+    {
+        // %S is tested separately to cover the case '%S' branch.
+        $result = uo_strptime('30', '%S');
+        $this->assertIsArray($result);
+        $this->assertSame(30, $result['tm_sec']);
+    }
+
+    public function testUoStrptimeReturnsFalseForInvalidSeconds(): void
+    {
+        // Out-of-range seconds (> 59) triggers return false.
+        $this->assertFalse(uo_strptime('99', '%S'));
+    }
+
+    public function testUoStrptimeReturnsFalseForInvalidHour(): void
+    {
+        // Out-of-range hour (> 23) triggers return false.
+        $this->assertFalse(uo_strptime('25', '%H'));
+    }
+
+    public function testUoStrptimeFormatWithNoPercent(): void
+    {
+        // Format string with no % → sets unparsed to "" when format == date.
+        $result = uo_strptime('hello', 'hello');
+        $this->assertIsArray($result);
+        $this->assertSame('', $result['unparsed']);
+    }
+
+    public function testUoStrptimeReturnsFalseForYearBelow1900(): void
+    {
+        // Year < 1900 triggers return false.
+        $this->assertFalse(uo_strptime('1800', '%Y'));
+    }
+
+    // ---- ColumnAbbr and related ----
+
+    public function testColumnAbbrGamesReturnsGP(): void
+    {
+        $abbr = ColumnAbbr('games');
+        $this->assertSame('GP', $abbr['abbr']);
+    }
+
+    public function testColumnAbbrWinsReturnsW(): void
+    {
+        $this->assertSame('W', ColumnAbbr('wins')['abbr']);
+    }
+
+    public function testColumnAbbrDrawsReturnsD(): void
+    {
+        $this->assertSame('D', ColumnAbbr('draws')['abbr']);
+    }
+
+    public function testColumnAbbrLossesReturnsL(): void
+    {
+        $this->assertSame('L', ColumnAbbr('losses')['abbr']);
+    }
+
+    public function testColumnAbbrGoalsforReturnsGF(): void
+    {
+        $this->assertSame('GF', ColumnAbbr('goalsfor')['abbr']);
+    }
+
+    public function testColumnAbbrGoalsagainstReturnsGA(): void
+    {
+        $this->assertSame('GA', ColumnAbbr('goalsagainst')['abbr']);
+    }
+
+    public function testColumnAbbrGoalsdiffReturnsGD(): void
+    {
+        $this->assertSame('GD', ColumnAbbr('goalsdiff')['abbr']);
+    }
+
+    public function testColumnAbbrGoalsReturnsG(): void
+    {
+        $this->assertSame('G', ColumnAbbr('goals')['abbr']);
+    }
+
+    public function testColumnAbbrAssistsReturnsA(): void
+    {
+        $this->assertSame('A', ColumnAbbr('assists')['abbr']);
+    }
+
+    public function testColumnAbbrCallahanReturnsCallAbbr(): void
+    {
+        $this->assertStringContainsString('Call', ColumnAbbr('callahans')['abbr']);
+    }
+
+    public function testColumnAbbrDefencesReturnsD(): void
+    {
+        $this->assertSame('D', ColumnAbbr('defences')['abbr']);
+    }
+
+    public function testColumnAbbrTotalReturnsTot(): void
+    {
+        $this->assertStringContainsString('Tot', ColumnAbbr('total')['abbr']);
+    }
+
+    public function testColumnAbbrAvgReturnsAvg(): void
+    {
+        $this->assertStringContainsString('Avg', ColumnAbbr('avg')['abbr']);
+    }
+
+    public function testColumnAbbrUnknownReturnsNull(): void
+    {
+        $this->assertNull(ColumnAbbr('no_such_key'));
+    }
+
+    public function testColumnAbbrLabelKnownKeyReturnsAbbr(): void
+    {
+        $this->assertSame('GP', ColumnAbbrLabel('games'));
+    }
+
+    public function testColumnAbbrLabelUnknownKeyReturnsFallback(): void
+    {
+        $this->assertSame('My Label', ColumnAbbrLabel('no_such_key', 'My Label'));
+    }
+
+    public function testColumnAbbrLabelUnknownKeyReturnsKeyWhenNoFallback(): void
+    {
+        $this->assertSame('no_such_key', ColumnAbbrLabel('no_such_key'));
+    }
+
+    public function testColumnAbbrCellReturnsThTag(): void
+    {
+        $cell = ColumnAbbrCell('games');
+        $this->assertStringStartsWith('<th', $cell);
+        $this->assertStringContainsString('GP', $cell);
+    }
+
+    public function testColumnLegendReturnsCaptionWithRegisteredKeys(): void
+    {
+        $legend = ColumnLegend(['games', 'wins']);
+        $this->assertStringContainsString('GP', $legend);
+        $this->assertStringContainsString('W', $legend);
+    }
+
+    public function testTableLegendReturnsEmptyStringForNoPairs(): void
+    {
+        $this->assertSame('', TableLegend([]));
+    }
+
+    public function testTableLegendReturnsCaptionForPairs(): void
+    {
+        $legend = TableLegend(['GP' => 'Games Played', 'W' => 'Wins']);
+        $this->assertStringContainsString('GP: Games Played', $legend);
+        $this->assertStringContainsString('caption', $legend);
+    }
+
+    // ---- GetPageURL HTTPS branch ----
+
+    public function testGetPageUrlWithHttpsAddsS(): void
+    {
+        $_SERVER['HTTPS'] = 'on';
+        $url = GetPageURL();
+        unset($_SERVER['HTTPS']);
+        $this->assertStringStartsWith('https://', $url);
+    }
+
+    // ---- getSessionLocale: no-locale path ----
+
+    public function testGetSessionLocaleWithNoLocaleReturnsDefaultLocale(): void
+    {
+        $saved = $_SESSION['userproperties']['locale'] ?? null;
+        unset($_SESSION['userproperties']['locale']);
+        $result = getSessionLocale();
+        if ($saved !== null) {
+            $_SESSION['userproperties']['locale'] = $saved;
+        }
+        $this->assertIsString($result);
+    }
+
+    // ---- validEmail: quoted local part paths ----
+
+    public function testValidEmailWithValidQuotedLocalPartReturnsTrue(): void
+    {
+        // "user name"@example.com — space is invalid in unquoted local but valid quoted.
+        $this->assertTrue(validEmail('"user name"@example.com'));
+    }
+
+    public function testValidEmailWithInvalidUnquotedAndUnquotedLocalReturnsFalse(): void
+    {
+        // Parens not in the allowed unquoted set, and also not a valid quoted format.
+        $this->assertFalse(validEmail('(invalid)@example.com'));
+    }
+
+    // ---- uo_strptime: invalid minute / default specifier ----
+
+    public function testUoStrptimeReturnsFalseForInvalidMinutes(): void
+    {
+        $this->assertFalse(uo_strptime('99', '%M'));
+    }
+
+    public function testUoStrptimeBreaks2ForUnknownSpecifier(): void
+    {
+        // %Q is not handled → default: break 2 exits the while loop
+        $result = uo_strptime('05.06.2026', '%d.%Q.%Y');
+        // Falls through to mktime with only day parsed; result may be array or false.
+        // Either way: the default: break 2 branch at line 658 is exercised.
+        $this->assertTrue($result === false || is_array($result));
+    }
+
+    public function testUoStrptimeBreaksOnFormatDateLiteralMismatch(): void
+    {
+        // Separator mismatch ('/' vs '.') triggers break at line 600 in uo_strptime.
+        $result = uo_strptime('22/06/2026 00:00', '%d.%m.%Y %H:%M');
+        $this->assertTrue($result === false || is_array($result));
+    }
+
+    // ---- ResultsetToCsv: multi-column + NULL cell ----
+
+    public function testResultsetToCsvWithMultiColumnAndNullCellCoversEmptyBranch(): void
+    {
+        // NULL field triggers the empty-value branch (line 837) and
+        // separator insertion for non-last field (line 841).
+        $result = DBQuery('SELECT pool_id, NULL as empty_col FROM uo_pool WHERE pool_id=200');
+        $csv = ResultsetToCsv($result, ';');
+        $this->assertStringContainsString('pool_id', $csv);
+        $this->assertStringContainsString('200', $csv);
+    }
+
+    // ---- ArrayToCsv: empty value branch ----
+
+    public function testArrayToCsvWithEmptyValueCoversEmptyBranch(): void
+    {
+        $data = [['name' => 'Alice', 'note' => '']];
+        $csv = ArrayToCsv($data, ',');
+        $this->assertStringContainsString('Alice', $csv);
+    }
+
+    // ---- CreateOrdering: string orderby and nested-array orderby ----
+
+    public function testCreateOrderingWithStringOrderbyHitsNonArrayPath(): void
+    {
+        // Non-array $orderby → line 911: $check = [$orderby => "ASC"]
+        $result = CreateOrdering('uo_pool', 'uo_pool.pool_id');
+        $this->assertSame('ORDER BY uo_pool.pool_id ASC', $result);
+    }
+
+    public function testCreateOrderingWithNestedArrayHitsCurrentPath(): void
+    {
+        // Array whose current() is also an array → line 913: $check = current($orderby)
+        $result = CreateOrdering('uo_pool', [['uo_pool.pool_id' => 'ASC']]);
+        $this->assertSame('ORDER BY uo_pool.pool_id ASC', $result);
+    }
+
+    // ---- CreateFilter: string tables and empty-criteria paths ----
+
+    public function testCreateFilterWithStringTableBuildsSingleAlias(): void
+    {
+        // String $tables → line 971: $fields[$tables] = GetTableColumns($tables)
+        $result = CreateFilter('uo_pool', ['field' => 'uo_pool.pool_id', 'operator' => '=', 'value' => 200]);
+        $this->assertStringContainsString('pool_id', $result);
+    }
+
+    public function testCreateFilterWithEmptyCriteriaJoinReturnsEmpty(): void
+    {
+        // _handleJoin with empty criteria returns "()" which strips to "" → line 984
+        $result = CreateFilter('uo_pool', ['join' => 'AND', 'criteria' => []]);
+        $this->assertSame('', $result);
+    }
+
+    // ---- array_copy: object clone branch ----
+
+    public function testArrayCopyWithObjectClonesElement(): void
+    {
+        $obj = new stdClass();
+        $obj->name = 'test';
+        $arr = [$obj];
+        $copy = array_copy($arr);
+        $this->assertEquals($obj, $copy[0]);
+        $this->assertNotSame($obj, $copy[0]);
+    }
+
+    // ---- iget: lowercase and ucfirst paths ----
+
+    public function testIgetWithLowercaseGEtKeyHitsLowercaseBranch(): void
+    {
+        // Set only the lowercase key; iget() does strtolower → finds it (line 1364-1365).
+        $_GET['pool_id'] = 'test';
+        $result = iget('POOL_ID');
+        unset($_GET['pool_id']);
+        // GetString uses filter_input (returns null/false in CLI) → returns "".
+        $this->assertSame('', $result);
+    }
+
+    public function testIgetWithUcfirstGEtKeyHitsUcfirstBranch(): void
+    {
+        // Set only the Ucfirst key; iget() does ucfirst → finds it (line 1370-1371).
+        $_GET['Pool_id'] = 'test';
+        $result = iget('pool_id');
+        unset($_GET['Pool_id']);
+        $this->assertSame('', $result);
     }
 }

@@ -1159,6 +1159,23 @@ final class UserFunctionsLibTest extends TestCase
         $this->assertNotEmpty($result);
     }
 
+    public function testGameResponsibilitiesWithGameAdmin(): void
+    {
+        // gameadmin[700]=1 — game 700 is in pool 200 → series 100 → season HRN2026.
+        // Covers the gameadmin isset block (lines ~1839-1853).
+        LegacyApp::requireTopLevelLib('game.functions.php');
+        unset($_SESSION['userproperties']['userrole']['superadmin']);
+        $_SESSION['userproperties']['userrole']['gameadmin'][700] = 1;
+        try {
+            $result = GameResponsibilities('HRN2026');
+            $this->assertIsArray($result);
+            $gameIds = array_column($result, 'game_id');
+            $this->assertContains('700', $gameIds);
+        } finally {
+            unset($_SESSION['userproperties']['userrole']['gameadmin']);
+        }
+    }
+
     public function testGameResponsibilityArrayEmpty(): void
     {
         // No criteria means GameResponsibilities returns [] (falsy),

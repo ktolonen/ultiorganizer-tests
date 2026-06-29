@@ -390,6 +390,44 @@ final class UrlFunctionsLibTest extends TestCase
         $this->assertFalse(CanEditMediaTarget('game', '1'));
     }
 
+    public function testCanEditMediaTargetReturnsFalseForZeroOwnerId(): void
+    {
+        LegacyApp::loadUserFunctions();
+        // uid set → hasAddMediaRight true; ownerId=0 → return false path.
+        $_SESSION['uid'] = 'testuser';
+        unset($_SESSION['userproperties']['userrole']['superadmin']);
+        try {
+            $this->assertFalse(CanEditMediaTarget('game', '0'));
+        } finally {
+            unset($_SESSION['uid']);
+            $_SESSION['userproperties']['userrole']['superadmin'] = true;
+        }
+    }
+
+    public function testCanEditMediaTargetCoversSwitchCasesWithSeriesAdminRole(): void
+    {
+        LegacyApp::loadUserFunctions();
+        // Use seriesadmin[100] (not superadmin) to exercise the switch body for multiple owners.
+        $_SESSION['uid'] = 'testuser';
+        unset($_SESSION['userproperties']['userrole']['superadmin']);
+        $_SESSION['userproperties']['userrole']['seriesadmin'][100] = 1;
+        try {
+            // 'series' → hasEditGamesRight(100) → true
+            $this->assertTrue(CanEditMediaTarget('series', '100'));
+            // 'team'   → hasEditPlayersRight(300) → true (team 300 ∈ series 100)
+            $this->assertTrue(CanEditMediaTarget('team', '300'));
+            // 'game'   → hasEditGameEventsRight(700) → true (game 700 ∈ series 100)
+            $this->assertTrue(CanEditMediaTarget('game', '700'));
+            // 'country' → always false
+            $this->assertFalse(CanEditMediaTarget('country', '1'));
+            // unknown type → falls to return false after switch
+            $this->assertFalse(CanEditMediaTarget('unknown_type', '1'));
+        } finally {
+            unset($_SESSION['userproperties']['userrole']['seriesadmin'][100], $_SESSION['uid']);
+            $_SESSION['userproperties']['userrole']['superadmin'] = true;
+        }
+    }
+
     public function testCanRemoveMediaUrlReturnsFalseForNonAdminWithoutPublisherMatch(): void
     {
         LegacyApp::loadUserFunctions();

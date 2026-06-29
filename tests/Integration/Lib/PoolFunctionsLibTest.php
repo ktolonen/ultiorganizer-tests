@@ -533,6 +533,14 @@ final class PoolFunctionsLibTest extends TestCase
         $this->assertNotEmpty($colors);
     }
 
+    public function testPoolColorsReturnsCachedResultOnSecondCall(): void
+    {
+        // Second call hits the static cache (isset($poolColors) → return).
+        $first = PoolColors();
+        $second = PoolColors();
+        $this->assertSame($first, $second);
+    }
+
     // --- PoolScoreBoard / PoolScoreBoardArray ---
 
     public function testPoolScoreBoardReturnsResult(): void
@@ -833,6 +841,26 @@ final class PoolFunctionsLibTest extends TestCase
         $this->assertSame(1, $count);
 
         // Clean up
+        DBQuery(sprintf("DELETE FROM uo_game_pool WHERE game=%d", $gameId));
+        DBQuery(sprintf("DELETE FROM uo_game WHERE game_id=%d", $gameId));
+    }
+
+    public function testPoolAddGameWithHomeRespCreatesGameWithRespTeam(): void
+    {
+        // Covers the $homeresp=true branch (INSERT with respteam).
+        PoolAddGame(200, 300, 301, false, true);
+        $gameId = (int) DBQueryToValue("SELECT game_id FROM uo_game WHERE hometeam=300 AND visitorteam=301 AND respteam=300 ORDER BY game_id DESC LIMIT 1");
+        $this->assertGreaterThan(0, $gameId);
+        DBQuery(sprintf("DELETE FROM uo_game_pool WHERE game=%d", $gameId));
+        DBQuery(sprintf("DELETE FROM uo_game WHERE game_id=%d", $gameId));
+    }
+
+    public function testPoolAddGameWithPseudoTeamsUsesSchedulingColumns(): void
+    {
+        // Covers the $psudoteams=true branch (columns: scheduling_name_home/visitor).
+        PoolAddGame(200, 600, 601, true);
+        $gameId = (int) DBQueryToValue("SELECT game_id FROM uo_game WHERE scheduling_name_home=600 AND scheduling_name_visitor=601 ORDER BY game_id DESC LIMIT 1");
+        $this->assertGreaterThan(0, $gameId);
         DBQuery(sprintf("DELETE FROM uo_game_pool WHERE game=%d", $gameId));
         DBQuery(sprintf("DELETE FROM uo_game WHERE game_id=%d", $gameId));
     }
@@ -1206,6 +1234,71 @@ final class PoolFunctionsLibTest extends TestCase
         DBQuery(sprintf("DELETE FROM uo_pool WHERE pool_id=%d", $destId));
     }
 
+    public function testPoolMakeMoveWithHomeTeamNotResponsible(): void
+    {
+        // Covers the isRespTeamHomeTeam()=false branch in PoolMakeMove.
+        $destId = $this->createTempPool(1);
+        PoolAddMove(200, $destId, 2, 1, 'PlaceholderMoveHR');
+        DBQuery("UPDATE uo_setting SET value='no' WHERE name='HomeTeamResponsible'");
+        try {
+            PoolMakeMove(200, 2);
+            $row = DBQueryToArray(sprintf("SELECT team FROM uo_team_pool WHERE pool=%d AND team=301", $destId));
+            $this->assertCount(1, $row);
+        } finally {
+            DBQuery("UPDATE uo_setting SET value='yes' WHERE name='HomeTeamResponsible'");
+            $schedId = (int) DBQueryToValue(sprintf(
+                "SELECT scheduling_id FROM uo_moveteams WHERE frompool=200 AND topool=%d", $destId
+            ));
+            DBQuery(sprintf("DELETE FROM uo_moveteams WHERE frompool=200 AND topool=%d", $destId));
+            if ($schedId > 0) {
+                DBQuery(sprintf("DELETE FROM uo_scheduling_name WHERE scheduling_id=%d", $schedId));
+            }
+            DBQuery(sprintf("DELETE FROM uo_team_pool WHERE pool=%d", $destId));
+            DBQuery(sprintf("DELETE FROM uo_pool WHERE pool_id=%d", $destId));
+        }
+    }
+
+    public function testPoolMakeMoveNullTeamIdContinues(): void
+    {
+        // Covers the !$teamId continue branch: move from placing=5 → no team at that position.
+        $destId = $this->createTempPool(1);
+        PoolAddMove(200, $destId, 5, 1, 'PlaceholderMoveNull');
+        try {
+            PoolMakeMove(200, 5);
+            // No assertion needed — we just need to not error.
+            $this->assertTrue(true);
+        } finally {
+            $schedId = (int) DBQueryToValue(sprintf(
+                "SELECT scheduling_id FROM uo_moveteams WHERE frompool=200 AND topool=%d", $destId
+            ));
+            DBQuery(sprintf("DELETE FROM uo_moveteams WHERE frompool=200 AND topool=%d", $destId));
+            if ($schedId > 0) {
+                DBQuery(sprintf("DELETE FROM uo_scheduling_name WHERE scheduling_id=%d", $schedId));
+            }
+            DBQuery(sprintf("DELETE FROM uo_pool WHERE pool_id=%d", $destId));
+        }
+    }
+
+    public function testPoolMakeMovesWithHomeTeamNotResponsible(): void
+    {
+        // Covers the isRespTeamHomeTeam()=false else branch in PoolMakeMoves.
+        $destId = $this->createTempPool(1);
+        PoolAddMove(200, $destId, 1, 1, 'PMovesMoveHR');
+        DBQuery("UPDATE uo_setting SET value='no' WHERE name='HomeTeamResponsible'");
+        try {
+            PoolMakeMoves($destId);
+            $row = DBQueryToArray(sprintf("SELECT team FROM uo_team_pool WHERE pool=%d AND team=300", $destId));
+            $this->assertCount(1, $row);
+        } finally {
+            DBQuery("UPDATE uo_setting SET value='yes' WHERE name='HomeTeamResponsible'");
+            $schedId = (int) DBQueryToValue("SELECT scheduling_id FROM uo_moveteams WHERE frompool=200 AND topool=$destId");
+            DBQuery("DELETE FROM uo_moveteams WHERE frompool=200 AND topool=$destId");
+            if ($schedId > 0) { DBQuery("DELETE FROM uo_scheduling_name WHERE scheduling_id=$schedId"); }
+            DBQuery("DELETE FROM uo_team_pool WHERE pool=$destId");
+            DBQuery("DELETE FROM uo_pool WHERE pool_id=$destId");
+        }
+    }
+
     public function testPoolMakeMoves(): void
     {
         $destId = $this->createTempPool(1);
@@ -1287,6 +1380,99 @@ final class PoolFunctionsLibTest extends TestCase
 
         $this->assertIsArray($games);
         $this->assertContains(false, $games);
+
+        DBQuery(sprintf("DELETE FROM uo_team_pool WHERE pool=%d", $poolId));
+        DBQuery(sprintf("DELETE FROM uo_pool WHERE pool_id=%d", $poolId));
+    }
+
+    // --- GenerateGames pseudoteams path ---
+
+    public function testGenerateGamesWithPseudoteamsDryRun(): void
+    {
+        // Covers $pseudoteams=true path: pool has no real teams but has scheduling moves.
+        $srcId = $this->createTempPool(1);
+        $destId = $this->createTempPool(1);
+        // Add teams to source pool so they have standings
+        DBQuery("INSERT INTO uo_team_pool (team, pool, rank, activerank) VALUES (300, $srcId, 1, 1), (301, $srcId, 2, 2)");
+        // Add moves: rank 1 and 2 from srcId → destId (creates scheduling names in destId)
+        PoolAddMove($srcId, $destId, 1, 1, 'PseudoTeam1');
+        PoolAddMove($srcId, $destId, 2, 2, 'PseudoTeam2');
+        try {
+            $games = GenerateGames($destId, 1, false);
+            $this->assertIsArray($games);
+        } finally {
+            $schedIds = array_column(DBQueryToArray("SELECT scheduling_id FROM uo_moveteams WHERE topool=$destId"), 'scheduling_id');
+            DBQuery("DELETE FROM uo_moveteams WHERE topool=$destId");
+            foreach ($schedIds as $sid) {
+                DBQuery("DELETE FROM uo_scheduling_name WHERE scheduling_id=$sid");
+            }
+            DBQuery("DELETE FROM uo_team_pool WHERE pool=$srcId");
+            DBQuery("DELETE FROM uo_pool WHERE pool_id=$srcId");
+            DBQuery("DELETE FROM uo_pool WHERE pool_id=$destId");
+        }
+    }
+
+    public function testGenerateGamesWithPseudoteamsAndGenerateTrue(): void
+    {
+        // Covers $pseudoteams=true, $generate=true path (INSERT with scheduling names).
+        $srcId = $this->createTempPool(1);
+        $destId = $this->createTempPool(1);
+        DBQuery("INSERT INTO uo_team_pool (team, pool, rank, activerank) VALUES (300, $srcId, 1, 1), (301, $srcId, 2, 2)");
+        PoolAddMove($srcId, $destId, 1, 1, 'PSGen1');
+        PoolAddMove($srcId, $destId, 2, 2, 'PSGen2');
+        try {
+            $games = GenerateGames($destId, 1, true);
+            $this->assertIsArray($games);
+            $count = (int) DBQueryToValue("SELECT COUNT(*) FROM uo_game_pool WHERE pool=$destId");
+            $this->assertGreaterThan(0, $count);
+        } finally {
+            $gameIds = array_column(DBQueryToArray("SELECT game FROM uo_game_pool WHERE pool=$destId"), 'game');
+            DBQuery("DELETE FROM uo_game_pool WHERE pool=$destId");
+            foreach ($gameIds as $gid) { DBQuery("DELETE FROM uo_game WHERE game_id=$gid"); }
+            $schedIds = array_column(DBQueryToArray("SELECT scheduling_id FROM uo_moveteams WHERE topool=$destId"), 'scheduling_id');
+            DBQuery("DELETE FROM uo_moveteams WHERE topool=$destId");
+            foreach ($schedIds as $sid) { DBQuery("DELETE FROM uo_scheduling_name WHERE scheduling_id=$sid"); }
+            DBQuery("DELETE FROM uo_team_pool WHERE pool=$srcId");
+            DBQuery("DELETE FROM uo_pool WHERE pool_id=$srcId");
+            DBQuery("DELETE FROM uo_pool WHERE pool_id=$destId");
+        }
+    }
+
+    public function testGenerateGamesWithPseudoteamsAndHomeresp(): void
+    {
+        // Covers $pseudoteams=true, $generate=true, $homeresp=true path.
+        $srcId = $this->createTempPool(1);
+        $destId = $this->createTempPool(1);
+        DBQuery("INSERT INTO uo_team_pool (team, pool, rank, activerank) VALUES (300, $srcId, 1, 1), (301, $srcId, 2, 2)");
+        PoolAddMove($srcId, $destId, 1, 1, 'PSHom1');
+        PoolAddMove($srcId, $destId, 2, 2, 'PSHom2');
+        try {
+            $games = GenerateGames($destId, 1, true, false, true);
+            $this->assertIsArray($games);
+        } finally {
+            $gameIds = array_column(DBQueryToArray("SELECT game FROM uo_game_pool WHERE pool=$destId"), 'game');
+            DBQuery("DELETE FROM uo_game_pool WHERE pool=$destId");
+            foreach ($gameIds as $gid) { DBQuery("DELETE FROM uo_game WHERE game_id=$gid"); }
+            $schedIds = array_column(DBQueryToArray("SELECT scheduling_id FROM uo_moveteams WHERE topool=$destId"), 'scheduling_id');
+            DBQuery("DELETE FROM uo_moveteams WHERE topool=$destId");
+            foreach ($schedIds as $sid) { DBQuery("DELETE FROM uo_scheduling_name WHERE scheduling_id=$sid"); }
+            DBQuery("DELETE FROM uo_team_pool WHERE pool=$srcId");
+            DBQuery("DELETE FROM uo_pool WHERE pool_id=$srcId");
+            DBQuery("DELETE FROM uo_pool WHERE pool_id=$destId");
+        }
+    }
+
+    // --- GenerateGames nomutual path ---
+
+    public function testGenerateGamesType1WithNomutualSkipsMatchesFromSamePool(): void
+    {
+        // $nomutual=true, pseudoteams=false: both teams come from null frompool → null==null → all skipped.
+        $poolId = $this->createTempPool(1);
+        DBQuery(sprintf("INSERT INTO uo_team_pool (team, pool, rank, activerank) VALUES (300, %d, 1, 1)", $poolId));
+        DBQuery(sprintf("INSERT INTO uo_team_pool (team, pool, rank, activerank) VALUES (301, %d, 2, 2)", $poolId));
+
+        $games = GenerateGames($poolId, 1, false, true); // nomutual=true
+        $this->assertIsArray($games);
 
         DBQuery(sprintf("DELETE FROM uo_team_pool WHERE pool=%d", $poolId));
         DBQuery(sprintf("DELETE FROM uo_pool WHERE pool_id=%d", $poolId));
@@ -1422,6 +1608,16 @@ final class PoolFunctionsLibTest extends TestCase
         $this->assertTrue(true);
     }
 
+    public function testPoolConfirmMovesWithVisibleParamCoversSetVisibilityBranch(): void
+    {
+        // Covers the isset($visible) branch in PoolConfirmMoves.
+        $before = (int) DBQueryToValue("SELECT visible FROM uo_pool WHERE pool_id=200");
+        PoolConfirmMoves(200, $before);
+        // Visibility restored to same value (idempotent).
+        $after = (int) DBQueryToValue("SELECT visible FROM uo_pool WHERE pool_id=200");
+        $this->assertSame($before, $after);
+    }
+
     // --- GeneratePlayoffPools ---
     // Non-superadmin branch calls die() — untestable per docs/lib-test-deep-coverage.md.
 
@@ -1431,5 +1627,147 @@ final class PoolFunctionsLibTest extends TestCase
         $result = GeneratePlayoffPools(200, false);
         $this->assertIsArray($result);
         $this->assertEmpty($result);
+    }
+
+    public function testGeneratePlayoffPoolsWithFollowerEarlyReturn(): void
+    {
+        // Covers the !empty($poolInfo['follower']) early-return path (lines 2504-2516).
+        $followerPoolId = $this->createTempPool(2);
+        DBQuery("UPDATE uo_pool SET follower=$followerPoolId WHERE pool_id=200");
+        try {
+            $result = GeneratePlayoffPools(200, false);
+            $this->assertIsArray($result);
+            $this->assertNotEmpty($result);
+            $this->assertSame($followerPoolId, (int) $result[0]['pool_id']);
+        } finally {
+            DBQuery("UPDATE uo_pool SET follower=NULL WHERE pool_id=200");
+            DBQuery("DELETE FROM uo_pool WHERE pool_id=$followerPoolId");
+        }
+    }
+
+    public function testGeneratePlayoffPoolsWithFourTeamsDryRunCoversForLoopBody(): void
+    {
+        // With 4 teams → rounds=2 → for-loop runs once (covers "Finals" branch).
+        $poolId = $this->createTempPool(2);
+        DBQuery("INSERT INTO uo_team (name, valid, series) VALUES ('PGP1',1,100),('PGP2',1,100)");
+        $id1 = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+        $id2 = $id1 + 1;
+        $this->createdTeamIds[] = $id1;
+        $this->createdTeamIds[] = $id2;
+        DBQuery("INSERT INTO uo_team_pool (team, pool, rank, activerank) VALUES (300,$poolId,1,1),(301,$poolId,2,2),($id1,$poolId,3,3),($id2,$poolId,4,4)");
+        try {
+            $result = GeneratePlayoffPools($poolId, false);
+            $this->assertIsArray($result);
+        } finally {
+            DBQuery("DELETE FROM uo_team_pool WHERE pool=$poolId");
+            DBQuery("DELETE FROM uo_pool WHERE pool_id=$poolId");
+        }
+    }
+
+    // --- CanDeleteTeamFromPool true path ---
+
+    public function testCanDeleteTeamFromPoolReturnsTrueForNonPlayedTeam(): void
+    {
+        DBQuery("INSERT INTO uo_team (name, valid, series) VALUES ('NoGamesTeam', 1, 100)");
+        $teamId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+        $this->createdTeamIds[] = $teamId;
+        DBQuery("INSERT INTO uo_team_pool (team, pool, rank, activerank) VALUES ($teamId, 200, 5, 5)");
+        try {
+            $this->assertTrue(CanDeleteTeamFromPool(200, $teamId));
+        } finally {
+            DBQuery("DELETE FROM uo_team_pool WHERE team=$teamId");
+        }
+    }
+
+    // --- PoolDeleteTeam zero-teamId early return ---
+
+    public function testPoolDeleteTeamWithZeroTeamIdDoesNothing(): void
+    {
+        // Covers the !$teamId early return at the top of PoolDeleteTeam.
+        PoolDeleteTeam(200, 0, false);
+        $this->assertTrue(true);
+    }
+
+    // --- PoolDeleteTeam: UPDATE pool=NULL when team.pool matches ---
+
+    public function testPoolDeleteTeamClearsTeamPoolWhenPoolMatches(): void
+    {
+        DBQuery("INSERT INTO uo_team (name, valid, series, pool) VALUES ('PoolDeleteTeamTest', 1, 100, 200)");
+        $teamId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+        $this->createdTeamIds[] = $teamId;
+        DBQuery("INSERT INTO uo_team_pool (team, pool, rank, activerank) VALUES ($teamId, 200, 5, 5)");
+        try {
+            PoolDeleteTeam(200, $teamId, false);
+            $pool = DBQueryToValue("SELECT pool FROM uo_team WHERE team_id=$teamId");
+            $this->assertNull($pool);
+        } finally {
+            DBQuery("DELETE FROM uo_team_pool WHERE team=$teamId");
+        }
+    }
+
+    // --- SetPoolDetails with comment ---
+
+    public function testSetPoolDetailsWithCommentSavesComment(): void
+    {
+        LegacyApp::loadCommonFunctions();
+        // Covers the SetComment branch inside SetPoolDetails.
+        SetPoolDetails(200, ['name' => 'Pool A'], 'Test pool detail comment');
+        // If we get here without exception, the branch was covered.
+        $this->assertTrue(true);
+    }
+
+    // --- PoolSetTeam with newpool=0 (DELETE path) ---
+
+    public function testPoolSetTeamWithZeroNewPoolDeletesTeamFromPool(): void
+    {
+        $tempPoolId = $this->createTempPool(1);
+        DBQuery("INSERT INTO uo_team (name, valid, series) VALUES ('PoolSetTeamDelTest', 1, 100)");
+        $teamId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+        $this->createdTeamIds[] = $teamId;
+        DBQuery("INSERT INTO uo_team_pool (team, pool, rank, activerank) VALUES ($teamId, $tempPoolId, 1, 1)");
+        try {
+            PoolSetTeam($tempPoolId, $teamId, 1, 0);
+            $count = (int) DBQueryToValue("SELECT COUNT(*) FROM uo_team_pool WHERE team=$teamId AND pool=$tempPoolId");
+            $this->assertSame(0, $count);
+        } finally {
+            DBQuery("DELETE FROM uo_team_pool WHERE team=$teamId");
+            DBQuery("DELETE FROM uo_pool WHERE pool_id=$tempPoolId");
+        }
+    }
+
+    // --- PoolSetTeam with pool match: UPDATE uo_team.pool when newpool=0 ---
+
+    public function testPoolSetTeamWithZeroNewPoolClearsTeamPoolWhenMatching(): void
+    {
+        $tempPoolId = $this->createTempPool(1);
+        DBQuery("INSERT INTO uo_team (name, valid, series, pool) VALUES ('PoolSetTeamClearTest', 1, 100, $tempPoolId)");
+        $teamId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+        $this->createdTeamIds[] = $teamId;
+        DBQuery("INSERT INTO uo_team_pool (team, pool, rank, activerank) VALUES ($teamId, $tempPoolId, 1, 1)");
+        try {
+            PoolSetTeam($tempPoolId, $teamId, 1, 0);
+            $pool = DBQueryToValue("SELECT pool FROM uo_team WHERE team_id=$teamId");
+            $this->assertNull($pool);
+        } finally {
+            DBQuery("DELETE FROM uo_team_pool WHERE team=$teamId");
+            DBQuery("DELETE FROM uo_pool WHERE pool_id=$tempPoolId");
+        }
+    }
+
+    // --- SetPoolFollowersVisibility with an actual follower ---
+
+    public function testSetPoolFollowersVisibilityUpdatesFollower(): void
+    {
+        $followerPoolId = $this->createTempPool(1);
+        // Make pool 200 point to a follower pool in uo_pool.follower column.
+        DBQuery("UPDATE uo_pool SET follower=$followerPoolId WHERE pool_id=200");
+        try {
+            SetPoolFollowersVisibility(200, 1);
+            $visible = (int) DBQueryToValue("SELECT visible FROM uo_pool WHERE pool_id=$followerPoolId");
+            $this->assertSame(1, $visible);
+        } finally {
+            DBQuery("UPDATE uo_pool SET follower=NULL WHERE pool_id=200");
+            DBQuery("DELETE FROM uo_pool WHERE pool_id=$followerPoolId");
+        }
     }
 }

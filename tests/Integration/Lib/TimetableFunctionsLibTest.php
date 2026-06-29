@@ -200,6 +200,123 @@ final class TimetableFunctionsLibTest extends TestCase
         $this->assertEmpty($games);
     }
 
+    public function testTimetableGamesWithPlayedTimeFilter(): void
+    {
+        $games = TimetableGames('HRN2026', 'season', 'played', 'time');
+        $this->assertIsArray($games);
+    }
+
+    public function testTimetableGamesWithOngoingTimeFilter(): void
+    {
+        $games = TimetableGames('HRN2026', 'season', 'ongoing', 'time');
+        $this->assertIsArray($games);
+    }
+
+    public function testTimetableGamesWithComingNotTodayFilter(): void
+    {
+        $games = TimetableGames('HRN2026', 'season', 'comingNotToday', 'time');
+        $this->assertIsArray($games);
+    }
+
+    public function testTimetableGamesWithPastNotTodayFilter(): void
+    {
+        $games = TimetableGames('HRN2026', 'season', 'pastNotToday', 'time');
+        $this->assertIsArray($games);
+    }
+
+    public function testTimetableGamesWithTodayFilter(): void
+    {
+        $games = TimetableGames('HRN2026', 'season', 'today', 'time');
+        $this->assertIsArray($games);
+    }
+
+    public function testTimetableGamesWithTomorrowFilter(): void
+    {
+        $games = TimetableGames('HRN2026', 'season', 'tomorrow', 'time');
+        $this->assertIsArray($games);
+    }
+
+    public function testTimetableGamesWithYesterdayFilter(): void
+    {
+        $games = TimetableGames('HRN2026', 'season', 'yesterday', 'time');
+        $this->assertIsArray($games);
+    }
+
+    public function testTimetableGamesWithComingTodayAndTomorrowFilter(): void
+    {
+        $games = TimetableGames('HRN2026', 'season', 'comingTodayAndTomorrow', 'time');
+        $this->assertIsArray($games);
+    }
+
+    public function testTimetableGamesWithSpecificDateFilter(): void
+    {
+        $games = TimetableGames('HRN2026', 'season', '2026-06-01', 'time');
+        $this->assertIsArray($games);
+    }
+
+    public function testTimetableGamesWithTournamentsOrder(): void
+    {
+        $games = TimetableGames('HRN2026', 'season', 'all', 'tournaments');
+        $this->assertIsArray($games);
+    }
+
+    public function testTimetableGamesWithSeriesOrder(): void
+    {
+        $games = TimetableGames('HRN2026', 'season', 'all', 'series');
+        $this->assertIsArray($games);
+    }
+
+    public function testTimetableGamesWithPlacesOrder(): void
+    {
+        $games = TimetableGames('HRN2026', 'season', 'all', 'places');
+        $this->assertIsArray($games);
+    }
+
+    public function testTimetableGamesWithTournamentsDescOrder(): void
+    {
+        $games = TimetableGames('HRN2026', 'season', 'all', 'tournamentsdesc');
+        $this->assertIsArray($games);
+    }
+
+    public function testTimetableGamesWithPlacesDescOrder(): void
+    {
+        $games = TimetableGames('HRN2026', 'season', 'all', 'placesdesc');
+        $this->assertIsArray($games);
+    }
+
+    public function testTimetableGamesWithOnepageOrder(): void
+    {
+        $games = TimetableGames('HRN2026', 'season', 'all', 'onepage');
+        $this->assertIsArray($games);
+    }
+
+    public function testTimetableGamesWithTimeDescOrder(): void
+    {
+        $games = TimetableGames('HRN2026', 'season', 'all', 'timedesc');
+        $this->assertIsArray($games);
+    }
+
+    public function testTimetableGamesWithCrossmatchOrder(): void
+    {
+        $games = TimetableGames('HRN2026', 'season', 'all', 'crossmatch');
+        $this->assertIsArray($games);
+    }
+
+    public function testTimetableGamesWithGroupfilter(): void
+    {
+        // groupfilter != "all" appends AND pr.reservationgroup clause.
+        $groups = TimetableGrouping('HRN2026', 'season', 'all');
+        $group = !empty($groups) ? $groups[0]['reservationgroup'] : 'Harness Invitational 2026';
+        $games = TimetableGames('HRN2026', 'season', 'all', 'time', $group);
+        $this->assertIsArray($games);
+    }
+
+    public function testTimetableGamesWithOnlyPublicFlag(): void
+    {
+        $games = TimetableGames('HRN2026', 'season', 'all', 'time', '', true);
+        $this->assertIsArray($games);
+    }
+
     // --- View functions ---
 
     public function testTournamentViewReturnsHtmlForAllGames(): void
@@ -351,6 +468,85 @@ final class TimetableFunctionsLibTest extends TestCase
     public function testTimetableGroupingReturnsArrayForPool(): void
     {
         $result = TimetableGrouping(200, 'pool', 'past');
+        $this->assertIsArray($result);
+    }
+
+    public function testTimetableGroupingForSeriesFilter(): void
+    {
+        $result = TimetableGrouping(100, 'series', 'all');
+        $this->assertIsArray($result);
+    }
+
+    public function testTimetableGroupingForPoolgroupFilter(): void
+    {
+        $result = TimetableGrouping('200,201', 'poolgroup', 'all');
+        $this->assertIsArray($result);
+    }
+
+    public function testTimetableGroupingForTeamFilter(): void
+    {
+        $result = TimetableGrouping(300, 'team', 'all');
+        $this->assertIsArray($result);
+    }
+
+    public function testTimetableGroupingWithComingTimeFilter(): void
+    {
+        $result = TimetableGrouping('HRN2026', 'season', 'coming');
+        $this->assertIsArray($result);
+    }
+
+    public function testTimetableGroupingWithPlayedTimeFilter(): void
+    {
+        $result = TimetableGrouping('HRN2026', 'season', 'played');
+        $this->assertIsArray($result);
+    }
+
+    public function testTimetableGroupingWithOngoingTimeFilter(): void
+    {
+        $result = TimetableGrouping('HRN2026', 'season', 'ongoing');
+        $this->assertIsArray($result);
+    }
+
+    public function testTimetableGroupingWithComingNotTodayFilter(): void
+    {
+        $result = TimetableGrouping('HRN2026', 'season', 'comingNotToday');
+        $this->assertIsArray($result);
+    }
+
+    public function testTimetableGroupingWithPastNotTodayFilter(): void
+    {
+        $result = TimetableGrouping('HRN2026', 'season', 'pastNotToday');
+        $this->assertIsArray($result);
+    }
+
+    public function testTimetableGroupingWithTodayFilter(): void
+    {
+        $result = TimetableGrouping('HRN2026', 'season', 'today');
+        $this->assertIsArray($result);
+    }
+
+    public function testTimetableGroupingWithTomorrowFilter(): void
+    {
+        $result = TimetableGrouping('HRN2026', 'season', 'tomorrow');
+        $this->assertIsArray($result);
+    }
+
+    public function testTimetableGroupingWithYesterdayFilter(): void
+    {
+        $result = TimetableGrouping('HRN2026', 'season', 'yesterday');
+        $this->assertIsArray($result);
+    }
+
+    public function testTimetableGroupingWithSpecificDateFilter(): void
+    {
+        // Default case: timefilter as a date string
+        $result = TimetableGrouping('HRN2026', 'season', '2026-06-01');
+        $this->assertIsArray($result);
+    }
+
+    public function testTimetableGroupingWithOnlyPublicFlag(): void
+    {
+        $result = TimetableGrouping('HRN2026', 'season', 'all', true);
         $this->assertIsArray($result);
     }
 

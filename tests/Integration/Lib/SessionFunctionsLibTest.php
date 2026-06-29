@@ -31,6 +31,40 @@ final class SessionFunctionsLibTest extends TestCase
         $this->assertTrue(isHttpsRequest());
     }
 
+    public function testIsHttpsRequestReturnsFalseViaBASEURLWhenNoHttpsIndicator(): void
+    {
+        // BASEURL = 'http://127.0.0.1' (test config) → parse_url scheme = 'http' → false.
+        unset($_SERVER['HTTPS']);
+        unset($_SERVER['SERVER_PORT']);
+        $this->assertFalse(isHttpsRequest());
+    }
+
+    public function testIsHttpsRequestReturnsFalseWhenHttpsIsOff(): void
+    {
+        // HTTPS='off' → strtolower !== 'off' is false → falls through to BASEURL check.
+        $_SERVER['HTTPS'] = 'off';
+        unset($_SERVER['SERVER_PORT']);
+        $this->assertFalse(isHttpsRequest());
+        unset($_SERVER['HTTPS']);
+    }
+
+    public function testStartSecureSessionIsIdempotentWhenAlreadyActive(): void
+    {
+        startSecureSession();
+        $this->assertSame(PHP_SESSION_ACTIVE, session_status());
+        // Second call hits the early-return guard.
+        startSecureSession();
+        $this->assertSame(PHP_SESSION_ACTIVE, session_status());
+    }
+
+    public function testDestroySessionCompletelyDoesNothingWhenNotActive(): void
+    {
+        $this->assertNotSame(PHP_SESSION_ACTIVE, session_status());
+        // Should hit the early-return guard (no active session).
+        destroySessionCompletely();
+        $this->assertNotSame(PHP_SESSION_ACTIVE, session_status());
+    }
+
     public function testStartSecureSessionStartsNamedSession(): void
     {
         startSecureSession();

@@ -308,6 +308,10 @@ final class SearchFunctionsLibTest extends TestCase
         $this->assertSame('', PlayerResults());
     }
 
+    // PlayerResults body (lines 659-736) is blocked by a SUT bug:
+    // the query references `email` without joining uo_player_profile, which holds that column.
+    // Trigger path is untestable until the SUT bug is fixed.
+
     // --- ReservationResults ---
 
     public function testReservationResultsReturnsEmptyWhenNoTrigger(): void

@@ -118,6 +118,18 @@ final class SeasonFunctionsLibTest extends TestCase
         $this->assertIsBool(IsSeasonPublicExternal('HRN2026'));
     }
 
+    public function testIsSeasonPublicExternalReturnsFalseForEmptyId(): void
+    {
+        $this->assertFalse(IsSeasonPublicExternal(''));
+        $this->assertFalse(IsSeasonPublicExternal(null));
+    }
+
+    public function testIsSeasonPublicEventReturnsFalseForEmptyId(): void
+    {
+        $this->assertFalse(IsSeasonPublicEvent(''));
+        $this->assertFalse(IsSeasonPublicEvent(null));
+    }
+
     public function testSeasonHomeTeamModeReturnsInt(): void
     {
         $this->assertIsInt(SeasonHomeTeamMode('HRN2026'));
@@ -133,6 +145,16 @@ final class SeasonFunctionsLibTest extends TestCase
     public function testIsSeasonInMaintenanceReturnsBool(): void
     {
         $this->assertIsBool(IsSeasonInMaintenance('HRN2026'));
+    }
+
+    public function testIsSeasonInMaintenanceReturnsFalseForEmptyId(): void
+    {
+        $this->assertFalse(IsSeasonInMaintenance(''));
+    }
+
+    public function testSeasonHomeTeamModeReturnsZeroForUnknownId(): void
+    {
+        $this->assertSame(0, SeasonHomeTeamMode('NOSEASONXYZ9999'));
     }
 
     public function testCanBypassEventMaintenanceReturnsBool(): void
@@ -168,6 +190,12 @@ final class SeasonFunctionsLibTest extends TestCase
     {
         $result = MaintenanceSeasonFromTeam(99999);
         $this->assertTrue($result === null || $result === '');
+    }
+
+    public function testMaintenanceSeasonFromTeamReturnsEmptyForZeroId(): void
+    {
+        // empty(0) === true → early return "" path.
+        $this->assertSame('', MaintenanceSeasonFromTeam(0));
     }
 
     public function testMaintenanceSeasonFromTeamReturnsSeasonForFixtureTeam(): void
@@ -546,5 +574,111 @@ final class SeasonFunctionsLibTest extends TestCase
     {
         $result = CurrentSeason();
         $this->assertSame('HRN2026', $result);
+    }
+
+    public function testCurrentSeasonReturnsSelSeasonWhenSetAndAccessible(): void
+    {
+        // Covers the isset(selseason) && CanAccessSeason(selseason) → return selseason path.
+        $_SESSION['userproperties']['selseason'] = 'HRN2026';
+        try {
+            $this->assertSame('HRN2026', CurrentSeason());
+        } finally {
+            unset($_SESSION['userproperties']['selseason']);
+        }
+    }
+
+    public function testCurrentSeasonReturnsEmptyWhenNoCurrentSeasons(): void
+    {
+        // Covers the CurrentSeasons() empty → return "" path.
+        DBQuery("UPDATE uo_season SET iscurrent=0 WHERE season_id='HRN2026'");
+        ClearSeasonRuntimeCache();
+        try {
+            $result = CurrentSeason();
+            $this->assertSame('', $result);
+        } finally {
+            DBQuery("UPDATE uo_season SET iscurrent=1 WHERE season_id='HRN2026'");
+            ClearSeasonRuntimeCache();
+        }
+    }
+
+    // ---- CurrentSeasonName ----
+
+    public function testCurrentSeasonNameReturnsNameViaSelSeason(): void
+    {
+        $_SESSION['userproperties']['selseason'] = 'HRN2026';
+        try {
+            $name = CurrentSeasonName();
+            $this->assertIsString($name);
+            $this->assertNotEmpty($name);
+        } finally {
+            unset($_SESSION['userproperties']['selseason']);
+        }
+    }
+
+    // ---- SeasonName / Seasontype ----
+
+    public function testSeasonNameReturnsEmptyForUnknownId(): void
+    {
+        $this->assertSame('', SeasonName('NOSEASONXYZ9999'));
+    }
+
+    public function testSeasontypeReturnsEmptyForUnknownId(): void
+    {
+        $this->assertSame('', Seasontype('NOSEASONXYZ9999'));
+    }
+
+    // ---- CanBypassEventMaintenance ----
+
+    public function testCanBypassEventMaintenanceReturnsTrueForSuperAdmin(): void
+    {
+        LegacyApp::loadUserFunctions();
+        LegacyApp::loginAsAdmin();
+        try {
+            $this->assertTrue(CanBypassEventMaintenance('HRN2026'));
+        } finally {
+            $_SESSION = [];
+        }
+    }
+
+    // ---- EnrollSeasons ----
+
+    public function testEnrollSeasonsIncludesSeasonWithEnrollOpenSet(): void
+    {
+        // Temporarily set enrollopen=1 on HRN2026 so the foreach body runs.
+        DBQuery("UPDATE uo_season SET enrollopen=1 WHERE season_id='HRN2026'");
+        ClearSeasonRuntimeCache();
+        try {
+            $result = EnrollSeasons();
+            $this->assertIsArray($result);
+            $this->assertArrayHasKey('HRN2026', $result);
+        } finally {
+            DBQuery("UPDATE uo_season SET enrollopen=0 WHERE season_id='HRN2026'");
+            ClearSeasonRuntimeCache();
+        }
+    }
+
+    // ---- CanAccessSeason ----
+
+    public function testCanAccessSeasonReturnsFalseWhenNotPublicAndNoSession(): void
+    {
+        // No superadmin, no session uid, non-public season → return false path.
+        // Insert a private season via raw SQL (no user.functions.php needed).
+        $tmpId = 'TST' . substr(uniqid(), -7);
+        DBQuery("INSERT INTO uo_season (season_id, name, starttime, endtime, iscurrent, enrollopen, type,
+                  istournament, isinternational, isnationalteams, organizer, category, showspiritpoints,
+                  use_season_points, hide_time_on_scoresheet, event_readonly, api_public, timezone, spiritmode,
+                  public_event)
+                 VALUES ('$tmpId', 'Private Test', '2030-01-01', '2030-12-31', 0, 0, 'outdoor',
+                  0, 0, 0, '', '', 0, 0, 0, 0, 0, 'UTC', 0, 0)");
+        unset($_SESSION['uid'], $_SESSION['userproperties']['userrole']);
+        ClearSeasonRuntimeCache();
+        try {
+            $result = CanAccessSeason($tmpId);
+            $this->assertFalse($result);
+        } finally {
+            DBQuery("DELETE FROM uo_season WHERE season_id='" . DBEscapeString($tmpId) . "'");
+            ClearSeasonRuntimeCache();
+            $_SESSION['userproperties']['locale'] = 'en_GB.utf8';
+        }
     }
 }

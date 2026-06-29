@@ -530,6 +530,97 @@ final class SeriesFunctionsLibTest extends TestCase
         }
     }
 
+    public function testConfirmEnrolledTeamCreatesTeamAndSetsStatus(): void
+    {
+        LegacyApp::loadUserFunctions();
+        LegacyApp::loginAsAdmin();
+        $enrolledId = null;
+        $teamId = null;
+        try {
+            // Insert enrolled team with no club/country → name-based abbreviation path.
+            DBQuery("INSERT INTO uo_enrolledteam (series, userid, name, clubname, countryname, enroll_time, status)
+                     VALUES (100, 'admin', 'HarnessEnroll', NULL, NULL, NOW(), 0)");
+            $enrolledId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+
+            $teamId = ConfirmEnrolledTeam(100, $enrolledId);
+            $this->assertIsInt($teamId);
+            $this->assertGreaterThan(0, $teamId);
+
+            // Enrolled team status should be 1 now.
+            $status = (int) DBQueryToValue("SELECT status FROM uo_enrolledteam WHERE id=$enrolledId");
+            $this->assertSame(1, $status);
+        } finally {
+            if ($teamId !== null) {
+                DBQuery("DELETE FROM uo_team WHERE team_id=$teamId");
+            }
+            if ($enrolledId !== null) {
+                DBQuery("DELETE FROM uo_enrolledteam WHERE id=$enrolledId");
+            }
+            $_SESSION = [];
+        }
+    }
+
+    public function testConfirmEnrolledTeamWithCountryCoversCountryAbbreviation(): void
+    {
+        LegacyApp::loadUserFunctions();
+        LegacyApp::loginAsAdmin();
+        $enrolledId = null;
+        $teamId = null;
+        try {
+            // 'Afghanistan' has country_id=1000, abbreviation='AFG' in uo_country.
+            DBQuery("INSERT INTO uo_enrolledteam (series, userid, name, clubname, countryname, enroll_time, status)
+                     VALUES (100, 'admin', 'HarnessCountry', NULL, 'Afghanistan', NOW(), 0)");
+            $enrolledId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+
+            $teamId = ConfirmEnrolledTeam(100, $enrolledId);
+            $this->assertIsInt($teamId);
+
+            // Team abbreviation should be set from country abbreviation (AFG).
+            $abb = DBQueryToValue("SELECT abbreviation FROM uo_team WHERE team_id=$teamId");
+            $this->assertSame('AFG', $abb);
+        } finally {
+            if ($teamId !== null) {
+                DBQuery("DELETE FROM uo_team WHERE team_id=$teamId");
+            }
+            if ($enrolledId !== null) {
+                DBQuery("DELETE FROM uo_enrolledteam WHERE id=$enrolledId");
+            }
+            $_SESSION = [];
+        }
+    }
+
+    public function testRemoveSeriesEnrolledTeamBySelfWithoutAdminRight(): void
+    {
+        // Covers the !hasEditTeamsRight inner branch (self-delete path).
+        LegacyApp::loadUserFunctions();
+        LegacyApp::loginAsAdmin();
+        $enrolledId = null;
+        try {
+            DBQuery("INSERT INTO uo_enrolledteam (series, userid, name, clubname, countryname, enroll_time, status)
+                     VALUES (100, 'admin', 'SelfDeleteEnroll', NULL, NULL, NOW(), 0)");
+            $enrolledId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+            $_SESSION = [];
+        } finally {
+            // Reset session between setup and the actual test call.
+        }
+
+        // Now act as admin user WITHOUT superadmin right, with matching uid.
+        LegacyApp::loadUserFunctions();
+        $_SESSION['uid'] = 'admin';
+        unset($_SESSION['userproperties']['userrole']['superadmin']);
+        try {
+            RemoveSeriesEnrolledTeam(100, 'admin', $enrolledId);
+            $count = (int) DBQueryToValue("SELECT COUNT(*) FROM uo_enrolledteam WHERE id=$enrolledId");
+            $this->assertSame(0, $count);
+            $enrolledId = null;
+        } finally {
+            if ($enrolledId !== null) {
+                DBQuery("DELETE FROM uo_enrolledteam WHERE id=$enrolledId");
+            }
+            $_SESSION = [];
+        }
+    }
+
     // --- SeriesTeamResponsibles ---
     // Non-season-admin die() branch: untestable per docs/lib-test-deep-coverage.md.
 

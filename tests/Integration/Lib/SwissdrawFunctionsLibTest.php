@@ -490,4 +490,39 @@ final class SwissdrawFunctionsLibTest extends TestCase
             DBQuery(sprintf("DELETE FROM uo_pool WHERE pool_id=%d", $emptyPoolId));
         }
     }
+
+    public function testCheckSwissdrawMovesReturnOneWithTwoMovesNoGames(): void
+    {
+        // Two fresh teams with no games between them → AdjustForDuplicateGames
+        // finds no conflicts → update loop runs → covers lines 118-165.
+        // Uses 2 moves (even count) to avoid the SUT's infinite-loop with odd move counts.
+        $srcId = $this->insertTempPool('SwissSrc');
+        $targetId = $this->insertTempPool('SwissTarget');
+        DBQuery("INSERT INTO uo_team (name, valid, series) VALUES ('SwissA', 1, 100), ('SwissB', 1, 100)");
+        $idA = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+        $idB = $idA + 1;
+        DBQuery("INSERT INTO uo_team_pool (team, pool, rank, activerank) VALUES ($idA, $srcId, 1, 1), ($idB, $srcId, 2, 2)");
+        PoolAddMove($srcId, $targetId, 1, 1, 'R1Pl1');
+        PoolAddMove($srcId, $targetId, 2, 2, 'R1Pl2');
+        try {
+            $result = CheckSwissdrawMoves($targetId);
+            $this->assertSame(1, $result);
+        } finally {
+            DBQuery("DELETE FROM uo_moveteams WHERE topool=$targetId");
+            $schedIds = array_column(DBQueryToArray("SELECT scheduling_id FROM uo_scheduling_name WHERE name IN ('R1Pl1','R1Pl2')"), 'scheduling_id');
+            foreach ($schedIds as $sid) { DBQuery("DELETE FROM uo_scheduling_name WHERE scheduling_id=$sid"); }
+            DBQuery("DELETE FROM uo_team_pool WHERE pool=$srcId");
+            DBQuery("DELETE FROM uo_team WHERE team_id IN ($idA, $idB)");
+            DBQuery("DELETE FROM uo_pool WHERE pool_id IN ($srcId, $targetId)");
+        }
+    }
+
+    private function flushQueryCaches(): void
+    {
+        foreach (['pool_info', 'pool_team', 'db_query_to_value', 'db_query_to_array', 'db_query_to_row', 'db_query_row_count'] as $ns) {
+            if (function_exists('CacheForgetNamespace')) {
+                CacheForgetNamespace($ns);
+            }
+        }
+    }
 }

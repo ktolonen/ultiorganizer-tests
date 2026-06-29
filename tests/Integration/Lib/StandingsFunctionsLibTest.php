@@ -84,6 +84,50 @@ final class StandingsFunctionsLibTest extends TestCase
         $this->assertSame(0, CompareTeamsSwissdraw($a, $a));
     }
 
+    // --- CompareTeamsSwissdraw: else branch (games != 1) ---
+
+    public function testCompareTeamsSwissdrawElseBranchDifferentGamesCount(): void
+    {
+        $more  = ['games' => 3, 'vp' => 2, 'oppvp' => 4, 'score' => 20, 'spirit' => 10];
+        $fewer = ['games' => 2, 'vp' => 2, 'oppvp' => 4, 'score' => 20, 'spirit' => 10];
+        $this->assertSame(-1, CompareTeamsSwissdraw($more, $fewer));
+        $this->assertSame(1, CompareTeamsSwissdraw($fewer, $more));
+    }
+
+    public function testCompareTeamsSwissdrawElseBranchDifferentVP(): void
+    {
+        $better = ['games' => 2, 'vp' => 4, 'oppvp' => 3, 'score' => 20, 'spirit' => 10];
+        $worse  = ['games' => 2, 'vp' => 2, 'oppvp' => 3, 'score' => 20, 'spirit' => 10];
+        $this->assertSame(-1, CompareTeamsSwissdraw($better, $worse));
+    }
+
+    public function testCompareTeamsSwissdrawElseBranchDifferentOppVP(): void
+    {
+        $better = ['games' => 2, 'vp' => 2, 'oppvp' => 5, 'score' => 20, 'spirit' => 10];
+        $worse  = ['games' => 2, 'vp' => 2, 'oppvp' => 3, 'score' => 20, 'spirit' => 10];
+        $this->assertSame(-1, CompareTeamsSwissdraw($better, $worse));
+    }
+
+    public function testCompareTeamsSwissdrawElseBranchDifferentScore(): void
+    {
+        $better = ['games' => 2, 'vp' => 2, 'oppvp' => 3, 'score' => 25, 'spirit' => 10];
+        $worse  = ['games' => 2, 'vp' => 2, 'oppvp' => 3, 'score' => 20, 'spirit' => 10];
+        $this->assertSame(-1, CompareTeamsSwissdraw($better, $worse));
+    }
+
+    public function testCompareTeamsSwissdrawElseBranchDifferentSpirit(): void
+    {
+        $better = ['games' => 2, 'vp' => 2, 'oppvp' => 3, 'score' => 20, 'spirit' => 12];
+        $worse  = ['games' => 2, 'vp' => 2, 'oppvp' => 3, 'score' => 20, 'spirit' => 10];
+        $this->assertSame(-1, CompareTeamsSwissdraw($better, $worse));
+    }
+
+    public function testCompareTeamsSwissdrawElseBranchAllEqualReturnsZero(): void
+    {
+        $a = ['games' => 2, 'vp' => 2, 'oppvp' => 3, 'score' => 20, 'spirit' => 10];
+        $this->assertSame(0, CompareTeamsSwissdraw($a, $a));
+    }
+
     public function testCmpScoreOrdersCorrectly(): void
     {
         $high = ['wins' => 2, 'games' => 2, 'losses' => 0];
@@ -231,6 +275,24 @@ final class StandingsFunctionsLibTest extends TestCase
         $this->assertArrayHasKey('unpublished', $status);
     }
 
+    public function testFinalStandingsSeasonStatusCountsPublishedSeries(): void
+    {
+        // Pre-save complete standings so published++ path is covered.
+        LegacyApp::loadUserFunctions();
+        LegacyApp::loginAsAdmin();
+        try {
+            SaveFinalStandingsOrder('HRN2026', 100, [300, 301]);
+            self::flushQueryCaches();
+
+            $status = FinalStandingsSeasonStatus('HRN2026');
+            $this->assertGreaterThan(0, $status['published']);
+        } finally {
+            DBQuery("DELETE FROM uo_team_final_standing WHERE series=100");
+            self::flushQueryCaches();
+            $_SESSION = [];
+        }
+    }
+
     public function testSeriesFinalStandingsReturnsArray(): void
     {
         $this->assertIsArray(SeriesFinalStandings(100));
@@ -244,6 +306,22 @@ final class StandingsFunctionsLibTest extends TestCase
     public function testSeriesFinalStandingsMapReturnsArray(): void
     {
         $this->assertIsArray(SeriesFinalStandingsMap(100));
+    }
+
+    public function testSeriesFinalStandingsMapCoversDisqualifiedAndElsePaths(): void
+    {
+        // disqualified=1 → standings entry = 0 (line 874)
+        // standing=0 and not disqualified → falls to else → standings entry = index+1 (line 878)
+        DBQuery("INSERT INTO uo_team_final_standing (team_id, series, season, standing, disqualified) VALUES (300, 100, 'HRN2026', 1, 1), (301, 100, 'HRN2026', 0, 0)");
+        self::flushQueryCaches();
+        try {
+            $map = SeriesFinalStandingsMap(100);
+            $this->assertSame(0, $map[300]);
+            $this->assertGreaterThan(0, $map[301]);
+        } finally {
+            DBQuery("DELETE FROM uo_team_final_standing WHERE series=100");
+            self::flushQueryCaches();
+        }
     }
 
     public function testTeamSeriesStandingReturnsIntForFixtureTeam(): void
@@ -282,6 +360,26 @@ final class StandingsFunctionsLibTest extends TestCase
             $this->assertTrue(true);
         } finally {
             $this->dropTeamsCreatedSince($before);
+        }
+    }
+
+    public function testCheckSpecialRankingAppliesRule(): void
+    {
+        // Insert a special ranking rule for pool 200 (frompool=200, fromplacing=1 → torank=2).
+        // Team 300 has activerank=1, so the UPDATE will fire.
+        DBQuery("INSERT INTO uo_specialranking (frompool, fromplacing, torank) VALUES (200, 1, 2)");
+        self::flushQueryCaches();
+        try {
+            CheckSpecialRanking(200);
+            self::flushQueryCaches();
+            // Team 300 should now have activerank=2.
+            $newRank = (int) DBQueryToValue("SELECT activerank FROM uo_team_pool WHERE pool=200 AND team=300");
+            $this->assertSame(2, $newRank);
+        } finally {
+            DBQuery("DELETE FROM uo_specialranking WHERE frompool=200");
+            // Restore team 300 to activerank=1.
+            DBQuery("UPDATE uo_team_pool SET activerank=1 WHERE pool=200 AND team=300");
+            self::flushQueryCaches();
         }
     }
 
@@ -386,6 +484,43 @@ final class StandingsFunctionsLibTest extends TestCase
         $this->assertArrayHasKey('source', $result);
     }
 
+    public function testFinalStandingsAdminOrderUsesManualSourceAndNullSlot(): void
+    {
+        // After saving only team 300 at standing=1, standing=2 slot is null (team_id=0).
+        // Covers: 'manual' source path AND $ordered[] = null path.
+        LegacyApp::loadUserFunctions();
+        LegacyApp::loginAsAdmin();
+        try {
+            SaveFinalStandingsOrder('HRN2026', 100, [300, 0]);
+            self::flushQueryCaches();
+
+            $result = FinalStandingsAdminOrder('HRN2026', 100);
+            $this->assertSame('manual', $result['source']);
+            // Standing-2 slot is null because team 0 is a placeholder.
+            $this->assertNull($result['teams'][1]);
+        } finally {
+            DBQuery("DELETE FROM uo_team_final_standing WHERE series=100");
+            self::flushQueryCaches();
+            $_SESSION = [];
+        }
+    }
+
+    public function testFinalStandingsAdminOrderUsesSeasonPointsSource(): void
+    {
+        // With no manual standings but a season round, the source is 'seasonpoints'.
+        $roundId = 9902;
+        DBQuery("INSERT INTO uo_season_round (round_id, season, series, round_no, name)
+                 VALUES ($roundId, 'HRN2026', 100, 1, 'Season Round')");
+        self::flushQueryCaches();
+        try {
+            $result = FinalStandingsAdminOrder('HRN2026', 100);
+            $this->assertSame('seasonpoints', $result['source']);
+        } finally {
+            DBQuery("DELETE FROM uo_season_round WHERE round_id=$roundId");
+            self::flushQueryCaches();
+        }
+    }
+
     // --- FinalStandingsLiveOrder ---
 
     public function testFinalStandingsLiveOrderReturnsArray(): void
@@ -401,6 +536,25 @@ final class StandingsFunctionsLibTest extends TestCase
         $teams = SeriesTeams(100);
         $order = FinalStandingsSeasonPointsOrder('HRN2026', 100, $teams);
         $this->assertIsArray($order);
+    }
+
+    public function testFinalStandingsSeasonPointsOrderWithRoundDataSortsTeams(): void
+    {
+        // Insert a season round so SeasonPointsRounds returns non-empty, covering the usort body.
+        $roundId = 9901;
+        DBQuery("INSERT INTO uo_season_round (round_id, season, series, round_no, name)
+                 VALUES ($roundId, 'HRN2026', 100, 1, 'Test Round')");
+        self::flushQueryCaches();
+        try {
+            $teams = SeriesTeams(100);
+            $order = FinalStandingsSeasonPointsOrder('HRN2026', 100, $teams);
+            // usort ran, result is array of team_ids
+            $this->assertIsArray($order);
+            $this->assertCount(count($teams), $order);
+        } finally {
+            DBQuery("DELETE FROM uo_season_round WHERE round_id=$roundId");
+            self::flushQueryCaches();
+        }
     }
 
     // --- Admin save functions (require superadmin via isSeasonAdmin; write uo_team_final_standing) ---
@@ -531,6 +685,8 @@ final class StandingsFunctionsLibTest extends TestCase
             self::flushQueryCaches();
             $this->assertTrue(HasCompleteManualFinalStandings(100));
 
+            // Flush before ClearFinalStandingsOrder so SeriesHasArchivedStats sees live uo_team_stats rows.
+            self::flushQueryCaches();
             $result = ClearFinalStandingsOrder('HRN2026', 100);
             $this->assertTrue($result);
             self::flushQueryCaches();
