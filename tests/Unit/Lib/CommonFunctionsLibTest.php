@@ -1496,14 +1496,20 @@ final class CommonFunctionsLibTest extends TestCase
     {
         $origScript = $_SERVER['SCRIPT_NAME'] ?? null;
         $origSelf   = $_SERVER['PHP_SELF'] ?? null;
+        $origPathInfo = $_SERVER['PATH_INFO'] ?? null;
         unset($_SERVER['SCRIPT_NAME'], $_SERVER['PHP_SELF']);
-        // SUT checks $_SERVER['PATH_INFO '] (trailing space — SUT quirk).
-        $_SERVER['PATH_INFO '] = '/path/info.php';
+        // GetScriptName falls back to the real PATH_INFO superglobal (the SUT previously
+        // read a misspelled 'PATH_INFO ' key with a trailing space, so this branch was dead).
+        $_SERVER['PATH_INFO'] = '/path/info.php';
         try {
             $result = GetScriptName();
             $this->assertSame('/path/info.php', $result);
         } finally {
-            unset($_SERVER['PATH_INFO ']);
+            if ($origPathInfo !== null) {
+                $_SERVER['PATH_INFO'] = $origPathInfo;
+            } else {
+                unset($_SERVER['PATH_INFO']);
+            }
             if ($origScript !== null) {
                 $_SERVER['SCRIPT_NAME'] = $origScript;
             }

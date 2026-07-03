@@ -495,7 +495,7 @@ final class SwissdrawFunctionsLibTest extends TestCase
     {
         // Two fresh teams with no games between them → AdjustForDuplicateGames
         // finds no conflicts → update loop runs → covers lines 118-165.
-        // Uses 2 moves (even count) to avoid the SUT's infinite-loop with odd move counts.
+        // (Odd move counts are covered separately below now that the loop terminates on them.)
         $srcId = $this->insertTempPool('SwissSrc');
         $targetId = $this->insertTempPool('SwissTarget');
         DBQuery("INSERT INTO uo_team (name, valid, series) VALUES ('SwissA', 1, 100), ('SwissB', 1, 100)");
@@ -515,6 +515,24 @@ final class SwissdrawFunctionsLibTest extends TestCase
             DBQuery("DELETE FROM uo_team WHERE team_id IN ($idA, $idB)");
             DBQuery("DELETE FROM uo_pool WHERE pool_id IN ($srcId, $targetId)");
         }
+    }
+
+    /**
+     * Regression: AdjustForDuplicateGames stepped by 2 but exited on `!= $stopPos`, so an
+     * ODD number of moves overshot the stop position and looped forever (hang). With empty
+     * $games no reordering happens, so the loop must simply terminate and return true. This
+     * test would hang against the pre-fix SUT; the partner-index bound now stops it safely.
+     */
+    public function testAdjustForDuplicateGamesTerminatesOnOddMoveCount(): void
+    {
+        $movesForward  = [['team_id' => 300], ['team_id' => 301], ['team_id' => 300]];
+        $movesBackward = [['team_id' => 300], ['team_id' => 301], ['team_id' => 300]];
+
+        // No games between anyone → no conflicts → loop just walks the pairs and returns true.
+        $this->assertTrue(AdjustForDuplicateGames($movesForward, [], true));
+        $this->assertTrue(AdjustForDuplicateGames($movesBackward, [], false));
+        // Odd list is left intact (no reordering when there are no games).
+        $this->assertCount(3, $movesForward);
     }
 
     public function testCheckBYEScheduleSwapsTimeSlotFromByeToRealGame(): void
