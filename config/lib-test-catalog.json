@@ -103,7 +103,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "Meets \u226580% line and 100% fn targets. Tests cover comment add/list/delete.",
+      "triage_notes": "Runs unit+integration suites: unit covers function_exists guards (bootstrap_only); integration covers DB-backed paths.",
       "notes": "",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/comment.functions.php"
     },

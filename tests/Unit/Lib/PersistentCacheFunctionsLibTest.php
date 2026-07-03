@@ -5,11 +5,15 @@ declare(strict_types=1);
 use PHPUnit\Framework\TestCase;
 use UltiorganizerHarness\Support\LegacyApp;
 
-// Shims for configuration functions not loaded in bootstrap_only
+// Shims for configuration functions not loaded in bootstrap_only.
+// Mirror the real IsPersistentCacheEnabled (configuration.functions.php) so
+// tests can toggle it by writing $serverConf['PersistentCacheEnabled'].
 if (!function_exists('IsPersistentCacheEnabled')) {
     function IsPersistentCacheEnabled(): bool
     {
-        return true;
+        global $serverConf;
+        return !isset($serverConf['PersistentCacheEnabled'])
+            || $serverConf['PersistentCacheEnabled'] === 'true';
     }
 }
 if (!function_exists('GetPersistentCacheTtlSeconds')) {
@@ -355,5 +359,95 @@ final class PersistentCacheFunctionsLibTest extends TestCase
         CacheWipePersistent();
         $count = CacheWipePersistent();
         $this->assertSame(0, $count);
+    }
+
+    // --- Cache-disabled path (line 32) ---
+
+    public function testCacheRememberForBypassesCacheWhenDisabled(): void
+    {
+        global $serverConf;
+        $prev = $serverConf['PersistentCacheEnabled'] ?? null;
+        $serverConf['PersistentCacheEnabled'] = 'false';
+        try {
+            $calls = 0;
+            $result = CacheRememberFor('uo_unit_disabled', 'k_dis', 10, function () use (&$calls) {
+                $calls++;
+                return 'direct';
+            });
+            $this->assertSame('direct', $result);
+            $this->assertSame(1, $calls);
+        } finally {
+            if ($prev === null) {
+                unset($serverConf['PersistentCacheEnabled']);
+            } else {
+                $serverConf['PersistentCacheEnabled'] = $prev;
+            }
+        }
+    }
+
+    // --- PERSISTENT_CACHE_DIR constant paths (lines 173, 176) ---
+    // Must run in a separate process so we can define the constant fresh.
+
+    /**
+     * @runInSeparateProcess
+     */
+    public function testCacheDirRespectsEmptyPersistentCacheDirConstant(): void
+    {
+        LegacyApp::loadLibFileUsingProfile('persistent-cache.functions.php', 'bootstrap_only');
+        define('PERSISTENT_CACHE_DIR', '');
+        // PersistentCacheDir: PERSISTENT_CACHE_DIR defined (line 173) → empty → null (line 176).
+        $this->assertNull(PersistentCacheFilePath('ns', 'k'));
+        $this->assertSame(['files' => 0, 'bytes' => 0], PersistentCacheStats());
+        $count = CacheWipePersistent();
+        $this->assertSame(0, $count);
+    }
+
+    // --- Null cache-dir paths: block the dir with a file so PersistentCacheDir
+    //     returns null. Must run after all tests that need a working cache dir. ---
+
+    public function testCacheFunctionsHandleNullCacheDir(): void
+    {
+        // Determine the dir PersistentCacheDir() would create in this context
+        // (PERSISTENT_CACHE_DIR undefined → fallback base, instance key = '||').
+        $base = sys_get_temp_dir() . '/ultiorganizer-cache';
+        $dir  = $base . '/' . md5('||');
+
+        // Clear any existing cache files so we can rmdir safely.
+        CacheWipePersistent();
+
+        // Block: delete the hash dir and plant a file in its place.
+        $blocked = false;
+        if (is_dir($dir)) {
+            @rmdir($dir);
+        }
+        if (!is_dir($dir)) {
+            @mkdir($base, 0700, true);
+            if (@touch($dir)) {
+                $blocked = true;
+            }
+        }
+
+        if (!$blocked) {
+            $this->markTestSkipped('Could not block PersistentCacheDir for null-path test');
+        }
+
+        try {
+            // PersistentCacheDir() → is_dir=false, mkdir fails → returns null.
+            // CacheForgetPersistent with null key → hits line 104.
+            CacheForgetPersistent('ns_block');
+            // PersistentCacheStats → hits line 127.
+            $stats = PersistentCacheStats();
+            $this->assertSame(['files' => 0, 'bytes' => 0], $stats);
+            // CacheWipePersistent → hits line 150.
+            $count = CacheWipePersistent();
+            $this->assertSame(0, $count);
+            // CacheRememberFor → PersistentCacheFilePath returns null → line 38.
+            $result = CacheRememberFor('ns_block', 'k', 10, fn() => 'fallback');
+            $this->assertSame('fallback', $result);
+        } finally {
+            // Restore: remove the blocking file, recreate the cache dir.
+            @unlink($dir);
+            @mkdir($dir, 0700, true);
+        }
     }
 }

@@ -21,7 +21,7 @@ MATRIX_CONFIG = ROOT / "config" / "matrix.json"
 LIB_TEST_CATALOG = ROOT / "config" / "lib-test-catalog.json"
 LOCK_PATH = ROOT / ".runtime" / "harness.lock"
 SIBLING_DEFAULT_SUT_PATH = (ROOT.parent / "ultiorganizer").resolve()
-COVERAGE_TARGETS = {"line_pct": 80, "function_pct": 100}
+COVERAGE_TARGETS = {"line_pct": 90, "function_pct": 100}
 REQUIRED_SUT_PATHS = [
     "index.php",
     "lib/database.php",

@@ -206,6 +206,26 @@ final class ImageFunctionsLibTest extends TestCase
         $this->assertFalse(CreateThumb('/tmp/uo_missing_xyz.png', $this->tmp('.jpg'), 20, 20));
     }
 
+    public function testConvertToJpegReturnsFalseForUnsupportedImageType(): void
+    {
+        // BMP (type 6) is recognised by getimagesize but not by CanReadImageType → line 121.
+        $src = $this->tmp('.bmp');
+        $img = imagecreatetruecolor(4, 4);
+        imagebmp($img, $src);
+        imagedestroy($img);
+        $this->assertFalse(ConvertToJpeg($src, $this->tmp('.jpg')));
+    }
+
+    public function testCreateThumbReturnsFalseForUnsupportedImageType(): void
+    {
+        // BMP (type 6): getimagesize succeeds, CanReadImageType returns false → line 168.
+        $src = $this->tmp('.bmp');
+        $img = imagecreatetruecolor(4, 4);
+        imagebmp($img, $src);
+        imagedestroy($img);
+        $this->assertFalse(CreateThumb($src, $this->tmp('.jpg'), 20, 20));
+    }
+
     // --- RemoveImage ---
     // Non-superadmin branch calls die() — untestable in-process per docs/lib-test-deep-coverage.md.
 

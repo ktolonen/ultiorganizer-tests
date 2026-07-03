@@ -46,6 +46,18 @@ final class ClubFunctionsLibTest extends TestCase
         LegacyApp::closeDatabaseConnection();
     }
 
+    private static function flushQueryCaches(): void
+    {
+        foreach (['db_query_value', 'db_query_array', 'db_query_row', 'db_query_rowcount'] as $ns) {
+            if (function_exists('CacheForgetPersistent')) {
+                CacheForgetPersistent($ns);
+            }
+            if (function_exists('CacheForgetNamespace')) {
+                CacheForgetNamespace($ns);
+            }
+        }
+    }
+
     /** Insert a club directly and register for cleanup. Returns the club_id. */
     private function insertClub(string $name, int $valid = 1): int
     {
@@ -385,5 +397,102 @@ final class ClubFunctionsLibTest extends TestCase
             sprintf("SELECT COUNT(*) FROM uo_urls WHERE url_id=%d", $urlId)
         );
         $this->assertSame(0, $count);
+    }
+
+    // --- RemoveClubProfileImage: covers unlink paths when files exist ---
+
+    public function testRemoveClubProfileImageUnlinksExistingFiles(): void
+    {
+        $id = $this->insertClub('Unlink Image Club');
+        $imgname = 'harness_test_' . $id . '.jpg';
+        $uploadDir = constant('UPLOAD_DIR');
+        $clubDir   = $uploadDir . "clubs/$id/";
+        $thumbDir  = $clubDir . "thumbs/";
+
+        // Create fake image files so is_file() returns true.
+        mkdir($thumbDir, 0777, true);
+        file_put_contents($thumbDir . $imgname, 'fake-thumb');
+        file_put_contents($clubDir . $imgname, 'fake-image');
+
+        DBQuery(sprintf(
+            "UPDATE uo_club SET profile_image='%s' WHERE club_id=%d",
+            DBEscapeString($imgname),
+            $id
+        ));
+        self::flushQueryCaches();
+
+        try {
+            RemoveClubProfileImage(300, $id);
+            $this->assertFileDoesNotExist($thumbDir . $imgname);
+            $this->assertFileDoesNotExist($clubDir . $imgname);
+            $info = ClubInfo($id);
+            $this->assertNull($info['profile_image']);
+        } finally {
+            foreach ([$thumbDir . $imgname, $clubDir . $imgname] as $f) {
+                if (is_file($f)) {
+                    unlink($f);
+                }
+            }
+            foreach ([$thumbDir, $clubDir] as $d) {
+                if (is_dir($d)) {
+                    @rmdir($d);
+                }
+            }
+        }
+    }
+
+    // --- UploadClubImage: happy path with a real JPEG created via GD ---
+
+    public function testUploadClubImageSucceedsWithRealJpeg(): void
+    {
+        if (!function_exists('imagecreatetruecolor')) {
+            $this->markTestSkipped('GD extension required');
+        }
+
+        $id = $this->insertClub('Real JPEG Upload Club');
+
+        // Create a minimal JPEG in a temp file.
+        $tmpFile = tempnam(sys_get_temp_dir(), 'uo_harness_club_');
+        $img = imagecreatetruecolor(10, 10);
+        imagejpeg($img, $tmpFile);
+        imagedestroy($img);
+
+        $_FILES['picture'] = [
+            'size'     => filesize($tmpFile),
+            'type'     => 'image/jpeg',
+            'tmp_name' => $tmpFile,
+            'error'    => UPLOAD_ERR_OK,
+        ];
+
+        $uploadDir = constant('UPLOAD_DIR');
+        $clubDir   = $uploadDir . "clubs/$id/";
+
+        try {
+            $result = UploadClubImage(300, $id);
+            $this->assertSame('', $result);
+
+            // Confirm DB was updated.
+            self::flushQueryCaches();
+            $info = ClubInfo($id);
+            $this->assertNotNull($info['profile_image']);
+        } finally {
+            unset($_FILES['picture']);
+            if (is_file($tmpFile)) {
+                unlink($tmpFile);
+            }
+            // Remove all uploaded files created by the function.
+            if (is_dir($clubDir)) {
+                foreach (glob($clubDir . 'thumbs/*') ?: [] as $f) {
+                    unlink($f);
+                }
+                foreach (glob($clubDir . '*') ?: [] as $f) {
+                    if (is_file($f)) {
+                        unlink($f);
+                    }
+                }
+                @rmdir($clubDir . 'thumbs/');
+                @rmdir($clubDir);
+            }
+        }
     }
 }

@@ -1024,4 +1024,301 @@ final class TeamFunctionsLibTest extends TestCase
         $result = TeamListAll(false, false, '#');
         $this->assertNotFalse($result);
     }
+
+    public function testTeamListAllGroupedWithPlainNamefilterCoversUppercaseLikeBranch(): void
+    {
+        // grouped=true + non-empty, non-#, non-ALL namefilter → line 118 LIKE branch
+        $result = TeamListAll(true, false, 'Helsinki');
+        $this->assertNotFalse($result);
+    }
+
+    public function testTeamPoolGamesLeftReturnsEmptyArrayForZeroTeamId(): void
+    {
+        $this->assertSame([], TeamPoolGamesLeft(0, 200));
+        $this->assertSame([], TeamPoolGamesLeft(-1, 0));
+    }
+
+    public function testTeamGamesWithDefenseStatsEnabledCoversDefenseStringBranch(): void
+    {
+        global $serverConf;
+        $serverConf['ShowDefenseStats'] = 'true';
+        $result = TeamGames(300);
+        $this->assertNotFalse($result);
+        $serverConf['ShowDefenseStats'] = 'false';
+    }
+
+    public function testTeamScoreBoardArrayWithStringPoolsCoversExplodeBranch(): void
+    {
+        // String pools → line 810: $pools = explode(",", (string) $pools)
+        $result = TeamScoreBoardArray(300, '200', 'total', null);
+        $this->assertIsArray($result);
+    }
+
+    public function testTeamScoreBoardArrayWithUnknownSortCoversDefaultCase(): void
+    {
+        // Unrecognised sort → default case (lines 921-922)
+        $result = TeamScoreBoardArray(300, [200], 'UNKNOWN_SORT_XYZ', null);
+        $this->assertIsArray($result);
+    }
+
+    public function testTeamScoreBoardWithDefensesStringPoolsCoversExplodeBranch(): void
+    {
+        // String pools → line 942: $pools = explode(...)
+        $result = TeamScoreBoardWithDefenses(300, '200', 'total', null);
+        $this->assertNotFalse($result);
+    }
+
+    public function testTeamScoreBoardWithDefensesUnknownSortCoversDefaultCase(): void
+    {
+        // Unrecognised sort → default case (lines 1047-1048)
+        $result = TeamScoreBoardWithDefenses(300, [200], 'UNKNOWN_SORT_XYZ', null);
+        $this->assertNotFalse($result);
+    }
+
+    public function testAddPlayerWithExistingProfileIdCoversProfileLookupBranch(): void
+    {
+        // AddPlayer with non-empty profileId → lines 1221-1222
+        $this->loadPlayerStack();
+        $profileId = null;
+        $playerId = null;
+        try {
+            $profileId = (int) DBQueryInsert(
+                "INSERT INTO uo_player_profile (firstname, lastname, num) VALUES ('Harness', 'ProfileTest', 0)"
+            );
+            $playerId = (int) AddPlayer(300, 'Harness', 'ProfileTest', $profileId, 99);
+            $this->assertGreaterThan(0, $playerId);
+        } finally {
+            if ($playerId !== null && $playerId > 0) {
+                DBQuery("DELETE FROM uo_player WHERE player_id=$playerId");
+            }
+            if ($profileId !== null && $profileId > 0) {
+                DBQuery("DELETE FROM uo_player_profile WHERE profile_id=$profileId");
+            }
+            self::flushQueryCaches();
+            $_SESSION = [];
+        }
+    }
+
+    public function testAddPlayerWithExistingProfileByNameCoversLookupPath(): void
+    {
+        // AddPlayer with no profileId but existing profile → lines 1230-1232
+        $this->loadPlayerStack();
+        $profileId = null;
+        $playerId = null;
+        try {
+            $profileId = (int) DBQueryInsert(
+                "INSERT INTO uo_player_profile (firstname, lastname, num) VALUES ('Harness', 'ExistingLookup', 0)"
+            );
+            // profileId=null, but name matches existing profile → FindExistingPlayerProfileId fires
+            $playerId = (int) AddPlayer(300, 'Harness', 'ExistingLookup', null, 98);
+            $this->assertGreaterThan(0, $playerId);
+        } finally {
+            if ($playerId !== null && $playerId > 0) {
+                DBQuery("DELETE FROM uo_player WHERE player_id=$playerId");
+            }
+            if ($profileId !== null && $profileId > 0) {
+                DBQuery("DELETE FROM uo_player_profile WHERE profile_id=$profileId");
+            }
+            self::flushQueryCaches();
+            $_SESSION = [];
+        }
+    }
+
+    public function testAddTeamWithRegIdCoversRegIdBranch(): void
+    {
+        LegacyApp::loadUserFunctions();
+        LegacyApp::loginAsAdmin();
+        $teamId = null;
+        try {
+            $teamId = (int) AddTeam([
+                'name' => 'RegId Team', 'pool' => null, 'rank' => 1, 'valid' => 1,
+                'series' => 100, 'country' => 0, 'club' => null,
+                'abbreviation' => 'RIT', 'reg_id' => '12345',
+            ]);
+            $this->assertGreaterThan(0, $teamId);
+            self::flushQueryCaches();
+            $regId = DBQueryToValue("SELECT reg_id FROM uo_team WHERE team_id=$teamId");
+            $this->assertSame('12345', $regId);
+        } finally {
+            if ($teamId !== null) {
+                DBQuery("DELETE FROM uo_team WHERE team_id=$teamId");
+            }
+            self::flushQueryCaches();
+            $_SESSION = [];
+        }
+    }
+
+    public function testAddTeamWithCountryMinusOneCoversNullCountryBranch(): void
+    {
+        LegacyApp::loadUserFunctions();
+        LegacyApp::loginAsAdmin();
+        $teamId = null;
+        try {
+            $teamId = (int) AddTeam([
+                'name' => 'NullCountry Team', 'pool' => null, 'rank' => 1, 'valid' => 1,
+                'series' => 100, 'country' => -1, 'club' => null, 'abbreviation' => 'NCT',
+            ]);
+            $this->assertGreaterThan(0, $teamId);
+            self::flushQueryCaches();
+            $country = DBQueryToValue("SELECT country FROM uo_team WHERE team_id=$teamId");
+            $this->assertNull($country);
+        } finally {
+            if ($teamId !== null) {
+                DBQuery("DELETE FROM uo_team WHERE team_id=$teamId");
+            }
+            self::flushQueryCaches();
+            $_SESSION = [];
+        }
+    }
+
+    public function testAddTeamWithClubCoversClubUpdateBranch(): void
+    {
+        LegacyApp::loadUserFunctions();
+        LegacyApp::loginAsAdmin();
+        $teamId = null;
+        $clubId = null;
+        try {
+            $clubId = (int) DBQueryInsert("INSERT INTO uo_club (name, country) VALUES ('HarnessClub', 1064)");
+            $teamId = (int) AddTeam([
+                'name' => 'Club Team', 'pool' => null, 'rank' => 1, 'valid' => 1,
+                'series' => 100, 'country' => 0, 'club' => $clubId, 'abbreviation' => 'CLT',
+            ]);
+            $this->assertGreaterThan(0, $teamId);
+            self::flushQueryCaches();
+            $storedClub = DBQueryToValue("SELECT club FROM uo_team WHERE team_id=$teamId");
+            $this->assertSame((string) $clubId, $storedClub);
+        } finally {
+            if ($teamId !== null) {
+                DBQuery("DELETE FROM uo_team WHERE team_id=$teamId");
+            }
+            if ($clubId !== null) {
+                DBQuery("DELETE FROM uo_club WHERE club_id=$clubId");
+            }
+            self::flushQueryCaches();
+            $_SESSION = [];
+        }
+    }
+
+    public function testSetTeamReturnsFalseForNonExistentTeamId(): void
+    {
+        // TeamInfo returns false → SetTeam returns false at line 1492
+        $result = SetTeam(['team_id' => 999999, 'name' => 'Ghost', 'pool' => null,
+            'rank' => 1, 'valid' => 1, 'series' => 100, 'country' => 0, 'club' => null]);
+        $this->assertFalse($result);
+    }
+
+    public function testSetTeamWithClubCoversClubUpdateBranch(): void
+    {
+        LegacyApp::loadUserFunctions();
+        LegacyApp::loginAsAdmin();
+        $teamId = null;
+        $clubId = null;
+        try {
+            $clubId = (int) DBQueryInsert("INSERT INTO uo_club (name, country) VALUES ('SetTeamClub', 1064)");
+            $teamId = (int) AddTeam([
+                'name' => 'SetClub Team', 'pool' => null, 'rank' => 1, 'valid' => 1,
+                'series' => 100, 'country' => 0, 'club' => null, 'abbreviation' => 'SCT',
+            ]);
+            $result = SetTeam([
+                'team_id' => $teamId, 'name' => 'SetClub Team', 'pool' => null,
+                'abbreviation' => 'SCT', 'rank' => 1, 'valid' => 1,
+                'series' => 100, 'country' => 0, 'club' => $clubId,
+            ]);
+            $this->assertNotFalse($result);
+            self::flushQueryCaches();
+            $storedClub = DBQueryToValue("SELECT club FROM uo_team WHERE team_id=$teamId");
+            $this->assertSame((string) $clubId, $storedClub);
+        } finally {
+            if ($teamId !== null) {
+                DBQuery("DELETE FROM uo_team WHERE team_id=$teamId");
+            }
+            if ($clubId !== null) {
+                DBQuery("DELETE FROM uo_club WHERE club_id=$clubId");
+            }
+            self::flushQueryCaches();
+            $_SESSION = [];
+        }
+    }
+
+    public function testDeleteTeamReturnsFalseWhenTeamHasPlayers(): void
+    {
+        // Team 300 has players → CanDeleteTeam(300) = false → DeleteTeam returns false (line 1658)
+        LegacyApp::loadUserFunctions();
+        LegacyApp::loginAsAdmin();
+        try {
+            $result = DeleteTeam(300);
+            $this->assertFalse($result);
+        } finally {
+            $_SESSION = [];
+        }
+    }
+
+    public function testCanDeleteTeamReturnsFalseWithoutAdminRights(): void
+    {
+        // No admin session → hasEditTeamsRight = false → CanDeleteTeam returns false (line 1715)
+        LegacyApp::loadUserFunctions();
+        $result = CanDeleteTeam(300);
+        $this->assertFalse($result);
+        $_SESSION = [];
+    }
+
+    private function poolInsertSql(int $poolId, string $name): string
+    {
+        return "INSERT INTO uo_pool (pool_id, name, ordering, visible, continuingpool, placementpool, series, type, teams, mvgames, timeoutlen, halftime, winningscore, timecap, scorecap, played, addscore, halftimescore, timeouts, timeoutsper, timeoutsovertime, timeoutstimecap, betweenpointslen, forfeitscore, forfeitagainst, drawsallowed, follower) VALUES ($poolId, '$name', 99, 0, 0, 0, 100, 1, 2, 0, 70, 35, 15, NULL, NULL, 0, NULL, NULL, 2, 'half', 1, 'soft', 90, 15, 0, 0, NULL)";
+    }
+
+    public function testTeamMoveExecutesMainInsertionPath(): void
+    {
+        // ismoved=0: covers TeamMove main body lines 469,473,477,522-590
+        LegacyApp::loadLibFilesUsingProfile(['standings.functions.php'], 'database_only');
+        $fromPool = 9600; $toPool = 9601; $teamId = 9700;
+        DBQuery($this->poolInsertSql($fromPool, 'TM_From'));
+        DBQuery($this->poolInsertSql($toPool, 'TM_To'));
+        DBQuery("INSERT INTO uo_team (team_id, name, valid, series) VALUES ($teamId, 'Move Team', 1, 100)");
+        DBQuery("INSERT INTO uo_team_pool (team, pool, rank, activerank) VALUES ($teamId, $fromPool, 1, 1)");
+        DBQuery("INSERT INTO uo_moveteams (frompool, fromplacing, topool, torank, ismoved, scheduling_id) VALUES ($fromPool, 1, $toPool, 1, 0, NULL)");
+        try {
+            TeamMove($teamId, $fromPool, false);
+            self::flushQueryCaches();
+            $poolNow = DBQueryToValue("SELECT pool FROM uo_team WHERE team_id=$teamId");
+            $this->assertSame((string) $toPool, $poolNow);
+            $inToPool = DBQueryToValue("SELECT team FROM uo_team_pool WHERE pool=$toPool AND team=$teamId");
+            $this->assertSame((string) $teamId, $inToPool);
+            $isMoved = DBQueryToValue("SELECT ismoved FROM uo_moveteams WHERE frompool=$fromPool AND fromplacing=1");
+            $this->assertSame('1', $isMoved);
+        } finally {
+            DBQuery("DELETE FROM uo_moveteams WHERE frompool=$fromPool");
+            DBQuery("DELETE FROM uo_team_pool WHERE pool IN ($fromPool,$toPool) AND team=$teamId");
+            DBQuery("UPDATE uo_team SET pool=NULL WHERE team_id=$teamId");
+            DBQuery("DELETE FROM uo_team WHERE team_id=$teamId");
+            DBQuery("DELETE FROM uo_pool WHERE pool_id IN ($fromPool,$toPool)");
+            self::flushQueryCaches();
+        }
+    }
+
+    public function testTeamMoveWithIsmovedAndSameTeamAtDestinationReturnsEarly(): void
+    {
+        // ismoved=1 + same team already at topool rank → early return (lines 479-491)
+        LegacyApp::loadLibFilesUsingProfile(['standings.functions.php'], 'database_only');
+        $fromPool = 9602; $toPool = 9603; $teamId = 9701;
+        DBQuery($this->poolInsertSql($fromPool, 'TM_From2'));
+        DBQuery($this->poolInsertSql($toPool, 'TM_To2'));
+        DBQuery("INSERT INTO uo_team (team_id, name, valid, series) VALUES ($teamId, 'Move Team2', 1, 100)");
+        DBQuery("INSERT INTO uo_team_pool (team, pool, rank, activerank) VALUES ($teamId, $fromPool, 1, 1)");
+        DBQuery("INSERT INTO uo_team_pool (team, pool, rank, activerank) VALUES ($teamId, $toPool, 1, 1)");
+        DBQuery("INSERT INTO uo_moveteams (frompool, fromplacing, topool, torank, ismoved, scheduling_id) VALUES ($fromPool, 1, $toPool, 1, 1, NULL)");
+        try {
+            TeamMove($teamId, $fromPool, false);
+            self::flushQueryCaches();
+            // early return: team still shows its original pool (team table unchanged)
+            $inFromPool = DBQueryToValue("SELECT team FROM uo_team_pool WHERE pool=$fromPool AND team=$teamId");
+            $this->assertSame((string) $teamId, $inFromPool);
+        } finally {
+            DBQuery("DELETE FROM uo_moveteams WHERE frompool=$fromPool");
+            DBQuery("DELETE FROM uo_team_pool WHERE pool IN ($fromPool,$toPool) AND team=$teamId");
+            DBQuery("DELETE FROM uo_team WHERE team_id=$teamId");
+            DBQuery("DELETE FROM uo_pool WHERE pool_id IN ($fromPool,$toPool)");
+            self::flushQueryCaches();
+        }
+    }
 }

@@ -116,4 +116,40 @@ final class CommentFunctionsLibTest extends TestCase
     {
         $this->assertSame(0, SpiritCommentTypeForTeam([], 10));
     }
+
+    // bootstrap_only profile: hasEditGameEventsRight, isLoggedIn, hasEditPlayersRight,
+    // HasFullGameSpiritEditRight, Log1 are all undefined → function_exists guards fire.
+
+    public function testCanCreateGameCommentReturnsFalseWhenRequiredFunctionsUndefined(): void
+    {
+        $this->assertFalse(CanCreateGameComment(700));
+    }
+
+    public function testCanCreateSpiritCommentReturnsFalseWhenRequiredFunctionsUndefined(): void
+    {
+        $gameResult = ['hometeam' => 300, 'visitorteam' => 301, 'game_id' => 700];
+        $this->assertFalse(CanCreateSpiritComment($gameResult, 300));
+    }
+
+    public function testCanManageGameCommentReturnsFalseWhenRequiredFunctionsUndefined(): void
+    {
+        $this->assertFalse(CanManageGameComment(700, COMMENT_TYPE_GAME));
+    }
+
+    public function testCanManageSpiritCommentReturnsFalseWhenRequiredFunctionsUndefined(): void
+    {
+        $this->assertFalse(CanManageSpiritComment(700, COMMENT_TYPE_SPIRIT_HOME));
+    }
+
+    public function testLogGameCommentEventDoesNotCrashWhenLog1Undefined(): void
+    {
+        if (function_exists('Log1')) {
+            // Log1 was defined by a prior test (auth.guard loads user.functions.php
+            // transitively). The unit-bootstrap path is already covered in the
+            // integration suite; skip rather than crash on DBEscapeString.
+            $this->markTestSkipped('Log1 already defined by prior test in this process');
+        }
+        LogGameCommentEvent(700, COMMENT_TYPE_GAME, 'comment_create');
+        $this->assertTrue(true);
+    }
 }

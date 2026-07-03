@@ -169,6 +169,21 @@ final class CommentFunctionsLibTest extends TestCase
         $this->assertSame('', $meta['updated_at']);
     }
 
+    public function testGameCommentMetaBuildsCreateCutoffAfterDeleteEvent(): void
+    {
+        // Insert a delete event then a create event. The delete event triggers
+        // the cutoffSql branch (line 105) so only creates after the delete count.
+        DBQuery("DELETE FROM uo_event_log WHERE category='game' AND source='comments' AND id1='700' AND id2='game'");
+        LogGameCommentEvent(700, COMMENT_TYPE_GAME, 'comment_delete');
+        LogGameCommentEvent(700, COMMENT_TYPE_GAME, 'comment_create');
+        try {
+            $meta = GameCommentMeta(700, COMMENT_TYPE_GAME);
+            $this->assertIsArray($meta);
+        } finally {
+            DBQuery("DELETE FROM uo_event_log WHERE category='game' AND source='comments' AND id1='700' AND id2='game'");
+        }
+    }
+
     // --- CommentMetaHtml ---
 
     public function testCommentMetaHtmlReturnsEmptyWhenNoData(): void
@@ -250,6 +265,28 @@ final class CommentFunctionsLibTest extends TestCase
         $this->assertFalse(CanManageGameComment(700, COMMENT_TYPE_GAME));
     }
 
+    public function testCanManageGameCommentReturnsTrueForSuperAdmin(): void
+    {
+        // game.functions.php defines GameRespTeam/GameSeries needed by
+        // hasEditGameEventsRight; load it before calling with a logged-in user.
+        LegacyApp::requireTopLevelLib('game.functions.php');
+        // Superadmin: hasEditGameEventsRight(700) returns true → early return true.
+        $this->assertTrue(CanManageGameComment(700, COMMENT_TYPE_GAME));
+    }
+
+    public function testCanManageGameCommentReturnsExpectedForNonAdminUser(): void
+    {
+        // game.functions.php defines GameRespTeam/GameSeries needed by
+        // hasEditGameEventsRight; load it before calling with a logged-in user.
+        LegacyApp::requireTopLevelLib('game.functions.php');
+        // Regular logged-in user: not superadmin, not game admin.
+        // hasEditGameEventsRight(700) → false → falls through to GameCommentMeta check.
+        $_SESSION['userproperties']['userrole'] = [];
+        $result = CanManageGameComment(700, COMMENT_TYPE_GAME);
+        $this->assertIsBool($result);
+        $_SESSION['userproperties']['userrole']['superadmin'] = true;
+    }
+
     // --- CanManageSpiritComment ---
     // For superadmin, HasFullGameSpiritEditRight returns true via hasSpiritEditRight
     // (which checks isSuperAdmin) without calling GameSeries, making it safe.
@@ -264,6 +301,20 @@ final class CommentFunctionsLibTest extends TestCase
     {
         // HasFullGameSpiritEditRight(700): superadmin → hasSpiritEditRight → true.
         $this->assertTrue(CanManageSpiritComment(700, COMMENT_TYPE_SPIRIT_HOME));
+    }
+
+    public function testCanManageSpiritCommentCoversSpiritTeamCheckForNonAdmin(): void
+    {
+        // game.functions.php defines GameSeries used by HasFullGameSpiritEditRight,
+        // and GameRespTeam used by hasEditGameEventsRight inside CanManageGameComment.
+        LegacyApp::requireTopLevelLib('game.functions.php');
+        // Non-superadmin logged-in user: HasFullGameSpiritEditRight returns false,
+        // so the function falls through to the SpiritTeamIdForCommentType check
+        // (lines 253-259) and then delegates to CanManageGameComment (lines 235-239).
+        $_SESSION['userproperties']['userrole'] = [];
+        $result = CanManageSpiritComment(700, COMMENT_TYPE_SPIRIT_HOME);
+        $this->assertIsBool($result);
+        $_SESSION['userproperties']['userrole']['superadmin'] = true;
     }
 
     // --- LogGameCommentEvent ---

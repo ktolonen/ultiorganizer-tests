@@ -517,6 +517,70 @@ final class SwissdrawFunctionsLibTest extends TestCase
         }
     }
 
+    public function testCheckBYEScheduleSwapsTimeSlotFromByeToRealGame(): void
+    {
+        // Set up: 1 BYE game (valid=2 team) with a time, 1 real game without a time.
+        // The query returns exactly 2 rows ordered by time (NULL last):
+        //   row1 = real game (time=NULL, sorted first)
+        //   row2 = BYE game (time set)
+        // CheckBYESchedule swaps the slot, covering lines 442-467 (except die() at 456).
+        $poolId = 9400;
+        $byeTeamId = 9500;
+        $byeGameId = 9900;
+        $realGameId = 9901;
+        DBQuery("INSERT INTO uo_pool (pool_id, name, ordering, visible, continuingpool, placementpool, series, type, teams, mvgames, timeoutlen, halftime, winningscore, timecap, scorecap, played, addscore, halftimescore, timeouts, timeoutsper, timeoutsovertime, timeoutstimecap, betweenpointslen, forfeitscore, forfeitagainst, drawsallowed, follower)
+                 VALUES ($poolId, 'BYE Pool', '98', 0, 0, 0, 100, 3, 2, 0, 70, 35, 15, NULL, NULL, 0, NULL, NULL, 2, 'half', 1, 'soft', 90, 15, 0, 0, NULL)");
+        DBQuery("INSERT INTO uo_team (team_id, name, valid, series) VALUES ($byeTeamId, 'BYE', 2, 100)");
+        // BYE game: byeTeam (home, valid=2) vs real team 300 (visitor, valid=1), has a time slot.
+        // Reservation 500 exists in fixture; needed because reservation is an integer column —
+        // DBEscapeString(NULL)='' would fail an integer column if we used NULL here.
+        DBQuery("INSERT INTO uo_game (game_id, hometeam, visitorteam, time, reservation, valid, isongoing, hasstarted)
+                 VALUES ($byeGameId, $byeTeamId, 300, '2026-06-01 10:00:00', 500, 1, 0, 0)");
+        DBQuery("INSERT INTO uo_game_pool (game, pool, timetable) VALUES ($byeGameId, $poolId, 1)");
+        // Real game: 300 (valid=1) vs 301 (valid=1), no time slot yet.
+        DBQuery("INSERT INTO uo_game (game_id, hometeam, visitorteam, time, reservation, valid, isongoing, hasstarted)
+                 VALUES ($realGameId, 300, 301, NULL, NULL, 1, 0, 0)");
+        DBQuery("INSERT INTO uo_game_pool (game, pool, timetable) VALUES ($realGameId, $poolId, 1)");
+        try {
+            ob_start();
+            CheckBYESchedule($poolId);
+            $output = ob_get_clean();
+            $this->assertStringContainsString('Spots swapped', $output);
+        } finally {
+            DBQuery("DELETE FROM uo_game_pool WHERE pool=$poolId");
+            DBQuery("DELETE FROM uo_game WHERE game_id IN ($byeGameId, $realGameId)");
+            DBQuery("DELETE FROM uo_team WHERE team_id=$byeTeamId");
+            DBQuery("DELETE FROM uo_pool WHERE pool_id=$poolId");
+        }
+    }
+
+    public function testGenerateSwissdrawPoolsWithGenerateTrueCreatesNewPool(): void
+    {
+        // generate=true, rounds=2 → the for loop body (lines 348-363) runs once,
+        // creating a new continuation pool with moves and games.
+        // Session already has superadmin → hasEditTeamsRight returns true.
+        $pools = GenerateSwissdrawPools(200, 2, true);
+        $this->assertIsArray($pools);
+        $this->assertCount(1, $pools);
+        $newPoolId = (int) $pools[0]['pool_id'];
+        // Clean up everything created by GenerateSwissdrawPools.
+        $gameIds = array_column(
+            DBQueryToArray("SELECT game FROM uo_game_pool WHERE pool=$newPoolId"),
+            'game'
+        );
+        DBQuery("DELETE FROM uo_game_pool WHERE pool=$newPoolId");
+        if (!empty($gameIds)) {
+            $idList = implode(',', array_map('intval', $gameIds));
+            DBQuery("DELETE FROM uo_game WHERE game_id IN ($idList)");
+        }
+        $moveRows = DBQueryToArray("SELECT scheduling_id FROM uo_moveteams WHERE topool=$newPoolId");
+        DBQuery("DELETE FROM uo_moveteams WHERE topool=$newPoolId");
+        foreach ($moveRows as $row) {
+            DBQuery("DELETE FROM uo_scheduling_name WHERE scheduling_id=" . (int) $row['scheduling_id']);
+        }
+        DBQuery("DELETE FROM uo_pool WHERE pool_id=$newPoolId");
+    }
+
     private function flushQueryCaches(): void
     {
         foreach (['pool_info', 'pool_team', 'db_query_to_value', 'db_query_to_array', 'db_query_to_row', 'db_query_row_count'] as $ns) {

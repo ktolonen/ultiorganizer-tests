@@ -12,6 +12,18 @@ final class DatabaseLibTest extends TestCase
 
     private ?int $insertedUrlId = null;
 
+    private static function flushQueryCaches(): void
+    {
+        foreach (['db_query_value', 'db_query_array', 'db_query_row', 'db_query_rowcount'] as $ns) {
+            if (function_exists('CacheForgetPersistent')) {
+                CacheForgetPersistent($ns);
+            }
+            if (function_exists('CacheForgetNamespace')) {
+                CacheForgetNamespace($ns);
+            }
+        }
+    }
+
     protected function setUp(): void
     {
         LegacyApp::resetRequestState();
@@ -598,5 +610,199 @@ final class DatabaseLibTest extends TestCase
         // The fixture DB schema is current; CheckDB scans for missing upgrades and finds none.
         CheckDB();
         $this->assertTrue(true);
+    }
+
+    // --- DBFieldType type returns ---
+
+    public function testDBFieldTypeReturnsTinyintForTinyintColumn(): void
+    {
+        $result = DBQuery("SELECT revoked FROM uo_api_token LIMIT 1");
+        $type = DBFieldType($result, 0);
+        $this->assertSame('tinyint', $type);
+    }
+
+    public function testDBFieldTypeReturnsDatetimeForDatetimeColumn(): void
+    {
+        $result = DBQuery("SELECT time FROM uo_game LIMIT 1");
+        $type = DBFieldType($result, 0);
+        $this->assertSame('datetime', $type);
+    }
+
+    public function testDBFieldTypeReturnsTimestampForTimestampColumn(): void
+    {
+        $result = DBQuery("SELECT created_at FROM uo_api_token LIMIT 1");
+        $type = DBFieldType($result, 0);
+        $this->assertSame('timestamp', $type);
+    }
+
+    public function testDBFieldTypeReturnsStringForVarcharColumn(): void
+    {
+        $result = DBQuery("SELECT label FROM uo_api_token LIMIT 1");
+        $type = DBFieldType($result, 0);
+        $this->assertSame('string', $type);
+    }
+
+    public function testDBFieldTypeReturnsBlobForMediumblobColumn(): void
+    {
+        $result = DBQuery("SELECT thumb FROM uo_image LIMIT 1");
+        $type = DBFieldType($result, 0);
+        $this->assertSame('blob', $type);
+    }
+
+    // --- DBCastArray default case (string/non-int/non-real columns) ---
+
+    public function testDBCastArrayDefaultCasePreservesStringValue(): void
+    {
+        $result = DBQuery("SELECT firstname FROM uo_player WHERE player_id=800");
+        $row = mysqli_fetch_assoc($result);
+        $casted = DBCastArray($result, $row);
+        $this->assertSame('Ari', $casted['firstname']);
+    }
+
+    // --- DBSetRow with null value for int column ---
+
+    public function testDBSetRowSetsIntColumnToNull(): void
+    {
+        // halftime int(10) DEFAULT NULL — nullable, so NULL is a valid value
+        $original = DBQueryToValue("SELECT halftime FROM uo_game WHERE game_id=700");
+        try {
+            DBSetRow('uo_game', ['halftime' => null], 'game_id=700');
+            self::flushQueryCaches();
+            $updated = DBQueryToValue("SELECT halftime FROM uo_game WHERE game_id=700");
+            $this->assertNull($updated);
+        } finally {
+            DBSetRow('uo_game', ['halftime' => $original], 'game_id=700');
+            self::flushQueryCaches();
+        }
+    }
+
+    // --- DBFieldType — additional type returns ---
+
+    public function testDBFieldTypeReturnsUnknownForInvalidOffset(): void
+    {
+        // mysqli_fetch_field_direct throws ValueError for out-of-bounds offset in
+        // PHP 8.3, so the guard at database.php:907 is only reachable by passing
+        // a non-result argument. Use a temporary field-info mock instead.
+        // This path cannot be reached in PHP 8.3+ — skip to avoid ValueError.
+        $this->markTestSkipped('mysqli_fetch_field_direct throws ValueError in PHP 8.3+ before the guard executes');
+    }
+
+    public function testDBFieldTypeReturnsNullForNullExpression(): void
+    {
+        $result = DBQuery("SELECT NULL AS n");
+        $this->assertSame('null', DBFieldType($result, 0));
+    }
+
+    public function testDBFieldTypeReturnsDateForCastDate(): void
+    {
+        $result = DBQuery("SELECT CAST('2026-01-01' AS DATE) AS d");
+        $this->assertSame('date', DBFieldType($result, 0));
+    }
+
+    public function testDBFieldTypeReturnsTimeForCastTime(): void
+    {
+        $result = DBQuery("SELECT CAST('10:00:00' AS TIME) AS t");
+        $this->assertSame('time', DBFieldType($result, 0));
+    }
+
+    public function testDBFieldTypeReturnsYearForYearColumn(): void
+    {
+        // MariaDB CAST(... AS YEAR) is not supported; use a temp table with YEAR column.
+        DBQuery("CREATE TEMPORARY TABLE tmp_year_test (y YEAR NOT NULL DEFAULT '2026')");
+        DBQuery("INSERT INTO tmp_year_test (y) VALUES (2026)");
+        $result = DBQuery("SELECT y FROM tmp_year_test LIMIT 1");
+        $type = DBFieldType($result, 0);
+        DBQuery("DROP TEMPORARY TABLE IF EXISTS tmp_year_test");
+        $this->assertSame('year', $type);
+    }
+
+    public function testDBFieldTypeReturnsCharForCharColumn(): void
+    {
+        // uo_api_token.token_hash is char(64) — MariaDB reports CHAR as MYSQLI_TYPE_STRING.
+        // Note: MYSQLI_TYPE_CHAR === MYSQLI_TYPE_TINY (both = 1), so the 'char' branch at
+        // database.php:939 is unreachable; CHAR columns arrive as MYSQLI_TYPE_STRING.
+        $result = DBQuery("SELECT token_hash FROM uo_api_token LIMIT 1");
+        $type = DBFieldType($result, 0);
+        $this->assertSame('string', $type);
+    }
+
+    // --- Error paths (DBAbort called when query fails with exception mode) ---
+    // PHP 8.1+ enables mysqli_report(MYSQLI_REPORT_ERROR|MYSQLI_REPORT_STRICT) by
+    // default, which causes mysqli_query() to throw mysqli_sql_exception directly
+    // before returning false. To cover the `if (!$result)` guard branches, we
+    // temporarily disable mysqli error reporting so that mysqli_query returns false
+    // and then DBAbort is called. DBSetExceptionMode(true) makes DBAbort throw
+    // DBOperationException instead of calling die().
+
+    private function withMysqliSilentMode(callable $fn): void
+    {
+        mysqli_report(MYSQLI_REPORT_OFF);
+        DBSetExceptionMode(true);
+        try {
+            $fn();
+        } finally {
+            DBSetExceptionMode(false);
+            mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
+        }
+    }
+
+    public function testDBQueryThrowsOnInvalidSql(): void
+    {
+        $this->withMysqliSilentMode(function () {
+            $this->expectException(DBOperationException::class);
+            DBQuery("INVALID SQL SYNTAX HERE");
+        });
+    }
+
+    public function testDBQueryToValueThrowsOnInvalidSql(): void
+    {
+        $this->withMysqliSilentMode(function () {
+            $this->expectException(DBOperationException::class);
+            DBQueryToValue("INVALID SQL");
+        });
+    }
+
+    public function testDBQueryRowCountThrowsOnInvalidSql(): void
+    {
+        $this->withMysqliSilentMode(function () {
+            $this->expectException(DBOperationException::class);
+            DBQueryRowCount("INVALID SQL");
+        });
+    }
+
+    public function testDBQueryToArrayThrowsOnInvalidSql(): void
+    {
+        $this->withMysqliSilentMode(function () {
+            $this->expectException(DBOperationException::class);
+            DBQueryToArray("INVALID SQL");
+        });
+    }
+
+    public function testDBQueryToRowThrowsOnInvalidSql(): void
+    {
+        $this->withMysqliSilentMode(function () {
+            $this->expectException(DBOperationException::class);
+            DBQueryToRow("INVALID SQL");
+        });
+    }
+
+    public function testGetDBVersionReturnsZeroWhenTableEmpty(): void
+    {
+        $rows = DBQueryToArray("SELECT version, updated FROM uo_database ORDER BY version");
+        DBQuery("DELETE FROM uo_database");
+        self::flushQueryCaches();
+        try {
+            $version = getDBVersion();
+            $this->assertSame(0, $version);
+        } finally {
+            foreach ($rows as $row) {
+                DBQuery(sprintf(
+                    "INSERT IGNORE INTO uo_database (version, updated) VALUES (%d, '%s')",
+                    (int) $row['version'],
+                    DBEscapeString($row['updated'])
+                ));
+            }
+            self::flushQueryCaches();
+        }
     }
 }

@@ -509,4 +509,27 @@ final class DatabaseMaintenanceLibTest extends TestCase
         $result = DBRunAutomaticUpgrade();
         $this->assertFalse($result);
     }
+
+    public function testDBRunAutomaticUpgradeReturnsTrueWhenDatabaseAlreadyCurrent(): void
+    {
+        // DB is already at DB_VERSION, so CheckDB is a no-op and the happy path runs.
+        // setUp ensures no stale lock or flag files exist.
+        $result = DBRunAutomaticUpgrade();
+        $this->assertTrue($result);
+        // After a successful run both lock and flag are cleaned up.
+        $this->assertFileDoesNotExist(DBMaintenanceLockPath());
+        $this->assertFileDoesNotExist(DBMaintenanceFlagPath());
+    }
+
+    // --- DBHandleMaintenanceState: automatic+pending path ----
+
+    public function testDBHandleMaintenanceStateRemovesPendingFlagWhenDatabaseCurrent(): void
+    {
+        // Write a pending automatic flag; with the DB at current version the
+        // function removes the flag and returns without rendering a maintenance page.
+        DBCreateAutomaticMaintenanceFlag();
+        $this->assertFileExists(DBMaintenanceFlagPath());
+        DBHandleMaintenanceState();
+        $this->assertFileDoesNotExist(DBMaintenanceFlagPath());
+    }
 }

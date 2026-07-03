@@ -257,6 +257,25 @@ final class ConfigurationFunctionsLibTest extends TestCase
         }
     }
 
+    public function testSetServerConfUpdatesExistingSettingAsSuperAdmin(): void
+    {
+        LegacyApp::loadUserFunctions();
+        LegacyApp::loginAsAdmin();
+
+        $settingName = 'UO_HARNESS_UPD_' . uniqid();
+        try {
+            // Pre-insert directly so DBQueryToValue SELECT cache is not primed with null
+            DBQuery("INSERT INTO uo_setting (name, value) VALUES ('$settingName', 'initial_val')");
+            // Now SetServerConf must find the existing row and take the UPDATE path (lines 180-185)
+            SetServerConf([['name' => $settingName, 'value' => 'updated_val']]);
+            $stored = DBQueryToValue("SELECT value FROM uo_setting WHERE name='$settingName'");
+            $this->assertSame('updated_val', $stored);
+        } finally {
+            DBQuery("DELETE FROM uo_setting WHERE name='$settingName'");
+            $_SESSION = [];
+        }
+    }
+
 
     private static function expectedConfig(): array
     {

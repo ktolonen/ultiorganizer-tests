@@ -1459,4 +1459,171 @@ final class CommonFunctionsLibTest extends TestCase
         unset($_GET['Pool_id']);
         $this->assertSame('', $result);
     }
+
+    // ---- convertToUtf8 edge cases ----
+
+    public function testConvertToUtf8ReturnsEmptyStringForNull(): void
+    {
+        $this->assertSame('', convertToUtf8(null));
+    }
+
+    public function testConvertToUtf8CastsNonStringToString(): void
+    {
+        $result = convertToUtf8(42);
+        $this->assertSame('42', $result);
+    }
+
+    public function testConvertToUtf8HandlesInvalidUtf8Bytes(): void
+    {
+        $invalid = "\xc0\x80"; // overlong UTF-8 encoding — not valid UTF-8
+        $result = convertToUtf8($invalid, 'ISO-8859-1');
+        $this->assertIsString($result);
+    }
+
+    // ---- ToInternalTimeFormat: date-only appends 00:00 ----
+
+    public function testToInternalTimeFormatAppendsZeroTimeToDateString(): void
+    {
+        // A date-without-time string fails the first strptime but succeeds
+        // with " 00:00" appended, covering the $timestamp .= " 00:00" branch.
+        $result = ToInternalTimeFormat('22.06.2026');
+        $this->assertSame('2026-6-22 0:0:00', $result);
+    }
+
+    // ---- GetScriptName: PATH_INFO fallback ----
+
+    public function testGetScriptNameFallsBackToPathInfoKey(): void
+    {
+        $origScript = $_SERVER['SCRIPT_NAME'] ?? null;
+        $origSelf   = $_SERVER['PHP_SELF'] ?? null;
+        unset($_SERVER['SCRIPT_NAME'], $_SERVER['PHP_SELF']);
+        // SUT checks $_SERVER['PATH_INFO '] (trailing space — SUT quirk).
+        $_SERVER['PATH_INFO '] = '/path/info.php';
+        try {
+            $result = GetScriptName();
+            $this->assertSame('/path/info.php', $result);
+        } finally {
+            unset($_SERVER['PATH_INFO ']);
+            if ($origScript !== null) {
+                $_SERVER['SCRIPT_NAME'] = $origScript;
+            }
+            if ($origSelf !== null) {
+                $_SERVER['PHP_SELF'] = $origSelf;
+            }
+        }
+    }
+
+    // ---- _handleArray: triple-nested filter triggers recursive path ----
+
+    public function testCreateFilterWithTripleNestedArrayFilter(): void
+    {
+        // Triple nesting: CreateFilter calls _handleArray(current($outer), ...) where
+        // current($outer) is an array-of-criteria — hits the is_array(current) branch.
+        $result = CreateFilter(
+            ['uo_pool' => 'pool'],
+            [[  // outer current() is an array → _handleArray recurses
+                ['field' => 'pool.pool_id', 'operator' => '=', 'value' => 200],
+            ]],
+        );
+        $this->assertStringContainsString('pool.pool_id', $result);
+    }
+
+    // ---- _handleJoin: criteria element that is itself an array-of-arrays ----
+
+    public function testHandleJoinWithArrayOfArraysCriteria(): void
+    {
+        // In the criteria loop of _handleJoin, a $next with no 'join'/'field'
+        // but is_array(current($next)) triggers the _handleArray path.
+        $result = CreateFilter(
+            ['uo_pool' => 'pool'],
+            [
+                'join'     => 'AND',
+                'criteria' => [
+                    [  // $next = array-of-criteria → _handleArray
+                        ['field' => 'pool.pool_id', 'operator' => '=', 'value' => 200],
+                    ],
+                ],
+            ],
+        );
+        $this->assertStringContainsString('pool.pool_id', $result);
+    }
+
+    // ---- _handleFunction: arg with value/type instead of field ----
+
+    public function testHandleFunctionWithValueTypeArg(): void
+    {
+        // When a function arg has 'value'+'type' instead of 'field', covers lines 1161-1162.
+        $result = CreateFilter(
+            ['uo_pool' => 'pool'],
+            [
+                'field'    => [
+                    'function'   => 'COALESCE',
+                    'args'       => [
+                        ['field' => 'pool.name'],
+                        ['value' => 'Unknown', 'type' => 'string'],
+                    ],
+                    'returntype' => 'string',
+                ],
+                'operator' => '=',
+                'value'    => 'Alpha',
+            ],
+        );
+        $this->assertStringContainsString('COALESCE', $result);
+    }
+
+    // ---- _handleVariable: missing 'variable' key and missing array key ----
+
+    public function testHandleVariableReturnsEmptyWhenVariableKeyMissing(): void
+    {
+        // Direct call to _handleVariable with no 'variable' key → return "" at guard line.
+        $result = _handleVariable(['no_variable_key' => 'ignored']);
+        $this->assertSame('', $result);
+    }
+
+    public function testHandleVariableReturnsEmptyForMissingArrayKey(): void
+    {
+        // Global var is an array but key1 doesn't exist → return "" at the missing-key branch.
+        $GLOBALS['_uo_harness_test_arr'] = ['a' => 'hello'];
+        try {
+            $result = CreateFilter(
+                ['uo_pool' => 'pool'],
+                [
+                    'field'    => 'pool.pool_id',
+                    'operator' => '=',
+                    'value'    => ['variable' => '_uo_harness_test_arr', 'key1' => 'missing_key'],
+                ],
+            );
+            $this->assertIsString($result);
+        } finally {
+            unset($GLOBALS['_uo_harness_test_arr']);
+        }
+    }
+
+    // ---- _handleLiteral SUBSELECT: function-based field inside subselect ----
+
+    public function testCreateFilterWithSubselectFunctionField(): void
+    {
+        // SUBSELECT where 'field' is a function array (not a string) → lines 1104-1106.
+        $result = CreateFilter(
+            ['uo_pool' => 'pool'],
+            [
+                'field'    => 'pool.pool_id',
+                'operator' => 'SUBSELECT',
+                'value'    => [
+                    'table'    => 'pool',
+                    'field'    => [
+                        'function'   => 'UPPER',
+                        'args'       => [['field' => 'pool.name']],
+                        'returntype' => 'string',
+                    ],
+                    'join'     => 'AND',
+                    'criteria' => [
+                        ['field' => 'pool.visible', 'operator' => '=', 'value' => 1],
+                    ],
+                ],
+            ],
+        );
+        $this->assertStringContainsString('UPPER', $result);
+        $this->assertStringContainsString('SELECT', $result);
+    }
 }

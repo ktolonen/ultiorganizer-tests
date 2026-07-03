@@ -681,4 +681,112 @@ final class SeasonFunctionsLibTest extends TestCase
             $_SESSION['userproperties']['locale'] = 'en_GB.utf8';
         }
     }
+
+    // ---- SeasonReservations group filter ----
+
+    public function testSeasonReservationsWithGroupFilterReturnsFilteredResults(): void
+    {
+        // Passing a specific group triggers the $group != 'all' branch (line 683).
+        $reservations = SeasonReservations('HRN2026', 'nonexistent_group');
+        $this->assertIsArray($reservations);
+        $this->assertCount(0, $reservations);
+    }
+
+    // ---- AddSeason duplicate guard ----
+
+    public function testAddSeasonReturnsFalseForExistingSeasonId(): void
+    {
+        // SeasonExists check at the top of AddSeason returns false for duplicate.
+        LegacyApp::loadUserFunctions();
+        LegacyApp::loginAsAdmin();
+        try {
+            $result = AddSeason('HRN2026', self::minimalSeasonParams('Duplicate'));
+            $this->assertFalse($result);
+        } finally {
+            $_SESSION = [];
+            ClearSeasonRuntimeCache();
+        }
+    }
+
+    // ---- AddSeason with comment ----
+
+    public function testAddSeasonWithCommentCallsSetComment(): void
+    {
+        LegacyApp::loadUserFunctions();
+        LegacyApp::loginAsAdmin();
+        $newId = 'TST' . substr(uniqid(), -7);
+        try {
+            $result = AddSeason($newId, self::minimalSeasonParams('Commented Season'), 'test comment');
+            $this->assertTrue((bool) $result);
+        } finally {
+            if (SeasonExists($newId)) {
+                DeleteSeason($newId);
+            }
+            ClearSeasonRuntimeCache();
+            $_SESSION = [];
+        }
+    }
+
+    // ---- SetSeason with comment ----
+
+    public function testSetSeasonWithCommentCallsSetComment(): void
+    {
+        LegacyApp::loadUserFunctions();
+        LegacyApp::loginAsAdmin();
+        $newId = 'TST' . substr(uniqid(), -7);
+        try {
+            AddSeason($newId, self::minimalSeasonParams('Pre-comment Season'));
+            $params = self::minimalSeasonParams('Updated With Comment');
+            $params['public_event'] = 0;
+            $result = SetSeason($newId, $params, 'update comment');
+            $this->assertTrue((bool) $result);
+        } finally {
+            if (SeasonExists($newId)) {
+                DeleteSeason($newId);
+            }
+            ClearSeasonRuntimeCache();
+            $_SESSION = [];
+        }
+    }
+
+    // ---- SetSeasonSpiritSettings without rights ----
+
+    public function testSetSeasonSpiritSettingsReturnsFalseWithoutRights(): void
+    {
+        unset($_SESSION['uid'], $_SESSION['userproperties']['userrole']);
+        $result = SetSeasonSpiritSettings('HRN2026', [
+            'spiritmode'                   => 0,
+            'showspiritpoints'             => 0,
+            'showspiritcomments'           => 0,
+            'showspiritpointsonlyoncomplete' => 0,
+            'lockteamspiritonsubmit'       => 0,
+        ]);
+        $this->assertFalse($result);
+        $_SESSION['userproperties']['locale'] = 'en_GB.utf8';
+    }
+
+    // ---- EnrollSeasons skips private seasons ----
+
+    public function testEnrollSeasonsSkipsPrivateSeasonWhenNotLoggedIn(): void
+    {
+        // Private season with enrollopen=1 is skipped because CanAccessSeason returns false.
+        $tmpId = 'TST' . substr(uniqid(), -7);
+        DBQuery("INSERT INTO uo_season (season_id, name, starttime, endtime, iscurrent, enrollopen, type,
+                  istournament, isinternational, isnationalteams, organizer, category, showspiritpoints,
+                  use_season_points, hide_time_on_scoresheet, event_readonly, api_public, timezone, spiritmode,
+                  public_event)
+                 VALUES ('$tmpId', 'Private Enroll', '2030-01-01', '2030-12-31', 0, 1, 'outdoor',
+                  0, 0, 0, '', '', 0, 0, 0, 0, 0, 'UTC', 0, 0)");
+        unset($_SESSION['uid'], $_SESSION['userproperties']['userrole']);
+        ClearSeasonRuntimeCache();
+        try {
+            $result = EnrollSeasons();
+            $this->assertIsArray($result);
+            $this->assertArrayNotHasKey($tmpId, $result);
+        } finally {
+            DBQuery("DELETE FROM uo_season WHERE season_id='" . DBEscapeString($tmpId) . "'");
+            ClearSeasonRuntimeCache();
+            $_SESSION['userproperties']['locale'] = 'en_GB.utf8';
+        }
+    }
 }

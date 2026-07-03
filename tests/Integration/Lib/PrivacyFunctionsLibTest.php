@@ -415,4 +415,179 @@ final class PrivacyFunctionsLibTest extends TestCase
             DBQuery("DELETE FROM uo_event_log WHERE source='privacy'");
         }
     }
+
+    // ===== Profiled player helpers and tests =====
+
+    private function insertProfiledPlayer(string $firstName = 'Profiled', string $lastName = 'TestPerson'): array
+    {
+        $profileId = (int) DBQueryInsert(
+            "INSERT INTO uo_player_profile (firstname, lastname, email, accreditation_id)
+             VALUES ('$firstName', '$lastName', 'proftest@harness.invalid', 'HARN-ACCR-TEST')"
+        );
+        $playerId = (int) DBQueryInsert(
+            "INSERT INTO uo_player (firstname, lastname, team, profile_id, accreditation_id, accredited)
+             VALUES ('$firstName', '$lastName', 300, $profileId, 'HARN-ACCR-TEST', 1)"
+        );
+        self::flushQueryCaches();
+        return [$profileId, $playerId];
+    }
+
+    private function cleanupProfiledPlayer(int $profileId, int $playerId): void
+    {
+        DBQuery("DELETE FROM uo_player WHERE player_id=$playerId");
+        DBQuery("DELETE FROM uo_player_profile WHERE profile_id=$profileId");
+        DBQuery("DELETE FROM uo_event_log WHERE source='privacy'");
+        self::flushQueryCaches();
+    }
+
+    public function testPrivacyPlayerMatchesFindsProfiledPlayer(): void
+    {
+        [$profileId, $playerId] = $this->insertProfiledPlayer();
+        try {
+            $matches = PrivacyPlayerMatches('Profiled');
+            $found = array_filter($matches, fn($m) => (int) $m['profile_id'] === $profileId);
+            $this->assertNotEmpty($found);
+        } finally {
+            $this->cleanupProfiledPlayer($profileId, $playerId);
+        }
+    }
+
+    public function testPrivacyPlayerMatchesFallsBackToPlayerNameForUnnamedProfile(): void
+    {
+        // Profile with null names → displayName falls back to player name (line 65)
+        $profileId = (int) DBQueryInsert(
+            "INSERT INTO uo_player_profile (firstname, lastname) VALUES (NULL, NULL)"
+        );
+        $playerId = (int) DBQueryInsert(
+            "INSERT INTO uo_player (firstname, lastname, team, profile_id, accredited)
+             VALUES ('AnonFirst', 'AnonLast', 300, $profileId, 0)"
+        );
+        self::flushQueryCaches();
+        try {
+            $matches = PrivacyPlayerMatches('AnonFirst');
+            $found = array_filter($matches, fn($m) => (int) $m['profile_id'] === $profileId);
+            $this->assertNotEmpty($found);
+        } finally {
+            DBQuery("DELETE FROM uo_player WHERE player_id=$playerId");
+            DBQuery("DELETE FROM uo_player_profile WHERE profile_id=$profileId");
+            self::flushQueryCaches();
+        }
+    }
+
+    public function testPrivacyGetPlayerSubjectReturnsProfileForProfiledPlayer(): void
+    {
+        [$profileId, $playerId] = $this->insertProfiledPlayer();
+        try {
+            $subject = PrivacyGetPlayerSubject($playerId);
+            $this->assertNotNull($subject);
+            $this->assertSame($profileId, (int) $subject['profile_id']);
+            $this->assertNotNull($subject['profile']);
+        } finally {
+            $this->cleanupProfiledPlayer($profileId, $playerId);
+        }
+    }
+
+    public function testPrivacyGetUserSubjectReturnsNullForEmptyUserId(): void
+    {
+        $this->assertNull(PrivacyGetUserSubject(''));
+    }
+
+    public function testPrivacyCollectPlayerReportDataWithProfiledPlayer(): void
+    {
+        [$profileId, $playerId] = $this->insertProfiledPlayer();
+        try {
+            $data = PrivacyCollectPlayerReportData($playerId);
+            $this->assertArrayHasKey('player_rows', $data);
+            $this->assertArrayHasKey('profile_row', $data);
+        } finally {
+            $this->cleanupProfiledPlayer($profileId, $playerId);
+        }
+    }
+
+    public function testPrivacyRenderPlayerReportTextWithProfiledPlayer(): void
+    {
+        [$profileId, $playerId] = $this->insertProfiledPlayer();
+        try {
+            $text = PrivacyRenderPlayerReportText($playerId, 'admin');
+            $this->assertNotNull($text);
+            $this->assertStringContainsString('Profile image metadata', $text);
+        } finally {
+            $this->cleanupProfiledPlayer($profileId, $playerId);
+        }
+    }
+
+    public function testPrivacyLogPlayerReportExportWithProfiledPlayer(): void
+    {
+        [$profileId, $playerId] = $this->insertProfiledPlayer();
+        try {
+            $result = PrivacyLogPlayerReportExport($playerId, 'admin');
+            $this->assertNotFalse($result);
+        } finally {
+            $this->cleanupProfiledPlayer($profileId, $playerId);
+        }
+    }
+
+    public function testPrivacyAnonymizePlayerReturnsFalseForMissingPlayer(): void
+    {
+        $this->assertFalse(PrivacyAnonymizePlayer(0, 'admin'));
+    }
+
+    public function testPrivacyAnonymizePlayerHandlesProfiledPlayer(): void
+    {
+        [$profileId, $playerId] = $this->insertProfiledPlayer();
+        try {
+            $result = PrivacyAnonymizePlayer($playerId, 'admin');
+            $this->assertTrue($result);
+            self::flushQueryCaches();
+            $row = DBQueryToRow("SELECT firstname FROM uo_player WHERE player_id=$playerId");
+            $this->assertSame('-', $row['firstname'] ?? '-');
+        } finally {
+            DBQuery("DELETE FROM uo_player WHERE player_id=$playerId");
+            DBQuery("DELETE FROM uo_player_profile WHERE profile_id=$profileId");
+            DBQuery("DELETE FROM uo_event_log WHERE source='privacy'");
+            self::flushQueryCaches();
+        }
+    }
+
+    public function testPrivacyPlayerMatchSortOrdersBySeasonName(): void
+    {
+        $a = ['player_name' => 'Same', 'season_name' => 'Autumn', 'series_name' => '', 'team_name' => '', 'player_id' => 1];
+        $b = ['player_name' => 'Same', 'season_name' => 'Spring', 'series_name' => '', 'team_name' => '', 'player_id' => 2];
+        $result = PrivacyPlayerMatchSort($a, $b);
+        $this->assertLessThan(0, $result); // 'Autumn' < 'Spring'
+    }
+
+    public function testPrivacyPlayerMatchSortOrdersBySeriesName(): void
+    {
+        $a = ['player_name' => 'Same', 'season_name' => 'Same', 'series_name' => 'Alpha', 'team_name' => '', 'player_id' => 1];
+        $b = ['player_name' => 'Same', 'season_name' => 'Same', 'series_name' => 'Zeta', 'team_name' => '', 'player_id' => 2];
+        $result = PrivacyPlayerMatchSort($a, $b);
+        $this->assertLessThan(0, $result); // 'Alpha' < 'Zeta'
+    }
+
+    public function testPrivacyPlayerMatchSortOrdersByTeamName(): void
+    {
+        $a = ['player_name' => 'Same', 'season_name' => 'Same', 'series_name' => 'Same', 'team_name' => 'A Team', 'player_id' => 1];
+        $b = ['player_name' => 'Same', 'season_name' => 'Same', 'series_name' => 'Same', 'team_name' => 'Z Team', 'player_id' => 2];
+        $result = PrivacyPlayerMatchSort($a, $b);
+        $this->assertLessThan(0, $result); // 'A Team' < 'Z Team'
+    }
+
+    public function testPrivacyRemoveEmptyDirectoryDoesNotRemoveNonEmptyDirectory(): void
+    {
+        $dir = sys_get_temp_dir() . '/privacy_test_nonempty_' . uniqid();
+        mkdir($dir);
+        file_put_contents($dir . '/keepme.txt', 'data');
+        try {
+            PrivacyRemoveEmptyDirectory($dir);
+            $this->assertDirectoryExists($dir);
+        } finally {
+            if (is_file($dir . '/keepme.txt')) {
+                unlink($dir . '/keepme.txt');
+            }
+            if (is_dir($dir)) {
+                rmdir($dir);
+            }
+        }
+    }
 }

@@ -84,6 +84,22 @@ final class StandingsFunctionsLibTest extends TestCase
         $this->assertSame(0, CompareTeamsSwissdraw($a, $a));
     }
 
+    public function testCompareTeamsSwissdrawFirstRoundEqualVpMarginUsesScore(): void
+    {
+        // equal vp+margin, different score → line 194
+        $a = ['games' => 1, 'vp' => 2, 'margin' => 4, 'score' => 15, 'spirit' => 5];
+        $b = ['games' => 1, 'vp' => 2, 'margin' => 4, 'score' => 9, 'spirit' => 5];
+        $this->assertSame(-1, CompareTeamsSwissdraw($a, $b));
+    }
+
+    public function testCompareTeamsSwissdrawFirstRoundEqualVpMarginScoreUsesSpirit(): void
+    {
+        // equal vp+margin+score, different spirit → line 197
+        $a = ['games' => 1, 'vp' => 2, 'margin' => 4, 'score' => 13, 'spirit' => 12];
+        $b = ['games' => 1, 'vp' => 2, 'margin' => 4, 'score' => 13, 'spirit' => 8];
+        $this->assertSame(-1, CompareTeamsSwissdraw($a, $b));
+    }
+
     // --- CompareTeamsSwissdraw: else branch (games != 1) ---
 
     public function testCompareTeamsSwissdrawElseBranchDifferentGamesCount(): void
@@ -186,6 +202,19 @@ final class StandingsFunctionsLibTest extends TestCase
             ['team' => 302, 'arank' => 3, 'wins' => 0],
         ];
         $this->assertSame([], FindSameRank($points, 1));
+    }
+
+    public function testFindSameRankBreaksWhenTieGroupEnds(): void
+    {
+        // 3 teams tied at rank 1, then a rank-2 team → the break at line 552 fires.
+        $points = [
+            ['team' => 300, 'arank' => 1],
+            ['team' => 301, 'arank' => 1],
+            ['team' => 302, 'arank' => 1],
+            ['team' => 303, 'arank' => 2],
+        ];
+        $sameRank = FindSameRank($points, 1);
+        $this->assertCount(3, $sameRank);
     }
 
     public function testUpdateStandingsMergesRankChanges(): void
@@ -557,6 +586,45 @@ final class StandingsFunctionsLibTest extends TestCase
         }
     }
 
+    public function testFinalStandingsSeasonPointsOrderSortsByDifferentTotals(): void
+    {
+        // team 300 > team 301 in total → usort returns $right <=> $left (line 1254).
+        $roundId = 9902;
+        DBQuery("INSERT INTO uo_season_round (round_id, season, series, round_no, name)
+                 VALUES ($roundId, 'HRN2026', 100, 1, 'TotalsRound')");
+        DBQuery("INSERT INTO uo_season_points (round_id, team_id, points) VALUES ($roundId, 300, 10), ($roundId, 301, 5)");
+        self::flushQueryCaches();
+        try {
+            $teams = SeriesTeams(100);
+            $order = FinalStandingsSeasonPointsOrder('HRN2026', 100, $teams);
+            $this->assertSame(300, $order[0]);
+        } finally {
+            DBQuery("DELETE FROM uo_season_points WHERE round_id=$roundId");
+            DBQuery("DELETE FROM uo_season_round WHERE round_id=$roundId");
+            self::flushQueryCaches();
+        }
+    }
+
+    public function testFinalStandingsSeasonPointsOrderTieBrokenByLastRound(): void
+    {
+        // Equal totals but 301 scores higher in the last round → line 1260 fires.
+        $r1 = 9903; $r2 = 9904;
+        DBQuery("INSERT INTO uo_season_round (round_id, season, series, round_no, name)
+                 VALUES ($r1, 'HRN2026', 100, 1, 'Rd1'), ($r2, 'HRN2026', 100, 2, 'Rd2')");
+        DBQuery("INSERT INTO uo_season_points (round_id, team_id, points)
+                 VALUES ($r1, 300, 10), ($r1, 301, 5), ($r2, 300, 5), ($r2, 301, 10)");
+        self::flushQueryCaches();
+        try {
+            $teams = SeriesTeams(100);
+            $order = FinalStandingsSeasonPointsOrder('HRN2026', 100, $teams);
+            $this->assertSame(301, $order[0]); // 301 wins tie on last-round points
+        } finally {
+            DBQuery("DELETE FROM uo_season_points WHERE round_id IN ($r1, $r2)");
+            DBQuery("DELETE FROM uo_season_round WHERE round_id IN ($r1, $r2)");
+            self::flushQueryCaches();
+        }
+    }
+
     // --- Admin save functions (require superadmin via isSeasonAdmin; write uo_team_final_standing) ---
 
     public function testSaveFinalStandingsOrderPersistsPlacements(): void
@@ -608,6 +676,38 @@ final class StandingsFunctionsLibTest extends TestCase
             $this->assertFalse(SaveFinalStandingsOrder('OTHERSEASON', 100, [300, 301]));
         } finally {
             $_SESSION = [];
+        }
+    }
+
+    public function testSaveFinalStandingsOrderReturnsFalseForDuplicateTeamIds(): void
+    {
+        // Passing the same team twice triggers the unique-ID guard (line 1000).
+        LegacyApp::loadUserFunctions();
+        LegacyApp::loginAsAdmin();
+        try {
+            $this->assertFalse(SaveFinalStandingsOrder('HRN2026', 100, [300, 300]));
+        } finally {
+            DBQuery("DELETE FROM uo_team_final_standing WHERE series=100");
+            $_SESSION = [];
+        }
+    }
+
+    public function testSaveFinalStandingsOrderSkipsSingleTeamStandingGroup(): void
+    {
+        // Pre-seed a single-team group (standing=1 for team 301 only) so that
+        // $standingGroups[1] has count=1 → the continue at line 1036 fires.
+        LegacyApp::loadUserFunctions();
+        LegacyApp::loginAsAdmin();
+        try {
+            DBQuery("INSERT INTO uo_team_final_standing (season, series, team_id, standing, disqualified)
+                     VALUES ('HRN2026', 100, 301, 1, 0)");
+            self::flushQueryCaches();
+            $result = SaveFinalStandingsOrder('HRN2026', 100, [300, 301]);
+            $this->assertTrue($result);
+        } finally {
+            DBQuery("DELETE FROM uo_team_final_standing WHERE series=100");
+            $_SESSION = [];
+            self::flushQueryCaches();
         }
     }
 
@@ -958,6 +1058,169 @@ final class StandingsFunctionsLibTest extends TestCase
             DBQuery("DELETE FROM uo_game WHERE game_id IN (9790, 9791)");
             DBQuery("DELETE FROM uo_team_pool WHERE pool=$poolId");
             DBQuery("DELETE FROM uo_team WHERE team_id IN ($t1, $t2)");
+            DBQuery("DELETE FROM uo_pool WHERE pool_id=$poolId");
+            self::flushQueryCaches();
+        }
+    }
+
+    // --- Additional resolve pool coverage ---
+
+    public function testResolvePlayoffPoolStandingsEarlyReturnForEmptyPool(): void
+    {
+        // Pool with no teams → count($teams) <= 1 → early return at line 41.
+        $poolId = 9350;
+        DBQuery("INSERT INTO uo_pool (pool_id, name, ordering, visible, continuingpool, placementpool, teams, mvgames, played, series, type)
+                 VALUES ($poolId, 'PO Empty', '1', 0, 0, 0, 0, 0, 0, 100, 2)");
+        self::flushQueryCaches();
+        try {
+            ResolvePlayoffPoolStandings($poolId);
+            $this->assertTrue(true);
+        } finally {
+            DBQuery("DELETE FROM uo_pool WHERE pool_id=$poolId");
+            self::flushQueryCaches();
+        }
+    }
+
+    public function testResolvePlayoffPoolStandingsRanksT2WinnerFirst(): void
+    {
+        // t2 beats t1 → DB UPDATE assigns t2 activerank=1 (lines 72-73).
+        $poolId = 9351; $t1 = 9360; $t2 = 9361; $g = 9800;
+        DBQuery("INSERT INTO uo_pool (pool_id, name, ordering, visible, continuingpool, placementpool, teams, mvgames, played, series, type)
+                 VALUES ($poolId, 'PO T2Win', '1', 0, 0, 0, 2, 0, 1, 100, 2)");
+        DBQuery("INSERT INTO uo_team (team_id, name, pool, rank, activerank, valid, series, abbreviation)
+                 VALUES ($t1, 'PO T1', $poolId, 1, 1, 1, 100, 'P1'), ($t2, 'PO T2', $poolId, 2, 2, 1, 100, 'P2')");
+        DBQuery("INSERT INTO uo_team_pool (team, pool, rank, activerank) VALUES ($t1, $poolId, 1, 1), ($t2, $poolId, 2, 2)");
+        DBQuery("INSERT INTO uo_game (game_id, hometeam, visitorteam, homescore, visitorscore, valid, isongoing, hasstarted)
+                 VALUES ($g, $t2, $t1, 15, 9, 1, 0, 1)");
+        DBQuery("INSERT INTO uo_game_pool (game, pool, timetable) VALUES ($g, $poolId, 1)");
+        self::flushQueryCaches();
+        try {
+            ResolvePlayoffPoolStandings($poolId);
+            self::flushQueryCaches();
+            $rank = DBQueryToValue("SELECT activerank FROM uo_team_pool WHERE pool=$poolId AND team=$t2");
+            $this->assertSame('1', $rank);
+        } finally {
+            DBQuery("DELETE FROM uo_game_pool WHERE pool=$poolId");
+            DBQuery("DELETE FROM uo_game WHERE game_id=$g");
+            DBQuery("DELETE FROM uo_team_pool WHERE pool=$poolId");
+            DBQuery("DELETE FROM uo_team WHERE team_id IN ($t1, $t2)");
+            DBQuery("DELETE FROM uo_pool WHERE pool_id=$poolId");
+            self::flushQueryCaches();
+        }
+    }
+
+    public function testResolvePlayoffPoolStandingsCallsTeamMoveWhenNoGamesLeft(): void
+    {
+        // Only 1 played game, no open games → gamesleft=0 → TeamMove (lines 81-82).
+        $poolId = 9352; $t1 = 9362; $t2 = 9363; $g = 9801;
+        DBQuery("INSERT INTO uo_pool (pool_id, name, ordering, visible, continuingpool, placementpool, teams, mvgames, played, series, type)
+                 VALUES ($poolId, 'PO AllPlayed', '1', 0, 0, 0, 2, 0, 1, 100, 2)");
+        DBQuery("INSERT INTO uo_team (team_id, name, pool, rank, activerank, valid, series, abbreviation)
+                 VALUES ($t1, 'PO T3', $poolId, 1, 1, 1, 100, 'P3'), ($t2, 'PO T4', $poolId, 2, 2, 1, 100, 'P4')");
+        DBQuery("INSERT INTO uo_team_pool (team, pool, rank, activerank) VALUES ($t1, $poolId, 1, 1), ($t2, $poolId, 2, 2)");
+        DBQuery("INSERT INTO uo_game (game_id, hometeam, visitorteam, homescore, visitorscore, valid, isongoing, hasstarted)
+                 VALUES ($g, $t1, $t2, 15, 9, 1, 0, 1)");
+        DBQuery("INSERT INTO uo_game_pool (game, pool, timetable) VALUES ($g, $poolId, 1)");
+        self::flushQueryCaches();
+        try {
+            ResolvePlayoffPoolStandings($poolId);
+            $this->assertTrue(true);
+        } finally {
+            DBQuery("DELETE FROM uo_game_pool WHERE pool=$poolId");
+            DBQuery("DELETE FROM uo_game WHERE game_id=$g");
+            DBQuery("DELETE FROM uo_team_pool WHERE pool=$poolId");
+            DBQuery("DELETE FROM uo_team WHERE team_id IN ($t1, $t2)");
+            DBQuery("DELETE FROM uo_pool WHERE pool_id=$poolId");
+            self::flushQueryCaches();
+        }
+    }
+
+    public function testResolvePlayoffPoolStandingsHandlesOddTeamCount(): void
+    {
+        // 3 teams → odd → BYE team gets last rank; TeamMove called for BYE (lines 87, 89, 91).
+        $poolId = 9353; $t1 = 9364; $t2 = 9365; $t3 = 9366; $g1 = 9802; $g2 = 9803;
+        DBQuery("INSERT INTO uo_pool (pool_id, name, ordering, visible, continuingpool, placementpool, teams, mvgames, played, series, type)
+                 VALUES ($poolId, 'PO 3Teams', '1', 0, 0, 0, 3, 0, 1, 100, 2)");
+        DBQuery("INSERT INTO uo_team (team_id, name, pool, rank, activerank, valid, series, abbreviation)
+                 VALUES ($t1, 'PO T5', $poolId, 1, 1, 1, 100, 'P5'),
+                        ($t2, 'PO T6', $poolId, 2, 2, 1, 100, 'P6'),
+                        ($t3, 'PO T7', $poolId, 3, 3, 1, 100, 'P7')");
+        DBQuery("INSERT INTO uo_team_pool (team, pool, rank, activerank)
+                 VALUES ($t1, $poolId, 1, 1), ($t2, $poolId, 2, 2), ($t3, $poolId, 3, 3)");
+        DBQuery("INSERT INTO uo_game (game_id, hometeam, visitorteam, homescore, visitorscore, valid, isongoing, hasstarted)
+                 VALUES ($g1, $t1, $t2, 15, 9, 1, 0, 1), ($g2, $t2, $t3, NULL, NULL, 1, 0, 0)");
+        DBQuery("INSERT INTO uo_game_pool (game, pool, timetable) VALUES ($g1, $poolId, 1), ($g2, $poolId, 1)");
+        self::flushQueryCaches();
+        try {
+            ResolvePlayoffPoolStandings($poolId);
+            self::flushQueryCaches();
+            $rank = DBQueryToValue("SELECT activerank FROM uo_team_pool WHERE pool=$poolId AND team=$t3");
+            $this->assertSame('3', $rank);
+        } finally {
+            DBQuery("DELETE FROM uo_game_pool WHERE pool=$poolId");
+            DBQuery("DELETE FROM uo_game WHERE game_id IN ($g1, $g2)");
+            DBQuery("DELETE FROM uo_team_pool WHERE pool=$poolId");
+            DBQuery("DELETE FROM uo_team WHERE team_id IN ($t1, $t2, $t3)");
+            DBQuery("DELETE FROM uo_pool WHERE pool_id=$poolId");
+            self::flushQueryCaches();
+        }
+    }
+
+    public function testResolveCrossMatchPoolStandingsEarlyReturnForEmptyPool(): void
+    {
+        // Pool with no teams → count($teams) <= 1 → early return at line 132.
+        $poolId = 9354;
+        DBQuery("INSERT INTO uo_pool (pool_id, name, ordering, visible, continuingpool, placementpool, teams, mvgames, played, series, type)
+                 VALUES ($poolId, 'CM Empty', '1', 0, 0, 0, 0, 0, 0, 100, 4)");
+        self::flushQueryCaches();
+        try {
+            ResolveCrossMatchPoolStandings($poolId);
+            $this->assertTrue(true);
+        } finally {
+            DBQuery("DELETE FROM uo_pool WHERE pool_id=$poolId");
+            self::flushQueryCaches();
+        }
+    }
+
+    public function testResolveCrossMatchPoolStandingsCallsTeamMoveWhenNoGamesLeft(): void
+    {
+        // t2 beats t1 with no open games → gamesleft=0 → TeamMove (lines 173-174).
+        $poolId = 9355; $t1 = 9367; $t2 = 9368; $g = 9804;
+        DBQuery("INSERT INTO uo_pool (pool_id, name, ordering, visible, continuingpool, placementpool, teams, mvgames, played, series, type)
+                 VALUES ($poolId, 'CM NoGamesLeft', '1', 0, 0, 0, 2, 0, 1, 100, 4)");
+        DBQuery("INSERT INTO uo_team (team_id, name, pool, rank, activerank, valid, series, abbreviation)
+                 VALUES ($t1, 'CM T1', $poolId, 1, 1, 1, 100, 'C1'), ($t2, 'CM T2', $poolId, 2, 2, 1, 100, 'C2')");
+        DBQuery("INSERT INTO uo_team_pool (team, pool, rank, activerank) VALUES ($t1, $poolId, 1, 1), ($t2, $poolId, 2, 2)");
+        DBQuery("INSERT INTO uo_game (game_id, hometeam, visitorteam, homescore, visitorscore, valid, isongoing, hasstarted)
+                 VALUES ($g, $t2, $t1, 15, 9, 1, 0, 1)");
+        DBQuery("INSERT INTO uo_game_pool (game, pool, timetable) VALUES ($g, $poolId, 1)");
+        self::flushQueryCaches();
+        try {
+            ResolveCrossMatchPoolStandings($poolId);
+            self::flushQueryCaches();
+            $rank = DBQueryToValue("SELECT activerank FROM uo_team_pool WHERE pool=$poolId AND team=$t2");
+            $this->assertSame('1', $rank);
+        } finally {
+            DBQuery("DELETE FROM uo_game_pool WHERE pool=$poolId");
+            DBQuery("DELETE FROM uo_game WHERE game_id=$g");
+            DBQuery("DELETE FROM uo_team_pool WHERE pool=$poolId");
+            DBQuery("DELETE FROM uo_team WHERE team_id IN ($t1, $t2)");
+            DBQuery("DELETE FROM uo_pool WHERE pool_id=$poolId");
+            self::flushQueryCaches();
+        }
+    }
+
+    public function testResolveSwissdrawPoolStandingsEarlyReturnForEmptyPool(): void
+    {
+        // Pool with no teams → count($standings) <= 1 → early return at line 273.
+        $poolId = 9356;
+        DBQuery("INSERT INTO uo_pool (pool_id, name, ordering, visible, continuingpool, placementpool, teams, mvgames, played, series, type)
+                 VALUES ($poolId, 'SD Empty', '1', 0, 0, 0, 0, 0, 0, 100, 3)");
+        self::flushQueryCaches();
+        try {
+            ResolveSwissdrawPoolStandings($poolId);
+            $this->assertTrue(true);
+        } finally {
             DBQuery("DELETE FROM uo_pool WHERE pool_id=$poolId");
             self::flushQueryCaches();
         }

@@ -503,4 +503,147 @@ final class DataFunctionsLibTest extends TestCase
             @unlink($tmp);
         }
     }
+
+    public function testImportInfoWrapsValidationExceptionWithVersionDetails(): void
+    {
+        // A file with wrong format triggers validateSnapshot → EventSnapshotException
+        // wrapped with version details via the catch block in importInfo (lines 111-112).
+        $tmp = tempnam(sys_get_temp_dir(), 'uo_bad_') . '.json';
+        file_put_contents($tmp, json_encode([
+            'format' => 'wrong_format',
+            'version' => 1,
+            'source_db_version' => 1,
+            'tables' => [],
+        ]));
+        try {
+            $this->expectException(EventSnapshotException::class);
+            EventSnapshotImportInfo($tmp);
+        } finally {
+            @unlink($tmp);
+        }
+    }
+
+    public function testImportInfoThrowsForMissingTablesKey(): void
+    {
+        // No 'tables' key in snapshot → validateSnapshot throws at the tables check.
+        $json = EventSnapshotExportJson('HRN2026');
+        $data = json_decode($json, true);
+        unset($data['tables']);
+        $tmp = tempnam(sys_get_temp_dir(), 'uo_notbl_') . '.json';
+        file_put_contents($tmp, json_encode($data));
+        try {
+            $this->expectException(EventSnapshotException::class);
+            EventSnapshotImportInfo($tmp);
+        } finally {
+            @unlink($tmp);
+        }
+    }
+
+    public function testImportInfoThrowsForUnknownTableName(): void
+    {
+        // Adding an extra table not in the manifest → validateSnapshot throws.
+        $json = EventSnapshotExportJson('HRN2026');
+        $data = json_decode($json, true);
+        $data['tables']['uo_unknown_xyzzy'] = [];
+        $tmp = tempnam(sys_get_temp_dir(), 'uo_unk_') . '.json';
+        file_put_contents($tmp, json_encode($data));
+        try {
+            $this->expectException(EventSnapshotException::class);
+            EventSnapshotImportInfo($tmp);
+        } finally {
+            @unlink($tmp);
+        }
+    }
+
+    public function testImportInfoThrowsForNonArrayTable(): void
+    {
+        // Setting a table to a scalar instead of array → validateSnapshot throws.
+        $json = EventSnapshotExportJson('HRN2026');
+        $data = json_decode($json, true);
+        $data['tables']['uo_season'] = 'not an array';
+        $tmp = tempnam(sys_get_temp_dir(), 'uo_nta_') . '.json';
+        file_put_contents($tmp, json_encode($data));
+        try {
+            $this->expectException(EventSnapshotException::class);
+            EventSnapshotImportInfo($tmp);
+        } finally {
+            @unlink($tmp);
+        }
+    }
+
+    public function testImportInfoThrowsForRowMissingRequiredPkField(): void
+    {
+        // A row without the required PK field triggers the PK check at line 513.
+        $json = EventSnapshotExportJson('HRN2026');
+        $data = json_decode($json, true);
+        $data['tables']['uo_series'][] = ['name' => 'No PK Field'];
+        $tmp = tempnam(sys_get_temp_dir(), 'uo_pk_') . '.json';
+        file_put_contents($tmp, json_encode($data));
+        try {
+            $this->expectException(EventSnapshotException::class);
+            EventSnapshotImportInfo($tmp);
+        } finally {
+            @unlink($tmp);
+        }
+    }
+
+    public function testImportInfoThrowsForDuplicatePrimaryKey(): void
+    {
+        // Two uo_series rows with the same series_id → duplicate key exception.
+        $json = EventSnapshotExportJson('HRN2026');
+        $data = json_decode($json, true);
+        if (!empty($data['tables']['uo_series'])) {
+            $data['tables']['uo_series'][] = $data['tables']['uo_series'][0];
+        }
+        $tmp = tempnam(sys_get_temp_dir(), 'uo_dup_') . '.json';
+        file_put_contents($tmp, json_encode($data));
+        try {
+            $this->expectException(EventSnapshotException::class);
+            EventSnapshotImportInfo($tmp);
+        } finally {
+            @unlink($tmp);
+        }
+    }
+
+    // ── Export with movingtime rows covers collectEventIds lines 302-303 ───
+
+    public function testExportIncludesMovingtimeLocations(): void
+    {
+        DBQuery("INSERT INTO uo_movingtime (season, fromlocation, fromfield, tolocation, tofield, time)
+                 VALUES ('HRN2026', 400, '1', 400, '2', 5)");
+        try {
+            $json = EventSnapshotExportJson('HRN2026');
+            $data = json_decode($json, true);
+            $this->assertIsArray($data['tables']['uo_movingtime']);
+            $this->assertCount(1, $data['tables']['uo_movingtime']);
+        } finally {
+            DBQuery("DELETE FROM uo_movingtime WHERE season='HRN2026'");
+        }
+    }
+
+    // ── Import movingtime row covers importMovingTimes (lines 1001-1004) ───
+
+    public function testImportJsonWithMovingtimeImportsRecord(): void
+    {
+        DBQuery("INSERT INTO uo_movingtime (season, fromlocation, fromfield, tolocation, tofield, time)
+                 VALUES ('HRN2026', 400, '1', 400, '2', 5)");
+        $tmp = $this->exportHrn2026ToTempFile();
+        DBQuery("DELETE FROM uo_movingtime WHERE season='HRN2026'");
+        $importedSeasonId = null;
+        try {
+            $result = EventSnapshotImportJson($tmp, '', 'new');
+            $importedSeasonId = $result['season_id'];
+            $this->assertNotEmpty($importedSeasonId);
+            $count = (int) DBQueryToValue(
+                "SELECT COUNT(*) FROM uo_movingtime WHERE season='" . DBEscapeString($importedSeasonId) . "'"
+            );
+            $this->assertSame(1, $count);
+        } finally {
+            @unlink($tmp);
+            if ($importedSeasonId !== null) {
+                $this->deleteImportedSeason($importedSeasonId);
+            }
+            DBQuery("DELETE FROM uo_movingtime WHERE season='HRN2026'");
+        }
+    }
 }
