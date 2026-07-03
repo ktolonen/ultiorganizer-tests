@@ -71,6 +71,16 @@ Implementation summary for the current Ultiorganizer test harness.
 - Overall line coverage is low by design; per-file lib testing aims for local depth on the file under test, not a rising global percentage.
 - When authoring tests, use coverage to find uncovered branches in the target `lib/*.php` file. See `docs/phpunit.md` for the coverage details and `docs/ai/use-coverage-for-tests/SKILL.md` for the authoring workflow.
 
+## Test assertion quality
+
+Reaching a line is not testing it. Coverage measures execution, not correctness; a test that runs a function without pinning its result is coverage theater that passes even when the SUT is wrong.
+
+- Prefer value assertions (`assertSame`/`assertEquals`/`assertCount`) against known fixture values over type-only checks (`assertIsArray`/`assertIsInt`/`assertIsBool`) and `assertNotNull`. A type-only or `assertTrue(true)` check as a method's *only* assertion is a smell — upgrade it whenever the fixture makes the concrete value knowable.
+- DB reads return strings (`DBQueryToValue`/`DBQueryToRow`), so use `assertEquals(1, $v)` for scalar values (loose on type, strict on value) or `assertSame('1', $v)` with a string literal. See the assertContains-is-strict note in memory.
+- Guard against false passes on *negative* assertions. A test asserting `false`/`null`/`[]`/`0` can pass when setup silently failed (e.g. an INSERT that errored, or a predicate that returns the deny value for a *missing* row). Anchor it with a positive precondition assertion (the row exists and has the expected flags) **and** an in-test contrast that pushes the same function to the opposite result (deny *and* allow through one function proves it discriminates, not that it is hardwired).
+- Verify param wiring against the SUT source. A function may read a different request key than expected (e.g. `GetTeamPlayers()` reads `$_GET['search']`, not `$_GET['team']`), so a plausible-looking test can silently exercise the empty path and pass trivially. Read the function before asserting.
+- Guards ending in `exit()`/`die()`/`header()` cannot have their terminal branch asserted in-process: `exit()` kills PHPUnit, and `runInSeparateProcess` records the child `exit()` as an error, not a pass. Test the boolean decision predicate the guard branches on instead (e.g. test `CanAccessSeason()`/`IsSeasonPublicExternal()` rather than the `Enforce*`/`Require*` wrapper).
+
 ## Reporting
 
 - Canonical run artifacts live under `reports/cases/<case-id>/<run-id>/`.
