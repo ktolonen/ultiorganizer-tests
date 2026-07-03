@@ -308,31 +308,25 @@ final class SearchFunctionsLibTest extends TestCase
         $this->assertSame('', PlayerResults());
     }
 
-    public function testPlayerResultsTriggerHitsSutEmailColumnBug(): void
+    public function testPlayerResultsTriggerReturnsPlayerTable(): void
     {
-        // SUT BUG (confirmed 2026-07-03 against sql/ultiorganizer.sql): PlayerResults()
-        // builds "SELECT ... GROUP_CONCAT(DISTINCT email ...) FROM uo_player p JOIN uo_team t"
-        // but `email` exists only in uo_player_profile (uo_player has no email column, and
-        // the profile table is never joined). MySQL raises "Unknown column 'email'", so the
-        // admin player search (SearchPlayer -> PlayerResults, search.functions.php:255) fails
-        // whenever the form is submitted. This test pins the failure as an executable marker;
-        // when the SUT joins uo_player_profile (or drops the email reference), PlayerResults()
-        // will return HTML instead of throwing and this test should be updated/removed.
-        $originalThrow = $GLOBALS['db_throw_exceptions'] ?? null;
-        $GLOBALS['db_throw_exceptions'] = true; // ensure a DB failure throws rather than die()s
+        // Regression for two fixed defects in the admin player search:
+        //   1. referenced `email` while joining only uo_player + uo_team (email lives in
+        //      uo_player_profile) -> "Unknown column 'email'";
+        //   2. after LEFT JOINing uo_player_profile, the bare firstname/lastname refs became
+        //      ambiguous (uo_player_profile also has them) -> "Column 'firstname' ambiguous".
+        // Both are now resolved (pp.email + p.firstname/p.lastname), so a triggered search
+        // returns the results table listing the fixture players.
         $_POST['searchplayer'] = '1';
-
-        $threw = false;
         try {
-            PlayerResults();
-        } catch (\Throwable $e) {
-            $threw = true;
+            $result = PlayerResults();
         } finally {
-            $GLOBALS['db_throw_exceptions'] = $originalThrow;
             $_POST = [];
         }
 
-        $this->assertTrue($threw, 'PlayerResults() should fail on the unresolved `email` column (SUT bug).');
+        $this->assertStringContainsString('<table', $result);
+        $this->assertStringContainsString('Ari Ace', $result);
+        $this->assertStringContainsString('Bea Blade', $result);
     }
 
     // --- ReservationResults ---

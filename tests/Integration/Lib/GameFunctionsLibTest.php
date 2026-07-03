@@ -145,11 +145,19 @@ final class GameFunctionsLibTest extends TestCase
 
     // --- PoolGameSetResults ---
 
-    public function testPoolGameSetResultsReturnsResultForKnownPool(): void
+    public function testPoolGameSetResultsReturnsRowForKnownPoolGame(): void
     {
-        // SUT bug: WHERE clause uses bare `pool` column which is ambiguous because uo_team
-        // (joined twice as k/v) also has a pool column. The fix would be `p.pool=%d`.
-        $this->markTestSkipped('PoolGameSetResults SQL has ambiguous pool column — SUT bug');
+        // Regression for the fixed ambiguous `pool` column: the query filtered "AND pool=%d"
+        // but uo_game (p) has no pool column and `pool` was ambiguous across the two uo_team
+        // joins. It now joins uo_game_pool and filters gp.pool, so game 700 (in pool 200 via
+        // uo_game_pool) is returned.
+        $result = PoolGameSetResults(200, [700]);
+        $rows = [];
+        while ($row = mysqli_fetch_assoc($result)) {
+            $rows[] = $row;
+        }
+        $this->assertCount(1, $rows);
+        $this->assertSame('700', (string) $rows[0]['game_id']);
     }
 
     public function testPoolGameSetResultsReturnsEmptyForEmptyGameList(): void
