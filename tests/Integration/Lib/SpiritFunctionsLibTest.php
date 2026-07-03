@@ -371,11 +371,20 @@ final class SpiritFunctionsLibTest extends TestCase
         $this->assertSame('0', (string) $row['games']);
     }
 
-    public function testSpiritTotalByPoolAfterSubmit(): void
+    public function testSpiritTotalByPoolIsGatedOnShowSpirit(): void
     {
+        // TeamSpiritTotalByPool only sums games with show_spirit=1. The fixture game 700
+        // has show_spirit=0, so even after a submission the pool total stays 0; flipping
+        // show_spirit=1 surfaces the submitted scores. This pins the visibility gate that
+        // a plain assertIsArray would silently pass regardless of.
         $this->submitHomeSpirit();
-        $result = TeamSpiritTotalByPool(200, 300);
-        $this->assertIsArray($result);
+
+        $hidden = TeamSpiritTotalByPool(200, 300);
+        $this->assertEquals(0, $hidden['spirit']);
+
+        DBQuery("UPDATE uo_game SET show_spirit=1 WHERE game_id=700");
+        $visible = TeamSpiritTotalByPool(200, 300);
+        $this->assertGreaterThan(0, (int) $visible['spirit']);
     }
 
     public function testRefreshGameSpiritDataReturnsTrueForValidGame(): void
@@ -536,8 +545,9 @@ final class SpiritFunctionsLibTest extends TestCase
 
     public function testGameSpiritVisibilityValueReturnsInt(): void
     {
+        // The fixture season has showspiritpoints=0, so spirit is not visible → 0.
         $result = GameSpiritVisibilityValue(700);
-        $this->assertIsInt($result);
+        $this->assertSame(0, $result);
     }
 
     // --- SpiritEntryUrl ---

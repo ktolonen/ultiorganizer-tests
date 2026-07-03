@@ -582,9 +582,12 @@ final class GameFunctionsLibTest extends TestCase
 
     public function testGoalDisplayTextWithNumbersMode(): void
     {
+        // Numbers mode prefixes each player with their jersey number from uo_played:
+        // goal num=1 is scorer 800 (#8 Ari Ace) assisted by 801 (#12 Bea Blade).
         $goal = GameGoals(700)[0];
         $text = GoalDisplayText($goal, 700, true);
-        $this->assertIsString($text);
+        $this->assertStringContainsString('#8', $text);
+        $this->assertStringContainsString('#12', $text);
     }
 
     // --- GameAllGoals ---

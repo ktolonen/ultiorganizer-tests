@@ -80,6 +80,10 @@ final class TeamFunctionsLibTest extends TestCase
     {
         $info = TeamFullInfo(300);
         $this->assertIsArray($info);
+        $this->assertSame('Helsinki Heat', $info['name']);
+        $this->assertSame('HEAT', $info['abbreviation']);
+        // Joined uo_team_pool.activerank for team 300 in pool 200 is 1.
+        $this->assertSame(1, (int) $info['activerank']);
     }
 
     public function testTeamSeasonReturnsSeasonId(): void
@@ -108,8 +112,22 @@ final class TeamFunctionsLibTest extends TestCase
 
     public function testGetTeamPlayersReturnsArray(): void
     {
-        $_GET['team'] = '300';
-        $this->assertIsArray(GetTeamPlayers());
+        // GetTeamPlayers() resolves the team from $_GET['search']/'query'/'q', not 'team'.
+        $_GET['search'] = '300';
+        $players = GetTeamPlayers();
+        $this->assertIsArray($players);
+        // Team 300 has players 800 (Ari Ace) and 801 (Bea Blade), ordered by lastname ASC.
+        $this->assertCount(2, $players);
+        $this->assertSame('Ari', $players[0]['firstname']);
+        $this->assertSame('Ace', $players[0]['lastname']);
+        $this->assertSame('Bea', $players[1]['firstname']);
+    }
+
+    public function testGetTeamPlayersWithoutSearchParamReturnsEmpty(): void
+    {
+        // With no search param the team id defaults to 0, so no players match.
+        unset($_GET['search'], $_GET['query'], $_GET['q']);
+        $this->assertSame([], GetTeamPlayers());
     }
 
     // --- Team listings ---
@@ -187,8 +205,9 @@ final class TeamFunctionsLibTest extends TestCase
 
     public function testTeamPoolCountBYEsReturnsValue(): void
     {
+        // The fixture has no BYE opponents (no valid=2 teams) in pool 200, so the count is 0.
         $result = TeamPoolCountBYEs(300, 200);
-        $this->assertNotNull($result);
+        $this->assertEquals(0, $result);
     }
 
     public function testTeamPoolGamesReturnsResult(): void
@@ -219,8 +238,9 @@ final class TeamFunctionsLibTest extends TestCase
 
     public function testTeamStandingReturnsValue(): void
     {
+        // TeamStanding reads uo_team_pool.activerank; team 300 is ranked 1 in pool 200.
         $result = TeamStanding(300, 200);
-        $this->assertNotNull($result);
+        $this->assertEquals(1, $result);
     }
 
     public function testTeamPoolGamesAgainstReturnsArray(): void
@@ -254,7 +274,14 @@ final class TeamFunctionsLibTest extends TestCase
 
     public function testTeamStatsReturnsArray(): void
     {
-        $this->assertIsArray(TeamStats(300));
+        // Only game 700 is started (hasstarted=1, isongoing=0, timetable=1); team 300
+        // won it 15-11. Game 701 has not started and is excluded from the aggregate.
+        $stats = TeamStats(300);
+        $this->assertIsArray($stats);
+        $this->assertEquals(1, $stats['games']);
+        $this->assertEquals(1, $stats['wins']);
+        $this->assertEquals(0, $stats['draws']);
+        $this->assertEquals(0, $stats['losses']);
     }
 
     public function testTeamVictoryPointsByPoolReturnsValueOrArray(): void

@@ -443,6 +443,102 @@ final class SeasonFunctionsLibTest extends TestCase
         }
     }
 
+    // ---- Access-guard DENY decisions ----
+    //
+    // The guard wrappers (RequireSeasonPublicExternal / EnforcePrivateEventAccessForView /
+    // EnforceSoftMaintenanceForView) end their deny path in exit()/header(), which cannot
+    // be asserted in-process without terminating PHPUnit. The security-relevant decision,
+    // however, lives in the boolean predicates the guards branch on. These tests pin the
+    // DENY decision for a genuinely private event, so a regression that stopped blocking
+    // access would fail here even though the exit() shell is untestable in-process.
+
+    private const PRIVATE_SEASON = 'PRIV2026';
+
+    private function insertPrivateSeason(): void
+    {
+        // public_event and api_public both 0 → not published on public pages or externally.
+        DBQuery(
+            "INSERT INTO uo_season (season_id, name, starttime, endtime, iscurrent, enrollopen,
+                type, istournament, isinternational, isnationalteams, organizer, category,
+                showspiritpoints, use_season_points, hide_time_on_scoresheet, event_readonly,
+                api_public, timezone, spiritmode)
+             VALUES ('" . self::PRIVATE_SEASON . "', 'Private Event', '2026-06-01 09:00:00',
+                '2026-06-02 18:00:00', 0, 0, 'outdoor', 1, 0, 0, 'Org', 'test',
+                0, 0, 0, 0, 0, 'Europe/Helsinki', 1003)"
+        );
+        ClearSeasonRuntimeCache();
+    }
+
+    private function dropPrivateSeason(): void
+    {
+        DBQuery("DELETE FROM uo_season WHERE season_id='" . self::PRIVATE_SEASON . "'");
+        ClearSeasonRuntimeCache();
+    }
+
+    public function testIsSeasonPublicExternalIsFalseForPrivateEvent(): void
+    {
+        $this->insertPrivateSeason();
+        try {
+            // Anchor: the row really exists and is genuinely private, otherwise a false
+            // result below would be meaningless (SeasonInfo is null for a missing season).
+            $info = SeasonInfo(self::PRIVATE_SEASON);
+            $this->assertIsArray($info);
+            $this->assertEmpty($info['public_event']);
+            $this->assertEmpty($info['api_public']);
+
+            // The deny decision behind RequireSeasonPublicExternal.
+            $this->assertFalse(IsSeasonPublicExternal(self::PRIVATE_SEASON));
+            // Contrast: the published fixture season is allowed.
+            $this->assertTrue(IsSeasonPublicExternal('HRN2026'));
+        } finally {
+            $this->dropPrivateSeason();
+        }
+    }
+
+    public function testIsSeasonPublicEventIsFalseForPrivateEvent(): void
+    {
+        $this->insertPrivateSeason();
+        try {
+            $this->assertFalse(IsSeasonPublicEvent(self::PRIVATE_SEASON));
+            $this->assertTrue(IsSeasonPublicEvent('HRN2026'));
+        } finally {
+            $this->dropPrivateSeason();
+        }
+    }
+
+    public function testCanAccessSeasonDeniesAnonymousUserForPrivateEvent(): void
+    {
+        // The deny decision behind EnforcePrivateEventAccessForView's redirect+exit.
+        $this->insertPrivateSeason();
+        $_SESSION = [];
+        try {
+            // Anchor: the row exists and is private (a false result for a missing season
+            // would be a false pass — the same latent flaw this pass is meant to remove).
+            $this->assertIsArray(SeasonInfo(self::PRIVATE_SEASON));
+
+            // Privacy contrast for the SAME anonymous user: private → deny, public → allow.
+            // This proves the gate discriminates on privacy, not that access is hardwired off.
+            $this->assertFalse(CanAccessSeason(self::PRIVATE_SEASON));
+            $this->assertTrue(CanAccessSeason('HRN2026'));
+        } finally {
+            $this->dropPrivateSeason();
+        }
+    }
+
+    public function testCanAccessSeasonAllowsSuperAdminForPrivateEvent(): void
+    {
+        // A superadmin bypasses the private-event gate (allow branch of the same decision).
+        $this->insertPrivateSeason();
+        LegacyApp::loadUserFunctions();
+        LegacyApp::loginAsAdmin();
+        try {
+            $this->assertTrue(CanAccessSeason(self::PRIVATE_SEASON));
+        } finally {
+            $this->dropPrivateSeason();
+            $_SESSION = [];
+        }
+    }
+
     // ---- RequireSeasonPublicExternal ----
 
     public function testRequireSeasonPublicExternalReturnsEarlyForPublicSeason(): void

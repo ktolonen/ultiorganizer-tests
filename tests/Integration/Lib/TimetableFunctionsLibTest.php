@@ -250,56 +250,64 @@ final class TimetableFunctionsLibTest extends TestCase
 
     public function testTimetableGamesWithSpecificDateFilter(): void
     {
+        // Both fixture games are scheduled on 2026-06-01, so the date filter returns both.
         $games = TimetableGames('HRN2026', 'season', '2026-06-01', 'time');
-        $this->assertIsArray($games);
+        $ids = array_column($games, 'game_id');
+        $this->assertContains('700', $ids);
+        $this->assertContains('701', $ids);
+    }
+
+    /**
+     * Every ORDER BY variant of the 'all' timefilter must still return both fixture
+     * games (700 + 701) — ordering must not drop or duplicate rows. Asserting the id
+     * set (not the sequence) keeps the check strong without over-constraining order.
+     */
+    private function assertBothFixtureGamesPresent(array $games): void
+    {
+        $ids = array_column($games, 'game_id');
+        $this->assertContains('700', $ids);
+        $this->assertContains('701', $ids);
+        $this->assertCount(2, $games);
     }
 
     public function testTimetableGamesWithTournamentsOrder(): void
     {
-        $games = TimetableGames('HRN2026', 'season', 'all', 'tournaments');
-        $this->assertIsArray($games);
+        $this->assertBothFixtureGamesPresent(TimetableGames('HRN2026', 'season', 'all', 'tournaments'));
     }
 
     public function testTimetableGamesWithSeriesOrder(): void
     {
-        $games = TimetableGames('HRN2026', 'season', 'all', 'series');
-        $this->assertIsArray($games);
+        $this->assertBothFixtureGamesPresent(TimetableGames('HRN2026', 'season', 'all', 'series'));
     }
 
     public function testTimetableGamesWithPlacesOrder(): void
     {
-        $games = TimetableGames('HRN2026', 'season', 'all', 'places');
-        $this->assertIsArray($games);
+        $this->assertBothFixtureGamesPresent(TimetableGames('HRN2026', 'season', 'all', 'places'));
     }
 
     public function testTimetableGamesWithTournamentsDescOrder(): void
     {
-        $games = TimetableGames('HRN2026', 'season', 'all', 'tournamentsdesc');
-        $this->assertIsArray($games);
+        $this->assertBothFixtureGamesPresent(TimetableGames('HRN2026', 'season', 'all', 'tournamentsdesc'));
     }
 
     public function testTimetableGamesWithPlacesDescOrder(): void
     {
-        $games = TimetableGames('HRN2026', 'season', 'all', 'placesdesc');
-        $this->assertIsArray($games);
+        $this->assertBothFixtureGamesPresent(TimetableGames('HRN2026', 'season', 'all', 'placesdesc'));
     }
 
     public function testTimetableGamesWithOnepageOrder(): void
     {
-        $games = TimetableGames('HRN2026', 'season', 'all', 'onepage');
-        $this->assertIsArray($games);
+        $this->assertBothFixtureGamesPresent(TimetableGames('HRN2026', 'season', 'all', 'onepage'));
     }
 
     public function testTimetableGamesWithTimeDescOrder(): void
     {
-        $games = TimetableGames('HRN2026', 'season', 'all', 'timedesc');
-        $this->assertIsArray($games);
+        $this->assertBothFixtureGamesPresent(TimetableGames('HRN2026', 'season', 'all', 'timedesc'));
     }
 
     public function testTimetableGamesWithCrossmatchOrder(): void
     {
-        $games = TimetableGames('HRN2026', 'season', 'all', 'crossmatch');
-        $this->assertIsArray($games);
+        $this->assertBothFixtureGamesPresent(TimetableGames('HRN2026', 'season', 'all', 'crossmatch'));
     }
 
     public function testTimetableGamesWithGroupfilter(): void
@@ -467,14 +475,18 @@ final class TimetableFunctionsLibTest extends TestCase
 
     public function testTimetableGroupingReturnsArrayForPool(): void
     {
+        // game 700 (pool 200) is in the past, so the pool/past grouping is non-empty.
         $result = TimetableGrouping(200, 'pool', 'past');
         $this->assertIsArray($result);
+        $this->assertNotEmpty($result);
     }
 
     public function testTimetableGroupingForSeriesFilter(): void
     {
+        // series 100 has scheduled games, so the grouping is non-empty.
         $result = TimetableGrouping(100, 'series', 'all');
         $this->assertIsArray($result);
+        $this->assertNotEmpty($result);
     }
 
     public function testTimetableGroupingForPoolgroupFilter(): void
@@ -485,8 +497,10 @@ final class TimetableFunctionsLibTest extends TestCase
 
     public function testTimetableGroupingForTeamFilter(): void
     {
+        // team 300 plays scheduled games, so the team grouping is non-empty.
         $result = TimetableGrouping(300, 'team', 'all');
         $this->assertIsArray($result);
+        $this->assertNotEmpty($result);
     }
 
     public function testTimetableGroupingWithComingTimeFilter(): void

@@ -55,7 +55,9 @@ final class StatisticalFunctionsLibTest extends TestCase
 
     public function testIsStatsDataAvailableReturnsTruthyWhenStatsExist(): void
     {
-        $this->assertNotNull(IsStatsDataAvailable());
+        // Fixture has a uo_season_stats row, so the SELECT 1 returns 1 (truthy).
+        // assertNotNull was too weak — it would also pass on false/0/'' (stats absent).
+        $this->assertEquals(1, IsStatsDataAvailable());
     }
 
     // --- DeleteSeasonStats ---

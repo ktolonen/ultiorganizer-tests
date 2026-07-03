@@ -479,7 +479,9 @@ final class DatabaseLibTest extends TestCase
         $result = DBQuery("SELECT lat FROM uo_location WHERE id=400");
         $row = mysqli_fetch_assoc($result);
         $casted = DBCastArray($result, $row);
+        // Fixture location 400 has lat=60.1699; the cast must yield that float, not just any float.
         $this->assertIsFloat($casted['lat']);
+        $this->assertEqualsWithDelta(60.1699, $casted['lat'], 0.00001);
     }
 
     // --- Caching path (DBQueryCacheable returns true) ---
