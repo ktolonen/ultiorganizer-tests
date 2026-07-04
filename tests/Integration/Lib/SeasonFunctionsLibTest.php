@@ -42,8 +42,10 @@ final class SeasonFunctionsLibTest extends TestCase
 
     public function testSeasonPoolsWithoutFilters(): void
     {
+        // No visible/valid filter → still just the fixture's one pool.
         $pools = SeasonPools('HRN2026', false, false);
-        $this->assertIsArray($pools);
+        $this->assertCount(1, $pools);
+        $this->assertSame('Pool A', $pools[0]['poolname']);
     }
 
     // --- SeasonTypes ---
@@ -62,7 +64,7 @@ final class SeasonFunctionsLibTest extends TestCase
     {
         SeasonInfo('HRN2026');
         ClearSeasonRuntimeCache();
-        $this->assertIsArray(SeasonInfo('HRN2026'));
+        $this->assertSame('Harness Invitational 2026', SeasonInfo('HRN2026')['name']);
     }
 
     // --- CurrentSeason / CurrentSeasons ---
@@ -75,12 +77,15 @@ final class SeasonFunctionsLibTest extends TestCase
 
     public function testCurrentSeasonsReturnsArray(): void
     {
-        $this->assertIsArray(CurrentSeasons());
+        // Fixture has exactly one iscurrent=1 season.
+        $seasons = CurrentSeasons();
+        $this->assertCount(1, $seasons);
+        $this->assertSame('HRN2026', $seasons[0]['season_id']);
     }
 
     public function testCurrentSeasonNameReturnsString(): void
     {
-        $this->assertIsString(CurrentSeasonName());
+        $this->assertSame('Harness Invitational 2026', CurrentSeasonName());
     }
 
     // --- SeasonName / Seasontype ---
@@ -94,7 +99,9 @@ final class SeasonFunctionsLibTest extends TestCase
 
     public function testSeasontypeReturnsFixtureType(): void
     {
-        $this->assertIsString(Seasontype('HRN2026'));
+        // uo_season.type (event type: outdoor/indoor/...), distinct from uo_series.type
+        // (division type: open/womens/...), which the fixture sets to 'outdoor'.
+        $this->assertSame('outdoor', Seasontype('HRN2026'));
     }
 
     // --- SeasonInfo ---
@@ -115,7 +122,8 @@ final class SeasonFunctionsLibTest extends TestCase
 
     public function testIsSeasonPublicExternalReturnsBool(): void
     {
-        $this->assertIsBool(IsSeasonPublicExternal('HRN2026'));
+        // Fixture sets both public_event=1 and api_public=1 for HRN2026.
+        $this->assertTrue(IsSeasonPublicExternal('HRN2026'));
     }
 
     public function testIsSeasonPublicExternalReturnsFalseForEmptyId(): void
@@ -132,7 +140,8 @@ final class SeasonFunctionsLibTest extends TestCase
 
     public function testSeasonHomeTeamModeReturnsInt(): void
     {
-        $this->assertIsInt(SeasonHomeTeamMode('HRN2026'));
+        // uo_season.hometeammode defaults to 0; the fixture never sets it.
+        $this->assertSame(0, SeasonHomeTeamMode('HRN2026'));
     }
 
     // --- isEventReadonly / IsSeasonInMaintenance / CanBypassEventMaintenance ---
@@ -144,7 +153,8 @@ final class SeasonFunctionsLibTest extends TestCase
 
     public function testIsSeasonInMaintenanceReturnsBool(): void
     {
-        $this->assertIsBool(IsSeasonInMaintenance('HRN2026'));
+        // uo_season.maintenance_mode defaults to 0; the fixture never sets it.
+        $this->assertFalse(IsSeasonInMaintenance('HRN2026'));
     }
 
     public function testIsSeasonInMaintenanceReturnsFalseForEmptyId(): void
@@ -159,7 +169,10 @@ final class SeasonFunctionsLibTest extends TestCase
 
     public function testCanBypassEventMaintenanceReturnsBool(): void
     {
-        $this->assertIsBool(CanBypassEventMaintenance('HRN2026'));
+        // setUp() only loads season.functions.php ('database_only'), so isSuperAdmin/
+        // isSeasonAdmin (defined in user.functions.php) aren't even loaded → both
+        // function_exists checks fail → false, regardless of session state.
+        $this->assertFalse(CanBypassEventMaintenance('HRN2026'));
     }
 
     // --- MaintenanceSeasonFromView ---
@@ -239,34 +252,43 @@ final class SeasonFunctionsLibTest extends TestCase
     public function testSeasonsWithFilterReturnsResult(): void
     {
         $result = DBFetchAllAssoc(Seasons(['season.season_id' => 'HRN2026']));
-        $this->assertIsArray($result);
+        $this->assertCount(1, $result);
     }
 
     public function testPublicExternalSeasonsReturnsArray(): void
     {
-        $this->assertIsArray(PublicExternalSeasons());
+        // Fixture's only season has public_event=1 and api_public=1.
+        $result = PublicExternalSeasons();
+        $this->assertCount(1, $result);
+        $this->assertSame('HRN2026', $result[0]['season_id']);
     }
 
     public function testSeasonsAllInfoReturnsArray(): void
     {
-        $this->assertIsArray(SeasonsAllInfo());
+        // Fixture has exactly 1 season.
+        $this->assertCount(1, SeasonsAllInfo());
     }
 
     public function testSeasonsByTypeReturnsArray(): void
     {
-        $this->assertIsArray(SeasonsByType('open'));
+        // uo_season.type is 'outdoor' in the fixture, not 'open' (that's the series
+        // type); 'open' matches no season.
+        $this->assertSame([], SeasonsByType('open'));
+        $this->assertCount(1, SeasonsByType('outdoor'));
     }
 
     public function testEnrollSeasonsReturnsArray(): void
     {
-        $this->assertIsArray(EnrollSeasons());
+        // Fixture's season has enrollopen=0.
+        $this->assertSame([], EnrollSeasons());
     }
 
     // --- SeasonAllPlayers / SeasonMissingPlayerProfilesCount ---
 
     public function testSeasonAllPlayersReturnsArray(): void
     {
-        $this->assertIsArray(SeasonAllPlayers('HRN2026'));
+        // Fixture has 4 players across the season's 2 teams.
+        $this->assertCount(4, SeasonAllPlayers('HRN2026'));
     }
 
     public function testSeasonReservationsAndMissingProfilesReadFixtureState(): void
@@ -288,36 +310,49 @@ final class SeasonFunctionsLibTest extends TestCase
 
     public function testSeasonTeamsIncludingInvalidReturnsAll(): void
     {
-        $this->assertIsArray(SeasonTeams('HRN2026', false));
+        // Fixture has exactly 2 teams in this season.
+        $this->assertCount(2, SeasonTeams('HRN2026', false));
     }
 
     // --- SeasonReservationgroups / SeasonReservationLocations ---
 
     public function testSeasonReservationgroupsReturnsArray(): void
     {
-        $this->assertIsArray(SeasonReservationgroups('HRN2026'));
+        // Both fixture reservations (500, 501) share one reservationgroup.
+        $result = SeasonReservationgroups('HRN2026');
+        $this->assertCount(1, $result);
+        $this->assertSame('Harness Invitational 2026', $result[0]['reservationgroup']);
     }
 
     public function testSeasonReservationLocationsReturnsArray(): void
     {
-        $this->assertIsArray(SeasonReservationLocations('HRN2026'));
+        // DISTINCT is over (location, name, fieldname); the two fixture reservations
+        // share a location but have different fieldnames ('1' and '2') → 2 rows.
+        $result = SeasonReservationLocations('HRN2026');
+        $this->assertCount(2, $result);
+        $this->assertSame('1', $result[0]['fieldname']);
+        $this->assertSame('2', $result[1]['fieldname']);
     }
 
     public function testSeasonReservationLocationsWithGroupReturnsArray(): void
     {
-        $this->assertIsArray(SeasonReservationLocations('HRN2026', 'field'));
+        // 'field' matches no fixture reservationgroup (which is
+        // 'Harness Invitational 2026') → only exercises the group-filter branch.
+        $this->assertSame([], SeasonReservationLocations('HRN2026', 'field'));
     }
 
     // --- SeasonGamesNotScheduled / SeasonAllGames ---
 
     public function testSeasonGamesNotScheduledReturnsArray(): void
     {
-        $this->assertIsArray(SeasonGamesNotScheduled('HRN2026'));
+        // Both fixture games have a time and a reservation, so neither is "unscheduled".
+        $this->assertSame([], SeasonGamesNotScheduled('HRN2026'));
     }
 
     public function testSeasonAllGamesReturnsArray(): void
     {
-        $this->assertIsArray(SeasonAllGames('HRN2026'));
+        // Fixture has exactly 2 games (700, 701) in this season.
+        $this->assertCount(2, SeasonAllGames('HRN2026'));
     }
 
     // --- SeasonTeamAdmins / SeasonAccreditationAdmins / SeasonGameAdmins / SeasonSpiritAdmins / SeasonAdmins
@@ -325,16 +360,19 @@ final class SeasonFunctionsLibTest extends TestCase
 
     public function testSeasonAdminListingFunctionsAsSuperAdmin(): void
     {
+        // Fixture's only uo_userproperties row is ('admin','userrole','superadmin') —
+        // no 'teamadmin:'/'accradmin:'/'gameadmin:'/'spiritadmin:'/'seasonadmin:'
+        // entries — so every one of these role-listing queries is empty.
         LegacyApp::loadUserFunctions();
         LegacyApp::loginAsAdmin();
         try {
-            $this->assertIsArray(SeasonTeamAdmins('HRN2026'));
-            $this->assertIsArray(SeasonTeamAdmins('HRN2026', true));
-            $this->assertIsArray(SeasonAccreditationAdmins('HRN2026'));
-            $this->assertIsArray(SeasonAccreditationAdmins('HRN2026', true));
-            $this->assertIsArray(SeasonGameAdmins('HRN2026'));
-            $this->assertIsArray(SeasonSpiritAdmins('HRN2026'));
-            $this->assertIsArray(SeasonAdmins('HRN2026'));
+            $this->assertSame([], SeasonTeamAdmins('HRN2026'));
+            $this->assertSame([], SeasonTeamAdmins('HRN2026', true));
+            $this->assertSame([], SeasonAccreditationAdmins('HRN2026'));
+            $this->assertSame([], SeasonAccreditationAdmins('HRN2026', true));
+            $this->assertSame([], SeasonGameAdmins('HRN2026'));
+            $this->assertSame([], SeasonSpiritAdmins('HRN2026'));
+            $this->assertSame([], SeasonAdmins('HRN2026'));
         } finally {
             $_SESSION = [];
         }
@@ -659,9 +697,10 @@ final class SeasonFunctionsLibTest extends TestCase
 
     public function testEnrollSeasonsReturnsEmptyForNonExistentSource(): void
     {
-        // 'nonexistent' series/pool → no enrollments → returns []
+        // EnrollSeasons() takes no parameters; PHP silently ignores the extra args
+        // passed here. Same as the no-arg call: fixture's season has enrollopen=0.
         $result = EnrollSeasons([], 'HRN2026');
-        $this->assertIsArray($result);
+        $this->assertSame([], $result);
     }
 
     // ---- CurrentSeason ----

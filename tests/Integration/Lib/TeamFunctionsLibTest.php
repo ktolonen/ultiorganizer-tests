@@ -38,6 +38,24 @@ final class TeamFunctionsLibTest extends TestCase
         }
     }
 
+    /**
+     * Team 300's two fixture players (800 Ari Ace, 801 Bea Blade) tie on every
+     * ScoreBoard stat from game 700 (each scored once, assisted once, played once),
+     * so sort order always falls back to the lastname/firstname/num tiebreak, which
+     * puts 800 before 801 regardless of $sorting.
+     */
+    private function assertTeamScoreBoardRows(array $result): void
+    {
+        $this->assertCount(2, $result);
+        $this->assertSame('800', $result[0]['player_id']);
+        $this->assertSame('801', $result[1]['player_id']);
+        $this->assertEquals(1, $result[0]['done']);
+        $this->assertEquals(1, $result[0]['fedin']);
+        $this->assertEquals(0, $result[0]['callahan']);
+        $this->assertEquals(2, $result[0]['total']);
+        $this->assertEquals(1, $result[0]['games']);
+    }
+
     // Fixture: teams 300 (Helsinki Heat) + 301 (Tampere Tempest), series 100, pool 200,
     // season HRN2026, players 800 (Ari Ace) + 801 (Bea Blade) on team 300.
 
@@ -100,7 +118,10 @@ final class TeamFunctionsLibTest extends TestCase
 
     public function testTeamPlayerAccreditationArrayReturnsArray(): void
     {
-        $this->assertIsArray(TeamPlayerAccreditationArray(300));
+        // Regression guard: this function used to key its map by the nullable,
+        // non-unique accreditation_id, collapsing distinct players to one key
+        // (see project-sut-bugs-found memory); it now keys by player_id.
+        $this->assertSame(['800' => 'Ari Ace', '801' => 'Bea Blade'], TeamPlayerAccreditationArray(300));
     }
 
     public function testTeamPlayerListReturnsArray(): void
@@ -141,38 +162,53 @@ final class TeamFunctionsLibTest extends TestCase
 
     public function testTeamsWithFilterReturnsResult(): void
     {
+        // Both fixture teams (300, 301) are in season HRN2026.
         $teams = DBFetchAllAssoc(Teams(['season.season_id' => 'HRN2026']));
-        $this->assertIsArray($teams);
+        $this->assertCount(2, $teams);
     }
 
     public function testTeamListAllReturnsResult(): void
     {
-        $this->assertIsArray(DBFetchAllAssoc(TeamListAll()));
+        // Fixture has exactly 2 teams globally.
+        $this->assertCount(2, DBFetchAllAssoc(TeamListAll()));
     }
 
     public function testTeamListAllGroupedReturnsResult(): void
     {
-        $this->assertIsArray(DBFetchAllAssoc(TeamListAll(true)));
+        // Grouped by (team.name, ser.name); still 2 distinct team+series combos.
+        $this->assertCount(2, DBFetchAllAssoc(TeamListAll(true)));
     }
 
     public function testTeamListAllWithNameFilterReturnsResult(): void
     {
-        $this->assertIsArray(DBFetchAllAssoc(TeamListAll(false, false, 'Helsinki')));
+        // Only 'Helsinki Heat' matches the 'Helsinki' name-prefix filter.
+        $result = DBFetchAllAssoc(TeamListAll(false, false, 'Helsinki'));
+        $this->assertCount(1, $result);
+        $this->assertSame('Helsinki Heat', $result[0]['name']);
     }
 
     public function testTeamNameListBySeriesTypeReturnsArray(): void
     {
-        $this->assertIsArray(TeamNameListBySeriesType('open'));
+        // Both fixture teams are in series 100, type='open'; ordered by name ASC.
+        $result = TeamNameListBySeriesType('open');
+        $this->assertSame(['Helsinki Heat', 'Tampere Tempest'], array_column($result, 'name'));
     }
 
     public function testTeamGetTeamsByNameReturnsArray(): void
     {
-        $this->assertIsArray(TeamGetTeamsByName('Helsinki Heat'));
+        // Team 300 has a uo_team_stats row (required by the join) and matches the prefix.
+        $result = TeamGetTeamsByName('Helsinki Heat');
+        $this->assertCount(1, $result);
+        $this->assertEquals(300, $result[0]['team_id']);
     }
 
     public function testTeamPlayedSeasonsReturnsResult(): void
     {
-        $this->assertIsArray(DBFetchAllAssoc(TeamPlayedSeasons('Helsinki Heat', 'open')));
+        // Team 300 (Helsinki Heat) is in pool 200, series type 'open', season HRN2026.
+        $result = DBFetchAllAssoc(TeamPlayedSeasons('Helsinki Heat', 'open'));
+        $this->assertCount(1, $result);
+        $this->assertEquals(200, $result[0]['pool_id']);
+        $this->assertSame('HRN2026', $result[0]['season_id']);
     }
 
     // --- Pool / game reads ---
@@ -185,22 +221,33 @@ final class TeamFunctionsLibTest extends TestCase
 
     public function testTeamComingGamesReturnsResult(): void
     {
-        $this->assertIsArray(DBFetchAllAssoc(TeamComingGames(300, null)));
+        // placeId=null never matches either fixture game's real reservation (500/501).
+        $this->assertSame([], DBFetchAllAssoc(TeamComingGames(300, null)));
     }
 
     public function testTeamTournamentGamesReturnsResult(): void
     {
-        $this->assertIsArray(DBFetchAllAssoc(TeamTournamentGames(300, null)));
+        // placeId=null never matches either fixture game's real reservation (500/501).
+        $this->assertSame([], DBFetchAllAssoc(TeamTournamentGames(300, null)));
     }
 
     public function testTeamGamesReturnsResult(): void
     {
-        $this->assertIsArray(DBFetchAllAssoc(TeamGames(300)));
+        // Only game 700 has hasstarted>0; game 701 is excluded.
+        $result = DBFetchAllAssoc(TeamGames(300));
+        $this->assertCount(1, $result);
+        $this->assertEquals(700, $result[0]['game_id']);
     }
 
     public function testTeamSerieGamesReturnsArray(): void
     {
-        $this->assertIsArray(TeamSerieGames(300, 100));
+        // The $serieId param is actually filtered as a pool id (gp.pool='%s'); the
+        // fixture's pool is 200, not 100, so passing the series id (100) always
+        // returns empty. Use the real pool id to exercise the matching path.
+        $result = TeamSerieGames(300, 200);
+        $this->assertCount(2, $result);
+        $this->assertEquals(700, $result[0]['game_id']);
+        $this->assertEquals(701, $result[1]['game_id']);
     }
 
     public function testTeamPoolCountBYEsReturnsValue(): void
@@ -212,12 +259,19 @@ final class TeamFunctionsLibTest extends TestCase
 
     public function testTeamPoolGamesReturnsResult(): void
     {
-        $this->assertIsArray(DBFetchAllAssoc(TeamPoolGames(300, 200)));
+        // No hasstarted filter here, unlike TeamGames(): both fixture games qualify.
+        $result = DBFetchAllAssoc(TeamPoolGames(300, 200));
+        $this->assertCount(2, $result);
+        $this->assertEquals(700, $result[0]['game_id']);
+        $this->assertEquals(701, $result[1]['game_id']);
     }
 
     public function testTeamPoolGamesArrayReturnsArray(): void
     {
-        $this->assertIsArray(TeamPoolGamesArray(300, 200));
+        $result = TeamPoolGamesArray(300, 200);
+        $this->assertCount(2, $result);
+        $this->assertEquals(700, $result[0]['game_id']);
+        $this->assertEquals(701, $result[1]['game_id']);
     }
 
     public function testTeamPoolLastGameReturnsRowOrFalse(): void
@@ -228,12 +282,17 @@ final class TeamFunctionsLibTest extends TestCase
 
     public function testTeamGetNextGamesReturnsArray(): void
     {
-        $this->assertIsArray(TeamGetNextGames(300, 200));
+        // Earliest game by time (700, 10:00) beats game 701 (14:00).
+        $result = TeamGetNextGames(300, 200);
+        $this->assertEquals(700, $result['game_id']);
     }
 
     public function testTeamPoolGamesLeftReturnsArray(): void
     {
-        $this->assertIsArray(TeamPoolGamesLeft(300, 200));
+        // Only game 701 (hasstarted=0) is still left to play.
+        $result = TeamPoolGamesLeft(300, 200);
+        $this->assertCount(1, $result);
+        $this->assertEquals(701, $result[0]['game_id']);
     }
 
     public function testTeamStandingReturnsValue(): void
@@ -245,12 +304,16 @@ final class TeamFunctionsLibTest extends TestCase
 
     public function testTeamPoolGamesAgainstReturnsArray(): void
     {
-        $this->assertIsArray(TeamPoolGamesAgainst(300, 301, 200));
+        // visitorteam=teamId1(300) AND hometeam=teamId2(301) matches only game 701.
+        $result = TeamPoolGamesAgainst(300, 301, 200);
+        $this->assertCount(1, $result);
+        $this->assertEquals(701, $result[0]['game_id']);
     }
 
     public function testTeamResponsibleGamesReturnsArray(): void
     {
-        $this->assertIsArray(TeamResponsibleGames(300, null));
+        // placeId=null never matches either fixture game's real reservation (500/501).
+        $this->assertSame([], TeamResponsibleGames(300, null));
     }
 
     public function testSchedulingNameByMoveToReturnsValueOrNull(): void
@@ -263,7 +326,9 @@ final class TeamFunctionsLibTest extends TestCase
 
     public function testTeamPlayedGamesReturnsArray(): void
     {
-        $this->assertIsArray(TeamPlayedGames('Helsinki Heat', 'open', 'name'));
+        // curSeason defaults to false, which excludes ser.season == CurrentSeason()
+        // (HRN2026 is the fixture's current season), so this is always empty.
+        $this->assertSame([], TeamPlayedGames('Helsinki Heat', 'open', 'name'));
     }
 
     public function testTeamStatsByPoolReturnsRowOrFalse(): void
@@ -286,48 +351,68 @@ final class TeamFunctionsLibTest extends TestCase
 
     public function testTeamVictoryPointsByPoolReturnsValueOrArray(): void
     {
+        // Only game 700 (hasstarted>0) counts: team 300 won 15-11 (diff +4).
+        // uo_victorypoints maps pointdiff 4→19 and the opponent's -4→11.
         $result = TeamVictoryPointsByPool(200, 300);
-        $this->assertNotNull($result);
+        $this->assertEquals(1, $result['games']);
+        $this->assertEquals(4, $result['margin']);
+        $this->assertEquals(19, $result['victorypoints']);
+        $this->assertEquals(11, $result['oppvp']);
+        $this->assertEquals(15, $result['score']);
     }
 
     public function testTeamPointsReturnsArrayOrValue(): void
     {
+        // Team 300 scored 15, conceded 11, in its one hasstarted game (700).
         $result = TeamPoints(300);
-        $this->assertNotNull($result);
+        $this->assertEquals(15, $result['scores']);
+        $this->assertEquals(11, $result['against']);
     }
 
     public function testTeamPointsByPoolReturnsValueOrArray(): void
     {
         $result = TeamPointsByPool(200, 300);
-        $this->assertNotNull($result);
+        $this->assertEquals(15, $result['scores']);
+        $this->assertEquals(11, $result['against']);
     }
 
     public function testTeamScoreBoardArrayReturnsArray(): void
     {
-        $this->assertIsArray(TeamScoreBoardArray(300, [200], 'total', null));
+        $this->assertTeamScoreBoardRows(TeamScoreBoardArray(300, [200], 'total', null));
     }
 
     public function testTeamScoreBoardWithDefensesReturnsArray(): void
     {
         $result = TeamScoreBoardWithDefenses(300, [200], 'total', null);
-        $this->assertIsArray($result);
+        $this->assertTeamScoreBoardRows($result);
+        // Regression guard: the pools-branch query used to do `COALESCE(d.deftotal)`
+        // (missing the ",0" default that the no-pools branch has), so with no
+        // uo_defense rows for this team, deftotal came back NULL here instead of 0.
+        $this->assertEquals(0, $result[0]['deftotal']);
     }
 
     public function testGetAllPlayedGamesArrayReturnsArray(): void
     {
-        $this->assertIsArray(GetAllPlayedGamesArray(300, 301, 'open', 'name'));
+        // GetAllPlayedGames() matches on space-stripped team NAMES (REPLACE(name,' ',''))
+        // not team ids; game 700 (300 home vs 301 away, 15-11, hasstarted) is the only
+        // played meeting between these two fixture teams.
+        $result = GetAllPlayedGamesArray('HelsinkiHeat', 'TampereTempest', 'open', 'name');
+        $this->assertCount(1, $result);
+        $this->assertEquals(700, $result[0]['game_id']);
     }
 
     // --- CanDeletePlayer / TeamHasConfirmedEnrollment ---
 
     public function testCanDeletePlayerReturnsBool(): void
     {
-        $this->assertIsBool(CanDeletePlayer(800));
+        // Player 800 has a uo_played row for game 700, so it can't be deleted.
+        $this->assertFalse(CanDeletePlayer(800));
     }
 
     public function testTeamHasConfirmedEnrollmentReturnsBool(): void
     {
-        $this->assertIsBool(TeamHasConfirmedEnrollment(300));
+        // Fixture has no uo_enrolledteam rows at all.
+        $this->assertFalse(TeamHasConfirmedEnrollment(300));
     }
 
     // --- Admin write functions (superadmin via hasEditTeamsRight) ---
@@ -471,7 +556,8 @@ final class TeamFunctionsLibTest extends TestCase
             ]);
             TeamCopyRoster($sourceId, $targetId);
             self::flushQueryCaches();
-            $this->assertIsArray(TeamPlayerList($targetId));
+            // Empty source → the copy loop runs zero iterations; target stays empty.
+            $this->assertSame([], TeamPlayerList($targetId));
         } finally {
             foreach ([$sourceId, $targetId] as $tid) {
                 if ($tid !== null) {
@@ -689,9 +775,8 @@ final class TeamFunctionsLibTest extends TestCase
 
     public function testTeamAbbreviationReturnsAbbreviationForKnownTeam(): void
     {
-        // Team 300 (Harness FC) set up in fixture
-        $abbrev = TeamAbbreviation(300);
-        $this->assertNotNull($abbrev);
+        // Team 300 (Helsinki Heat) has abbreviation 'HEAT' in the fixture.
+        $this->assertSame('HEAT', TeamAbbreviation(300));
     }
 
     public function testTeamAbbreviationReturnsNullForUnknownTeam(): void
@@ -705,7 +790,9 @@ final class TeamFunctionsLibTest extends TestCase
     public function testTeamsToCsvReturnsCsvStringForKnownSeason(): void
     {
         $result = TeamsToCsv('HRN2026', ';');
-        $this->assertIsString($result);
+        $this->assertStringContainsString('"Team"', $result);
+        $this->assertStringContainsString('Helsinki Heat', $result);
+        $this->assertStringContainsString('Tampere Tempest', $result);
     }
 
     // ---- AddTeamProfileUrl / RemoveTeamProfileUrl ----
@@ -737,7 +824,8 @@ final class TeamFunctionsLibTest extends TestCase
         $_GET = ['query' => '300'];
         try {
             $result = GetTeamPlayers();
-            $this->assertIsArray($result);
+            $this->assertCount(2, $result);
+            $this->assertSame('Ace', $result[0]['lastname']);
         } finally {
             $_GET = [];
         }
@@ -748,7 +836,8 @@ final class TeamFunctionsLibTest extends TestCase
         $_GET = ['q' => '300'];
         try {
             $result = GetTeamPlayers();
-            $this->assertIsArray($result);
+            $this->assertCount(2, $result);
+            $this->assertSame('Ace', $result[0]['lastname']);
         } finally {
             $_GET = [];
         }
@@ -759,7 +848,8 @@ final class TeamFunctionsLibTest extends TestCase
         $_GET = ['search' => '300'];
         try {
             $result = GetTeamPlayers();
-            $this->assertIsArray($result);
+            $this->assertCount(2, $result);
+            $this->assertSame('Ace', $result[0]['lastname']);
         } finally {
             $_GET = [];
         }
@@ -795,46 +885,52 @@ final class TeamFunctionsLibTest extends TestCase
 
     public function testTeamPlayedGamesWithTeamSorting(): void
     {
+        // 'Harness FC' matches no fixture team name; only exercises the sort branch.
         $result = TeamPlayedGames('Harness FC', 'open', 'team');
-        $this->assertIsArray($result);
+        $this->assertSame([], $result);
     }
 
     public function testTeamPlayedGamesWithResultSorting(): void
     {
         $result = TeamPlayedGames('Harness FC', 'open', 'result');
-        $this->assertIsArray($result);
+        $this->assertSame([], $result);
     }
 
     public function testTeamPlayedGamesWithSerieSorting(): void
     {
         $result = TeamPlayedGames('Harness FC', 'open', 'serie');
-        $this->assertIsArray($result);
+        $this->assertSame([], $result);
     }
 
     public function testTeamPlayedGamesWithCurSeasonTrue(): void
     {
+        // 'Harness FC' still matches no fixture team, regardless of curSeason.
         $result = TeamPlayedGames('Harness FC', 'open', 'name', true);
-        $this->assertIsArray($result);
+        $this->assertSame([], $result);
     }
 
     // ---- GetAllPlayedGames (additional sorting branches) ----
 
     public function testGetAllPlayedGamesWithTeamSorting(): void
     {
-        $result = GetAllPlayedGamesArray(300, 301, 'open', 'team');
-        $this->assertIsArray($result);
+        // GetAllPlayedGames() matches on space-stripped team names, not ids.
+        $result = GetAllPlayedGamesArray('HelsinkiHeat', 'TampereTempest', 'open', 'team');
+        $this->assertCount(1, $result);
+        $this->assertEquals(700, $result[0]['game_id']);
     }
 
     public function testGetAllPlayedGamesWithResultSorting(): void
     {
-        $result = GetAllPlayedGamesArray(300, 301, 'open', 'result');
-        $this->assertIsArray($result);
+        $result = GetAllPlayedGamesArray('HelsinkiHeat', 'TampereTempest', 'open', 'result');
+        $this->assertCount(1, $result);
+        $this->assertEquals(700, $result[0]['game_id']);
     }
 
     public function testGetAllPlayedGamesWithSeriesSorting(): void
     {
-        $result = GetAllPlayedGamesArray(300, 301, 'open', 'series');
-        $this->assertIsArray($result);
+        $result = GetAllPlayedGamesArray('HelsinkiHeat', 'TampereTempest', 'open', 'series');
+        $this->assertCount(1, $result);
+        $this->assertEquals(700, $result[0]['game_id']);
     }
 
     // ---- SetTeam (additional country branches) ----
@@ -896,73 +992,73 @@ final class TeamFunctionsLibTest extends TestCase
     {
         // Covers else branch (no pool filter) in TeamScoreBoard
         $result = TeamScoreBoardArray(300, false, 'total', null);
-        $this->assertIsArray($result);
+        $this->assertTeamScoreBoardRows($result);
     }
 
     public function testTeamScoreBoardArrayWithGoalSorting(): void
     {
         $result = TeamScoreBoardArray(300, [200], 'goal', null);
-        $this->assertIsArray($result);
+        $this->assertTeamScoreBoardRows($result);
     }
 
     public function testTeamScoreBoardArrayWithCallahanSorting(): void
     {
         $result = TeamScoreBoardArray(300, [200], 'callahan', null);
-        $this->assertIsArray($result);
+        $this->assertTeamScoreBoardRows($result);
     }
 
     public function testTeamScoreBoardArrayWithPassSorting(): void
     {
         $result = TeamScoreBoardArray(300, [200], 'pass', null);
-        $this->assertIsArray($result);
+        $this->assertTeamScoreBoardRows($result);
     }
 
     public function testTeamScoreBoardArrayWithGamesSorting(): void
     {
         $result = TeamScoreBoardArray(300, [200], 'games', null);
-        $this->assertIsArray($result);
+        $this->assertTeamScoreBoardRows($result);
     }
 
     public function testTeamScoreBoardArrayWithTeamSorting(): void
     {
         $result = TeamScoreBoardArray(300, [200], 'team', null);
-        $this->assertIsArray($result);
+        $this->assertTeamScoreBoardRows($result);
     }
 
     public function testTeamScoreBoardArrayWithNameSorting(): void
     {
         $result = TeamScoreBoardArray(300, [200], 'name', null);
-        $this->assertIsArray($result);
+        $this->assertTeamScoreBoardRows($result);
     }
 
     public function testTeamScoreBoardArrayWithNumSorting(): void
     {
         $result = TeamScoreBoardArray(300, [200], 'num', null);
-        $this->assertIsArray($result);
+        $this->assertTeamScoreBoardRows($result);
     }
 
     public function testTeamScoreBoardArrayWithGoalavgSorting(): void
     {
         $result = TeamScoreBoardArray(300, [200], 'goalavg', null);
-        $this->assertIsArray($result);
+        $this->assertTeamScoreBoardRows($result);
     }
 
     public function testTeamScoreBoardArrayWithPassavgSorting(): void
     {
         $result = TeamScoreBoardArray(300, [200], 'passavg', null);
-        $this->assertIsArray($result);
+        $this->assertTeamScoreBoardRows($result);
     }
 
     public function testTeamScoreBoardArrayWithTotalavgSorting(): void
     {
         $result = TeamScoreBoardArray(300, [200], 'totalavg', null);
-        $this->assertIsArray($result);
+        $this->assertTeamScoreBoardRows($result);
     }
 
     public function testTeamScoreBoardArrayWithLimit(): void
     {
         $result = TeamScoreBoardArray(300, [200], 'total', 5);
-        $this->assertIsArray($result);
+        $this->assertTeamScoreBoardRows($result);
     }
 
     // ---- TeamScoreBoardWithDefenses (additional paths) ----
@@ -971,55 +1067,55 @@ final class TeamFunctionsLibTest extends TestCase
     {
         // Covers else branch in TeamScoreBoardWithDefenses
         $result = TeamScoreBoardWithDefenses(300, false, 'total', null);
-        $this->assertIsArray($result);
+        $this->assertTeamScoreBoardRows($result);
     }
 
     public function testTeamScoreBoardWithDefensesDeftotalSorting(): void
     {
         $result = TeamScoreBoardWithDefenses(300, [200], 'deftotal', null);
-        $this->assertIsArray($result);
+        $this->assertTeamScoreBoardRows($result);
     }
 
     public function testTeamScoreBoardWithDefensesGoalSorting(): void
     {
         $result = TeamScoreBoardWithDefenses(300, [200], 'goal', null);
-        $this->assertIsArray($result);
+        $this->assertTeamScoreBoardRows($result);
     }
 
     public function testTeamScoreBoardWithDefensesCallahanSorting(): void
     {
         $result = TeamScoreBoardWithDefenses(300, [200], 'callahan', null);
-        $this->assertIsArray($result);
+        $this->assertTeamScoreBoardRows($result);
     }
 
     public function testTeamScoreBoardWithDefensesPassSorting(): void
     {
         $result = TeamScoreBoardWithDefenses(300, [200], 'pass', null);
-        $this->assertIsArray($result);
+        $this->assertTeamScoreBoardRows($result);
     }
 
     public function testTeamScoreBoardWithDefensesGamesSorting(): void
     {
         $result = TeamScoreBoardWithDefenses(300, [200], 'games', null);
-        $this->assertIsArray($result);
+        $this->assertTeamScoreBoardRows($result);
     }
 
     public function testTeamScoreBoardWithDefensesTeamSorting(): void
     {
         $result = TeamScoreBoardWithDefenses(300, [200], 'team', null);
-        $this->assertIsArray($result);
+        $this->assertTeamScoreBoardRows($result);
     }
 
     public function testTeamScoreBoardWithDefensesNameSorting(): void
     {
         $result = TeamScoreBoardWithDefenses(300, [200], 'name', null);
-        $this->assertIsArray($result);
+        $this->assertTeamScoreBoardRows($result);
     }
 
     public function testTeamScoreBoardWithDefensesWithLimit(): void
     {
         $result = TeamScoreBoardWithDefenses(300, [200], 'total', 3);
-        $this->assertIsArray($result);
+        $this->assertTeamScoreBoardRows($result);
     }
 
     // ---- TeamListAll (onlyold and '#' namefilter branches) ----
@@ -1078,28 +1174,28 @@ final class TeamFunctionsLibTest extends TestCase
     {
         // String pools → line 810: $pools = explode(",", (string) $pools)
         $result = TeamScoreBoardArray(300, '200', 'total', null);
-        $this->assertIsArray($result);
+        $this->assertTeamScoreBoardRows($result);
     }
 
     public function testTeamScoreBoardArrayWithUnknownSortCoversDefaultCase(): void
     {
         // Unrecognised sort → default case (lines 921-922)
         $result = TeamScoreBoardArray(300, [200], 'UNKNOWN_SORT_XYZ', null);
-        $this->assertIsArray($result);
+        $this->assertTeamScoreBoardRows($result);
     }
 
     public function testTeamScoreBoardWithDefensesStringPoolsCoversExplodeBranch(): void
     {
         // String pools → line 942: $pools = explode(...)
         $result = TeamScoreBoardWithDefenses(300, '200', 'total', null);
-        $this->assertNotFalse($result);
+        $this->assertTeamScoreBoardRows($result);
     }
 
     public function testTeamScoreBoardWithDefensesUnknownSortCoversDefaultCase(): void
     {
         // Unrecognised sort → default case (lines 1047-1048)
         $result = TeamScoreBoardWithDefenses(300, [200], 'UNKNOWN_SORT_XYZ', null);
-        $this->assertNotFalse($result);
+        $this->assertTeamScoreBoardRows($result);
     }
 
     public function testAddPlayerWithExistingProfileIdCoversProfileLookupBranch(): void

@@ -235,7 +235,7 @@ final class PrivacyFunctionsLibTest extends TestCase
     public function testPrivacyLogPlayerReportExportLogsAndReturnsId(): void
     {
         $result = PrivacyLogPlayerReportExport(800, 'admin');
-        $this->assertNotFalse($result);
+        $this->assertGreaterThan(0, $result);
         self::flushQueryCaches();
         $count = DBQueryToValue("SELECT COUNT(*) FROM uo_event_log WHERE source='privacy' AND category='security'");
         $this->assertGreaterThan(0, (int) $count);
@@ -250,7 +250,7 @@ final class PrivacyFunctionsLibTest extends TestCase
     public function testPrivacyLogOperationWritesSecurityEvent(): void
     {
         $id = PrivacyLogOperation('admin', 'test privacy operation', 'player:800');
-        $this->assertNotFalse($id);
+        $this->assertGreaterThan(0, $id);
         DBQuery("DELETE FROM uo_event_log WHERE event_id=" . (int) $id);
     }
 
@@ -302,7 +302,7 @@ final class PrivacyFunctionsLibTest extends TestCase
     public function testPrivacyLogUserReportExportLogsAndReturnsId(): void
     {
         $result = PrivacyLogUserReportExport('admin', 'admin');
-        $this->assertNotFalse($result);
+        $this->assertGreaterThan(0, $result);
         DBQuery("DELETE FROM uo_event_log WHERE source='privacy'");
     }
 
@@ -521,7 +521,7 @@ final class PrivacyFunctionsLibTest extends TestCase
         [$profileId, $playerId] = $this->insertProfiledPlayer();
         try {
             $result = PrivacyLogPlayerReportExport($playerId, 'admin');
-            $this->assertNotFalse($result);
+            $this->assertGreaterThan(0, $result);
         } finally {
             $this->cleanupProfiledPlayer($profileId, $playerId);
         }

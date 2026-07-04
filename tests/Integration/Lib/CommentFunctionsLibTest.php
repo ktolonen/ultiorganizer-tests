@@ -171,14 +171,23 @@ final class CommentFunctionsLibTest extends TestCase
 
     public function testGameCommentMetaBuildsCreateCutoffAfterDeleteEvent(): void
     {
-        // Insert a delete event then a create event. The delete event triggers
-        // the cutoffSql branch (line 105) so only creates after the delete count.
+        // Log1's `time` column is a second-granularity timestamp, so events logged
+        // back-to-back via LogGameCommentEvent() can't reliably land on different
+        // sides of the cutoff. Insert explicit, well-separated timestamps directly
+        // so the create-before-delete row is unambiguously excluded.
         DBQuery("DELETE FROM uo_event_log WHERE category='game' AND source='comments' AND id1='700' AND id2='game'");
-        LogGameCommentEvent(700, COMMENT_TYPE_GAME, 'comment_delete');
-        LogGameCommentEvent(700, COMMENT_TYPE_GAME, 'comment_create');
+        DBQuery("INSERT INTO uo_event_log (user_id, category, type, source, id1, id2, time)
+			VALUES ('before_delete_user', 'game', 'comment_create', 'comments', '700', 'game', '2020-01-01 00:00:00')");
+        DBQuery("INSERT INTO uo_event_log (user_id, category, type, source, id1, id2, time)
+			VALUES ('deleter', 'game', 'comment_delete', 'comments', '700', 'game', '2020-06-01 00:00:00')");
+        DBQuery("INSERT INTO uo_event_log (user_id, category, type, source, id1, id2, time)
+			VALUES ('after_delete_user', 'game', 'comment_create', 'comments', '700', 'game', '2020-12-01 00:00:00')");
         try {
             $meta = GameCommentMeta(700, COMMENT_TYPE_GAME);
-            $this->assertIsArray($meta);
+            // Only the create logged after the most recent delete should count;
+            // the earlier create must be excluded by the cutoffSql filter.
+            $this->assertSame('after_delete_user', $meta['created_by']);
+            $this->assertSame('2020-12-01 00:00:00', $meta['created_at']);
         } finally {
             DBQuery("DELETE FROM uo_event_log WHERE category='game' AND source='comments' AND id1='700' AND id2='game'");
         }
@@ -274,17 +283,39 @@ final class CommentFunctionsLibTest extends TestCase
         $this->assertTrue(CanManageGameComment(700, COMMENT_TYPE_GAME));
     }
 
-    public function testCanManageGameCommentReturnsExpectedForNonAdminUser(): void
+    public function testCanManageGameCommentReturnsFalseForNonAdminNonCreator(): void
     {
         // game.functions.php defines GameRespTeam/GameSeries needed by
         // hasEditGameEventsRight; load it before calling with a logged-in user.
         LegacyApp::requireTopLevelLib('game.functions.php');
+        // Clear any comment_create/update/delete events left by other tests so the
+        // GameCommentMeta() fallback check has a known-empty created_by.
+        DBQuery("DELETE FROM uo_event_log WHERE category='game' AND source='comments' AND id1='700' AND id2='game'");
         // Regular logged-in user: not superadmin, not game admin.
-        // hasEditGameEventsRight(700) → false → falls through to GameCommentMeta check.
+        // hasEditGameEventsRight(700) → false → falls through to GameCommentMeta check,
+        // which is empty → not the creator either → false.
         $_SESSION['userproperties']['userrole'] = [];
         $result = CanManageGameComment(700, COMMENT_TYPE_GAME);
-        $this->assertIsBool($result);
+        $this->assertFalse($result);
         $_SESSION['userproperties']['userrole']['superadmin'] = true;
+    }
+
+    public function testCanManageGameCommentReturnsTrueForNonAdminCreator(): void
+    {
+        // Contrast case for the fallback branch: a non-admin who created the
+        // comment can still manage (edit/delete) it via the creator check
+        // (comment.functions.php:239).
+        LegacyApp::requireTopLevelLib('game.functions.php');
+        DBQuery("DELETE FROM uo_event_log WHERE category='game' AND source='comments' AND id1='700' AND id2='game'");
+        LogGameCommentEvent(700, COMMENT_TYPE_GAME, 'comment_create');
+        try {
+            $_SESSION['userproperties']['userrole'] = [];
+            $result = CanManageGameComment(700, COMMENT_TYPE_GAME);
+            $this->assertTrue($result);
+        } finally {
+            DBQuery("DELETE FROM uo_event_log WHERE category='game' AND source='comments' AND id1='700' AND id2='game'");
+            $_SESSION['userproperties']['userrole']['superadmin'] = true;
+        }
     }
 
     // --- CanManageSpiritComment ---
@@ -308,12 +339,17 @@ final class CommentFunctionsLibTest extends TestCase
         // game.functions.php defines GameSeries used by HasFullGameSpiritEditRight,
         // and GameRespTeam used by hasEditGameEventsRight inside CanManageGameComment.
         LegacyApp::requireTopLevelLib('game.functions.php');
+        // Fixture has no uo_spirit_score rows for game 700/team 300, so
+        // TeamSpiritSubmissionComplete() is false → SpiritSubmissionLocked() is false
+        // even though uo_season.lockteamspiritonsubmit defaults to 1 → the function
+        // falls through to SpiritTeamIdForCommentType (lines 253-259) then delegates
+        // to CanManageGameComment (lines 235-239).
+        DBQuery("DELETE FROM uo_event_log WHERE category='game' AND source='comments' AND id1='700' AND id2='spirit_home'");
         // Non-superadmin logged-in user: HasFullGameSpiritEditRight returns false,
-        // so the function falls through to the SpiritTeamIdForCommentType check
-        // (lines 253-259) and then delegates to CanManageGameComment (lines 235-239).
+        // not locked, and no spirit_home comment events → not the creator → false.
         $_SESSION['userproperties']['userrole'] = [];
         $result = CanManageSpiritComment(700, COMMENT_TYPE_SPIRIT_HOME);
-        $this->assertIsBool($result);
+        $this->assertFalse($result);
         $_SESSION['userproperties']['userrole']['superadmin'] = true;
     }
 
@@ -322,8 +358,18 @@ final class CommentFunctionsLibTest extends TestCase
     public function testLogGameCommentEventRunsWithoutErrorWhenLog1Defined(): void
     {
         // Log1 IS defined (from logging.functions.php, loaded via user.functions.php).
+        DBQuery("DELETE FROM uo_event_log WHERE category='game' AND source='comments' AND id1='700' AND id2='game'");
         LogGameCommentEvent(700, COMMENT_TYPE_GAME, 'comment_create');
-        $this->assertTrue(true);
+        try {
+            $row = DBQueryToRow(
+                "SELECT user_id, type FROM uo_event_log
+				WHERE category='game' AND source='comments' AND id1='700' AND id2='game'"
+            );
+            $this->assertSame('testuser', $row['user_id']);
+            $this->assertSame('comment_create', $row['type']);
+        } finally {
+            DBQuery("DELETE FROM uo_event_log WHERE category='game' AND source='comments' AND id1='700' AND id2='game'");
+        }
     }
 
     // --- CommentRequestedChange ---

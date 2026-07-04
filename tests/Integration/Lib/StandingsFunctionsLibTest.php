@@ -267,12 +267,15 @@ final class StandingsFunctionsLibTest extends TestCase
 
     public function testTeamPoolStandingReturnsValueForFixtureTeam(): void
     {
-        $this->assertNotNull(TeamPoolStanding(300, 200));
+        // Fixture seeds team 300 at activerank=1 in pool 200; no Resolve* call
+        // has run yet at this point in the suite.
+        $this->assertEquals(1, TeamPoolStanding(300, 200));
     }
 
     public function testManualFinalStandingsReturnsArrayForFixtureSeries(): void
     {
-        $this->assertIsArray(ManualFinalStandings(100));
+        // Fixture has no uo_team_final_standing rows for series 100.
+        $this->assertSame([], ManualFinalStandings(100));
     }
 
     public function testHasCompleteManualFinalStandingsReturnsFalseForFixtureSeries(): void
@@ -287,7 +290,8 @@ final class StandingsFunctionsLibTest extends TestCase
 
     public function testSeriesHasArchivedStatsReturnsBool(): void
     {
-        $this->assertIsBool(SeriesHasArchivedStats(100));
+        // Fixture seeds uo_team_stats rows for series 100 (teams 300, 301).
+        $this->assertTrue(SeriesHasArchivedStats(100));
     }
 
     public function testSeriesUnplayedGamesCountReturnsNonNegativeInt(): void
@@ -324,17 +328,19 @@ final class StandingsFunctionsLibTest extends TestCase
 
     public function testSeriesFinalStandingsReturnsArray(): void
     {
-        $this->assertIsArray(SeriesFinalStandings(100));
+        // No manual standings, and pool 200 has placementpool=0, so
+        // SeriesPlacementPoolIds(100) is empty and SeriesRanking(100) returns [].
+        $this->assertSame([], SeriesFinalStandings(100));
     }
 
     public function testSeriesFinalStandingsConfirmedReturnsBool(): void
     {
-        $this->assertIsBool(SeriesFinalStandingsConfirmed(100));
+        $this->assertFalse(SeriesFinalStandingsConfirmed(100));
     }
 
     public function testSeriesFinalStandingsMapReturnsArray(): void
     {
-        $this->assertIsArray(SeriesFinalStandingsMap(100));
+        $this->assertSame([], SeriesFinalStandingsMap(100));
     }
 
     public function testSeriesFinalStandingsMapCoversDisqualifiedAndElsePaths(): void
@@ -355,7 +361,9 @@ final class StandingsFunctionsLibTest extends TestCase
 
     public function testTeamSeriesStandingReturnsIntForFixtureTeam(): void
     {
-        $this->assertIsInt(TeamSeriesStanding(300));
+        // No placement pools for series 100, so TeamSeriesStanding falls back to
+        // TeamPoolStanding(300, 200), which is 1 (fixture's initial activerank).
+        $this->assertSame(1, TeamSeriesStanding(300));
     }
 
     // --- Pool standings resolution (mutate uo_team_pool and may create continuation-pool
@@ -415,10 +423,22 @@ final class StandingsFunctionsLibTest extends TestCase
     public function testResolveSeriesPoolStandingsUpdatesActiveRank(): void
     {
         $before = $this->seriesTeamIdSnapshot();
+        // Swap the fixture's initial ranks first so a correct outcome can only come
+        // from actually recomputing from game results (team 300 beat team 301 15-11
+        // in game 700), not from the algorithm being a no-op that leaves the
+        // fixture's original activerank values (1, 2) untouched.
+        DBQuery("UPDATE uo_team_pool SET activerank=2 WHERE pool=200 AND team=300");
+        DBQuery("UPDATE uo_team_pool SET activerank=1 WHERE pool=200 AND team=301");
+        self::flushQueryCaches();
         try {
             ResolveSeriesPoolStandings(200);
-            $this->assertNotNull(TeamPoolStanding(300, 200));
+            self::flushQueryCaches();
+            $this->assertEquals(1, TeamPoolStanding(300, 200));
+            $this->assertEquals(2, TeamPoolStanding(301, 200));
         } finally {
+            DBQuery("UPDATE uo_team_pool SET activerank=1 WHERE pool=200 AND team=300");
+            DBQuery("UPDATE uo_team_pool SET activerank=2 WHERE pool=200 AND team=301");
+            self::flushQueryCaches();
             $this->dropTeamsCreatedSince($before);
         }
     }
@@ -440,7 +460,15 @@ final class StandingsFunctionsLibTest extends TestCase
             ['team' => 300, 'wins' => 0, 'arank' => 1],
             ['team' => 301, 'wins' => 0, 'arank' => 1],
         ];
-        $this->assertIsArray(getMatchesWins($points, 200));
+        // Game 700 (started, decided): team 300 beat team 301 15-11.
+        // Game 701 has hasstarted=0, so it's excluded.
+        $result = getMatchesWins($points, 200);
+        $this->assertEquals(1, $result[0]['games']);
+        $this->assertEquals(1, $result[0]['wins']);
+        $this->assertEquals(0, $result[0]['losses']);
+        $this->assertEquals(1, $result[1]['games']);
+        $this->assertEquals(0, $result[1]['wins']);
+        $this->assertEquals(1, $result[1]['losses']);
     }
 
     public function testGetMatchesGoalsReturnsArrayForFixtureTeams(): void
@@ -449,7 +477,14 @@ final class StandingsFunctionsLibTest extends TestCase
             ['team' => 300, 'wins' => 0, 'arank' => 1],
             ['team' => 301, 'wins' => 0, 'arank' => 1],
         ];
-        $this->assertIsArray(getMatchesGoals($points, 200));
+        // Game 700: team 300 (home) scored 15, team 301 (visitor) scored 11.
+        $result = getMatchesGoals($points, 200);
+        $this->assertSame(15, $result[0]['goalsmade']);
+        $this->assertSame(11, $result[0]['goalsagainst']);
+        $this->assertSame(4, $result[0]['goalsdiff']);
+        $this->assertSame(11, $result[1]['goalsmade']);
+        $this->assertSame(15, $result[1]['goalsagainst']);
+        $this->assertSame(-4, $result[1]['goalsdiff']);
     }
 
     public function testGetMatchesWinsSharedReturnsArray(): void
@@ -458,7 +493,13 @@ final class StandingsFunctionsLibTest extends TestCase
             ['team' => 300, 'wins' => 0, 'arank' => 1],
             ['team' => 301, 'wins' => 0, 'arank' => 1],
         ];
-        $this->assertIsArray(getMatchesWins($points, 200, true));
+        // Both fixture teams are in $points, so the shared filter (hometeam/visitorteam
+        // IN sameteams) doesn't exclude game 700; result matches the unshared case.
+        $result = getMatchesWins($points, 200, true);
+        $this->assertEquals(1, $result[0]['games']);
+        $this->assertEquals(1, $result[0]['wins']);
+        $this->assertEquals(1, $result[1]['games']);
+        $this->assertEquals(0, $result[1]['wins']);
     }
 
     public function testGetMatchesGoalsSharedReturnsArray(): void
@@ -467,50 +508,53 @@ final class StandingsFunctionsLibTest extends TestCase
             ['team' => 300, 'wins' => 0, 'arank' => 1],
             ['team' => 301, 'wins' => 0, 'arank' => 1],
         ];
-        $this->assertIsArray(getMatchesGoals($points, 200, true));
+        $result = getMatchesGoals($points, 200, true);
+        $this->assertSame(15, $result[0]['goalsmade']);
+        $this->assertSame(11, $result[1]['goalsmade']);
     }
 
     // --- FinalStandingLabel ---
 
     public function testFinalStandingLabelReturnsGoldForFirst(): void
     {
-        $label = FinalStandingLabel(1);
-        $this->assertIsString($label);
+        $this->assertSame('Gold', FinalStandingLabel(1));
     }
 
     public function testFinalStandingLabelReturnsSilverForSecond(): void
     {
-        $this->assertIsString(FinalStandingLabel(2));
+        $this->assertSame('Silver', FinalStandingLabel(2));
     }
 
     public function testFinalStandingLabelReturnsBronzeForThird(): void
     {
-        $this->assertIsString(FinalStandingLabel(3));
+        $this->assertSame('Bronze', FinalStandingLabel(3));
     }
 
     public function testFinalStandingLabelReturnsOrdinalForFourthPlus(): void
     {
-        $this->assertIsString(FinalStandingLabel(4));
+        // GetDefaultLocale() (fixture: 'en_GB.utf8') → ordinal()'s English suffix branch.
+        $this->assertSame('4th', FinalStandingLabel(4));
     }
 
     public function testFinalStandingLabelReturnsUndecidedForZero(): void
     {
-        $this->assertIsString(FinalStandingLabel(0));
+        $this->assertSame('Undecided', FinalStandingLabel(0));
     }
 
     public function testFinalStandingLabelReturnsDisqualifiedLabel(): void
     {
-        $this->assertIsString(FinalStandingLabel(1, true));
+        $this->assertSame('Disqualified', FinalStandingLabel(1, true));
     }
 
     // --- FinalStandingsAdminOrder ---
 
     public function testFinalStandingsAdminOrderReturnsTeamsAndSource(): void
     {
+        // No manual standings, no season points, no live placement-pool order
+        // yet → falls to the count(manualByStanding)===0 default branch.
         $result = FinalStandingsAdminOrder('HRN2026', 100);
-        $this->assertIsArray($result);
-        $this->assertArrayHasKey('teams', $result);
-        $this->assertArrayHasKey('source', $result);
+        $this->assertSame('teams', $result['source']);
+        $this->assertCount(2, $result['teams']);
     }
 
     public function testFinalStandingsAdminOrderUsesManualSourceAndNullSlot(): void
@@ -554,8 +598,9 @@ final class StandingsFunctionsLibTest extends TestCase
 
     public function testFinalStandingsLiveOrderReturnsArray(): void
     {
+        // Pool 200 has placementpool=0, so SeriesRanking(100) is empty.
         $order = FinalStandingsLiveOrder(100);
-        $this->assertIsArray($order);
+        $this->assertSame([], $order);
     }
 
     // --- FinalStandingsSeasonPointsOrder (no season points in fixture → returns empty) ---
@@ -563,8 +608,9 @@ final class StandingsFunctionsLibTest extends TestCase
     public function testFinalStandingsSeasonPointsOrderReturnsEmptyForFixtureSeason(): void
     {
         $teams = SeriesTeams(100);
+        // No uo_season_round rows for series 100 → SeasonPointsRounds() is empty.
         $order = FinalStandingsSeasonPointsOrder('HRN2026', 100, $teams);
-        $this->assertIsArray($order);
+        $this->assertSame([], $order);
     }
 
     public function testFinalStandingsSeasonPointsOrderWithRoundDataSortsTeams(): void
@@ -953,7 +999,8 @@ final class StandingsFunctionsLibTest extends TestCase
             ResolveSwissdrawPoolStandings($poolId);
             self::flushQueryCaches();
             $rank = DBQueryToValue("SELECT activerank FROM uo_team_pool WHERE pool=$poolId AND team=$t1");
-            $this->assertNotNull($rank);
+            // t1 beat t2 15-9 in the only completed game; swissdraw sorts the winner first.
+            $this->assertSame('1', $rank);
         } finally {
             $this->dropResolvePool(3);
         }

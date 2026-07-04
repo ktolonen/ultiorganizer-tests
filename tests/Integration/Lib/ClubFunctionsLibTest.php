@@ -279,7 +279,7 @@ final class ClubFunctionsLibTest extends TestCase
 
         // teamId=300 is a fixture team; super-admin bypasses club-match check.
         $result = SetClubProfile(300, $profile);
-        $this->assertNotFalse($result);
+        $this->assertTrue($result);
 
         $info = ClubInfo($id);
         $this->assertSame('Profile Club Updated', $info['name']);
@@ -303,7 +303,7 @@ final class ClubFunctionsLibTest extends TestCase
         ];
 
         $result = SetClubProfile(300, $profile);
-        $this->assertNotFalse($result);
+        $this->assertTrue($result);
 
         $info = ClubInfo($id);
         $this->assertSame('1064', (string) $info['country']);
@@ -382,7 +382,7 @@ final class ClubFunctionsLibTest extends TestCase
         $id = $this->insertClub('URL Club');
 
         $added = AddClubProfileUrl(300, $id, 'homepage', 'https://example.com', 'Homepage');
-        $this->assertNotFalse($added);
+        $this->assertTrue($added);
 
         // Find the url_id we just created.
         $urlId = (int) DBQueryToValue(
@@ -391,7 +391,7 @@ final class ClubFunctionsLibTest extends TestCase
         $this->assertGreaterThan(0, $urlId);
 
         $removed = RemoveClubProfileUrl(300, $id, $urlId);
-        $this->assertNotFalse($removed);
+        $this->assertTrue($removed);
 
         $count = (int) DBQueryToValue(
             sprintf("SELECT COUNT(*) FROM uo_urls WHERE url_id=%d", $urlId)
@@ -471,10 +471,10 @@ final class ClubFunctionsLibTest extends TestCase
             $result = UploadClubImage(300, $id);
             $this->assertSame('', $result);
 
-            // Confirm DB was updated.
+            // Confirm DB was updated. UploadClubImage names the file time() . $clubId . '.jpg'.
             self::flushQueryCaches();
             $info = ClubInfo($id);
-            $this->assertNotNull($info['profile_image']);
+            $this->assertMatchesRegularExpression('/^\d+' . preg_quote((string) $id, '/') . '\.jpg$/', $info['profile_image']);
         } finally {
             unset($_FILES['picture']);
             if (is_file($tmpFile)) {

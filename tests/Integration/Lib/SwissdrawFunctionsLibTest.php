@@ -382,12 +382,13 @@ final class SwissdrawFunctionsLibTest extends TestCase
 
     public function testPoolTeamFromStandingsNoTiesSearchbackForTied(): void
     {
-        // Set both teams to activerank=1 so rank=2 is empty.
+        // Set both teams to activerank=1 so rank=2 is empty; the searchback (line 401)
+        // must resolve the tie by picking the second of the two tied teams (team_id
+        // order: 300 then 301), per the function's own "broken by team_id" docstring.
         DBQuery("UPDATE uo_team_pool SET activerank=1 WHERE pool=200 AND team=301");
         try {
             $row = PoolTeamFromStandingsNoTies(200, 2);
-            $this->assertIsArray($row);
-            $this->assertNotNull($row['team_id']);
+            $this->assertSame('301', (string) $row['team_id']);
         } finally {
             DBQuery("UPDATE uo_team_pool SET activerank=2 WHERE pool=200 AND team=301");
         }
