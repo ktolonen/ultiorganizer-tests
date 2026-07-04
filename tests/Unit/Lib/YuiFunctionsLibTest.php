@@ -17,8 +17,9 @@ final class YuiFunctionsLibTest extends TestCase
 
     public function testYuiLoadReturnsStringWithEmptyLibsList(): void
     {
+        // No libs requested -> the loader has nothing to emit tags for.
         $result = yuiLoad([]);
-        $this->assertIsString($result);
+        $this->assertSame('', $result);
     }
 
     public function testYuiLoadWithKnownLibReturnsNonEmptyString(): void
@@ -37,7 +38,8 @@ final class YuiFunctionsLibTest extends TestCase
         $result = yuiLoad([]);
 
         $styles_prefix = $prev;
-        $this->assertIsString($result);
+        // Only affects the loader's base path, still empty with no libs requested.
+        $this->assertSame('', $result);
     }
 
     public function testYuiLoadFallsBackToIncludePrefixWhenStylesPrefixUnset(): void
@@ -53,6 +55,6 @@ final class YuiFunctionsLibTest extends TestCase
 
         $styles_prefix  = $prevStyles;
         $include_prefix = $prevInclude;
-        $this->assertIsString($result);
+        $this->assertSame('', $result);
     }
 }
