@@ -573,7 +573,7 @@ final class CommonFunctionsLibTest extends TestCase
         $result = iget('foo');
         $_GET = [];
         // filter_input(INPUT_GET) returns null in CLI → GetString returns "" even though key was in $_GET
-        $this->assertIsString($result);
+        $this->assertSame('', $result);
     }
 
     public function testIgetFindsExactKeyFirst(): void
@@ -581,7 +581,8 @@ final class CommonFunctionsLibTest extends TestCase
         $_GET = ['foo' => 'bar'];
         $result = iget('foo');
         $_GET = [];
-        $this->assertIsString($result);
+        // Same CLI limitation: filter_input(INPUT_GET) can't see the superglobal override.
+        $this->assertSame('', $result);
     }
 
     public function testGetIntReturnsFalseOrNullForCLI(): void
@@ -912,11 +913,13 @@ final class CommonFunctionsLibTest extends TestCase
 
     public function testHandleVariableReturnsEmptyForUnknownVariable(): void
     {
+        // _handleVariable() returns "" for an unset variable; pool_id is an int column, so
+        // _handleLiteral()'s intval("") collapses it to 0.
         $result = CreateFilter(
             ['uo_pool' => 'pool'],
             ['field' => 'pool.pool_id', 'operator' => '=', 'value' => ['variable' => 'nonexistent_var_xyz123']],
         );
-        $this->assertIsString($result);
+        $this->assertSame('WHERE pool.pool_id = 0', $result);
     }
 
     public function testHandleVariableReadsFromGlobals(): void
@@ -1334,7 +1337,9 @@ final class CommonFunctionsLibTest extends TestCase
         if ($saved !== null) {
             $_SESSION['userproperties']['locale'] = $saved;
         }
-        $this->assertIsString($result);
+        // Falls back to this file's GetDefaultLocale() shim (not loaded from
+        // configuration.functions.php in this unit-test profile).
+        $this->assertSame('en_US', $result);
     }
 
     // ---- validEmail: quoted local part paths ----
@@ -1477,7 +1482,9 @@ final class CommonFunctionsLibTest extends TestCase
     {
         $invalid = "\xc0\x80"; // overlong UTF-8 encoding — not valid UTF-8
         $result = convertToUtf8($invalid, 'ISO-8859-1');
-        $this->assertIsString($result);
+        // Bytes are re-interpreted as ISO-8859-1 (0xC0 -> U+00C0, 0x80 -> U+0080) and
+        // re-encoded as UTF-8: C3 80 C2 80.
+        $this->assertSame("\xc3\x80\xc2\x80", $result);
     }
 
     // ---- ToInternalTimeFormat: date-only appends 00:00 ----
@@ -1599,7 +1606,8 @@ final class CommonFunctionsLibTest extends TestCase
                     'value'    => ['variable' => '_uo_harness_test_arr', 'key1' => 'missing_key'],
                 ],
             );
-            $this->assertIsString($result);
+            // Same "" -> intval("") -> 0 collapse as the unknown-variable case.
+            $this->assertSame('WHERE pool.pool_id = 0', $result);
         } finally {
             unset($GLOBALS['_uo_harness_test_arr']);
         }
