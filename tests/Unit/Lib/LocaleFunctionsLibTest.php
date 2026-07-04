@@ -135,8 +135,11 @@ final class LocaleFunctionsLibTest extends TestCase
 
     public function testGettextInstalledLocalesReturnsArray(): void
     {
+        // Depends on the container's `locale -a` output, which is environment-specific
+        // (currently just C/C.utf8/POSIX — see testGettextInstalledLocalesContainsCLocale
+        // for the one entry guaranteed to always be present).
         $locales = GettextInstalledLocales();
-        $this->assertIsArray($locales);
+        $this->assertNotEmpty($locales);
     }
 
     public function testGettextInstalledLocalesContainsCLocale(): void

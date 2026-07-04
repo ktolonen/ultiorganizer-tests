@@ -167,9 +167,12 @@ final class ApiFunctionsLibTest extends TestCase
 
         ApiTokenTouch($tokenId);
 
-        // Token should still be look-up-able after a touch.
+        // Token should still be look-up-able after a touch, with its scope unchanged.
         $row = ApiTokenLookup($created['token']);
-        $this->assertIsArray($row);
+        $this->assertSame($tokenId, $row['token_id']);
+        $this->assertSame('season', $row['scope_type']);
+        $this->assertSame('HRN2026', $row['scope_id']);
+        $this->assertSame(0, $row['revoked']);
 
         ApiTokenDelete($tokenId);
     }

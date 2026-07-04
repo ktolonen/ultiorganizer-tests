@@ -438,8 +438,10 @@ final class LoggingFunctionsLibTest extends TestCase
 
     public function testLogGetPageLoadsReturnsArray(): void
     {
+        // uo_pageload_counter starts empty and every earlier test's 'harness_test_*' pages are
+        // cleaned up in tearDown, so no rows exist by the time this test runs.
         $results = LogGetPageLoads();
-        $this->assertIsArray($results);
+        $this->assertSame([], $results);
     }
 
     // --- LogResetVisitorCounter / LogResetPageLoadCounter ---
