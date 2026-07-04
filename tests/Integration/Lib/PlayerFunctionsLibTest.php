@@ -243,7 +243,7 @@ final class PlayerFunctionsLibTest extends TestCase
     public function testSeasonPlayersMissingNumbersReturnsArray(): void
     {
         $result = SeasonPlayersMissingNumbers('HRN2026');
-        $this->assertIsArray($result);
+        $this->assertSame([], $result);
     }
 
     // --- SeasonPlayersDuplicateNumbers ---
@@ -251,7 +251,7 @@ final class PlayerFunctionsLibTest extends TestCase
     public function testSeasonPlayersDuplicateNumbersReturnsArray(): void
     {
         $result = SeasonPlayersDuplicateNumbers('HRN2026');
-        $this->assertIsArray($result);
+        $this->assertSame([], $result);
     }
 
     // --- SearchPlayerProfiles ---
@@ -657,8 +657,19 @@ final class PlayerFunctionsLibTest extends TestCase
 
     public function testPlayersToCsvReturnsStringWithFixtureSeasonData(): void
     {
+        // Includes the 4 fixture players plus the 2 disposable players setUp() inserts every
+        // test (Pekka Probe num=7, BrandNew Player num=5), ordered by team name then lastname.
         $csv = PlayersToCsv('HRN2026', ',');
-        $this->assertIsString($csv);
+        $this->assertSame(
+            '"FirstName","LastName","Jersey","TeamName","TeamAbbreviation","Club","Division","Country","Games","Assists","Goals","Callahans","Total"' . "\n" .
+            '"Ari","Ace","8","Helsinki Heat","HEAT",,"Open","Finland","1","1","1","0","2"' . "\n" .
+            '"Bea","Blade","12","Helsinki Heat","HEAT",,"Open","Finland","1","1","1","0","2"' . "\n" .
+            '"BrandNew","Player","5","Helsinki Heat","HEAT",,"Open","Finland",,"0","0","0","0"' . "\n" .
+            '"Pekka","Probe","7","Helsinki Heat","HEAT",,"Open","Finland",,"0","0","0","0"' . "\n" .
+            '"Nia","North","14","Tampere Tempest","TEMP",,"Open","Finland","1","1","1","0","2"' . "\n" .
+            '"Timo","Twist","7","Tampere Tempest","TEMP",,"Open","Finland","1","1","1","0","2"' . "\n",
+            $csv,
+        );
     }
 
     // --- UploadPlayerImage ---
