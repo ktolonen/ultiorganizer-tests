@@ -360,9 +360,17 @@ final class SpiritFunctionsLibTest extends TestCase
 
     public function testTeamSpiritTotalReturnsNonNullAfterSubmit(): void
     {
+        // TeamSpiritTotal()'s default (includeIncomplete=false) query gates on
+        // g.show_spirit=1, same as TeamSpiritTotalByPool (see
+        // testSpiritTotalByPoolIsGatedOnShowSpirit). Fixture game 700 has
+        // show_spirit=0, so a submission alone leaves the total null until the
+        // game is marked visible.
         $this->submitHomeSpirit();
-        $total = TeamSpiritTotal(300);
-        $this->assertNotNull($total);
+        $this->assertNull(TeamSpiritTotal(300)['total']);
+
+        DBQuery("UPDATE uo_game SET show_spirit=1 WHERE game_id=700");
+        // 5 categories submitted (4+3+4+4+3), each with factor=1 for mode 1003.
+        $this->assertEquals(18, TeamSpiritTotal(300)['total']);
     }
 
     public function testCountSpiritStatsReturnsZeroBeforeSubmit(): void
@@ -403,34 +411,48 @@ final class SpiritFunctionsLibTest extends TestCase
 
     public function testSeriesSpiritBoardReturnsArrayForSeries100(): void
     {
-        $board = SeriesSpiritBoard(100);
-        $this->assertIsArray($board);
+        // No uo_spirit_score rows and no fixture game has show_spirit=1 → no scores
+        // to aggregate, so the per-team loop never runs.
+        $this->assertSame([], SeriesSpiritBoard(100));
     }
 
     public function testSeriesSpiritBoardAlt2ReturnsArrayForSeries100(): void
     {
-        $board = SeriesSpiritBoardAlt2(100);
-        $this->assertIsArray($board);
+        $this->assertSame([], SeriesSpiritBoardAlt2(100));
     }
 
     public function testSeriesSpiritBoardTotalAveragesReturnsArray(): void
     {
-        $result = SeriesSpiritBoardTotalAverages(100);
-        $this->assertIsArray($result);
+        // Unlike SeriesSpiritBoard(), this always seeds $ret with a 'total' key
+        // (0.0, forced to null when zero rows match) — never a bare [].
+        $this->assertSame(['total' => null], SeriesSpiritBoardTotalAverages(100));
     }
 
     // --- SpiritMissingGames* ---
 
     public function testSpiritMissingGamesByPoolReturnsArray(): void
     {
+        // Game 700 is played (homescore+visitorscore>0) and isongoing=0, so it passes
+        // the base filter; with no spirit_score rows submitted by either team, both
+        // TeamSpiritSubmissionComplete() checks are false, so it's reported "missing".
+        // Game 701 is unplayed (no scores) and is excluded by the base filter.
         $result = SpiritMissingGamesByPool(200);
-        $this->assertIsArray($result);
+        $this->assertCount(1, $result);
+        $this->assertSame(700, $result[0]['game_id']);
+        $this->assertSame('Helsinki Heat', $result[0]['home']);
+        $this->assertSame('Tampere Tempest', $result[0]['visitor']);
+        $this->assertNull($result[0]['homesotg']);
+        $this->assertNull($result[0]['visitorsotg']);
     }
 
     public function testSpiritMissingGamesBySeriesReturnsArray(): void
     {
+        // Same underlying game (700) as SpiritMissingGamesByPool, joined via series
+        // instead of pool, and with an added poolname field.
         $result = SpiritMissingGamesBySeries(100);
-        $this->assertIsArray($result);
+        $this->assertCount(1, $result);
+        $this->assertSame(700, $result[0]['game_id']);
+        $this->assertSame('Pool A', $result[0]['poolname']);
     }
 
     // --- SpiritTeamIdByToken ---
@@ -480,8 +502,7 @@ final class SpiritFunctionsLibTest extends TestCase
 
     public function testSpiritkeeperGameTimeLabelReturnsTimeTbdWhenEmpty(): void
     {
-        $result = SpiritkeeperGameTimeLabel(['time' => '']);
-        $this->assertIsString($result);
+        $this->assertSame('Time TBD', SpiritkeeperGameTimeLabel(['time' => '']));
     }
 
     public function testSpiritkeeperGameTimeLabelReturnsFormattedTimeWhenSet(): void
@@ -530,7 +551,7 @@ final class SpiritFunctionsLibTest extends TestCase
     public function testSpiritkeeperTeamGamesUrlReturnsString(): void
     {
         $url = SpiritkeeperTeamGamesUrl(300, 'HRN2026');
-        $this->assertIsString($url);
+        $this->assertSame('?view=teamgames&season=HRN2026&team=300', $url);
     }
 
     // --- SpiritSubmissionLocked ---
@@ -622,110 +643,157 @@ final class SpiritFunctionsLibTest extends TestCase
 
     public function testSpiritToCsvReturnsStringForSeason(): void
     {
-        $csv = SpiritToCsv('HRN2026', ',');
-        $this->assertIsString($csv);
+        // SpiritToolRowsBySeason() is empty (no uo_spirit_score rows), and
+        // ArrayToCsv() returns '' for an empty row set.
+        $this->assertSame('', SpiritToCsv('HRN2026', ','));
     }
 
     // --- TeamSpiritStats / TeamSpiritStats2 ---
 
     public function testTeamSpiritStatsReturnsArray(): void
     {
+        // No spirit_score rows → tscore.total is always NULL/0, so the
+        // "COALESCE(tscore.total,0)>0" clause never matches; COUNT(*) still
+        // returns exactly one row with games=0.
         $result = TeamSpiritStats(300);
-        $this->assertIsArray($result);
+        $this->assertEquals(0, $result['games']);
     }
 
     public function testTeamSpiritStats2ReturnsArray(): void
     {
+        // Default includeIncomplete=false gates on show_spirit=1; fixture game 700
+        // has show_spirit=0, so games=0.
         $result = TeamSpiritStats2(300);
-        $this->assertIsArray($result);
+        $this->assertEquals(0, $result['games']);
     }
 
     // --- SpiritSeriesMissingPointRows ---
 
     public function testSpiritSeriesMissingPointRowsReturnsArray(): void
     {
+        // Game 700 (hasstarted>0, isongoing=0) qualifies; game 701 (hasstarted=0)
+        // doesn't. Neither team has submitted, so both get a "missing" row, sorted
+        // by teamname.
         $result = SpiritSeriesMissingPointRows(100);
-        $this->assertIsArray($result);
+        $this->assertCount(2, $result);
+        $this->assertSame(300, $result[0]['team_id']);
+        $this->assertSame('Helsinki Heat', $result[0]['teamname']);
+        $this->assertSame(301, $result[0]['giver_team_id']);
+        $this->assertSame(301, $result[1]['team_id']);
+        $this->assertSame('Tampere Tempest', $result[1]['teamname']);
     }
 
     // --- SpiritSeriesScoreRows ---
 
     public function testSpiritSeriesScoreRowsReturnsArray(): void
     {
-        $result = SpiritSeriesScoreRows(100);
-        $this->assertIsArray($result);
+        // Gates on show_spirit=1; fixture game 700 has show_spirit=0 and there are
+        // no uo_spirit_score rows anyway.
+        $this->assertSame([], SpiritSeriesScoreRows(100));
     }
 
     // --- SpiritTeamPointRows ---
 
     public function testSpiritTeamPointRowsReturnsArray(): void
     {
+        // Only game 700 qualifies (played, involves team 300); no submission yet,
+        // so total is null.
         $result = SpiritTeamPointRows('HRN2026', 300);
-        $this->assertIsArray($result);
+        $this->assertCount(1, $result);
+        $this->assertSame(700, $result[0]['game_id']);
+        $this->assertNull($result[0]['total']);
     }
 
     // --- SpiritToolRowsBySeason ---
 
     public function testSpiritToolRowsBySeasonReturnsArray(): void
     {
-        $rows = SpiritToolRowsBySeason('HRN2026');
-        $this->assertIsArray($rows);
+        // Reads uo_spirit_score, which is empty in the fixture.
+        $this->assertSame([], SpiritToolRowsBySeason('HRN2026'));
     }
 
     // --- SpiritTimeoutSummaryBySeason ---
 
     public function testSpiritTimeoutSummaryBySeasonReturnsArray(): void
     {
+        // Bare aggregate (no GROUP BY) always returns one row; fixture has no
+        // uo_spirit_timeout rows, so every count is 0.
         $result = SpiritTimeoutSummaryBySeason('HRN2026');
-        $this->assertIsArray($result);
+        $this->assertEquals(0, $result['total']);
+        $this->assertEquals(0, $result['games']);
+        $this->assertEquals(0, $result['home_total']);
+        $this->assertEquals(0, $result['away_total']);
     }
 
     // --- SpiritSotgUrlsBySeason ---
 
     public function testSpiritSotgUrlsBySeasonReturnsArray(): void
     {
+        // Both fixture teams, ordered by series name then team name; neither has
+        // a sotg_token set.
         $result = SpiritSotgUrlsBySeason('HRN2026');
-        $this->assertIsArray($result);
+        $this->assertCount(2, $result);
+        $this->assertSame('Helsinki Heat', $result[0]['team']);
+        $this->assertNull($result[0]['token']);
+        $this->assertSame('Tampere Tempest', $result[1]['team']);
     }
 
     // --- SpiritkeeperAccessibleTeams ---
 
     public function testSpiritkeeperAccessibleTeamsReturnsArray(): void
     {
+        // setUp() grants seasonadmin for HRN2026, which has spiritmode=1003 → both
+        // fixture teams are accessible, ordered by season/series/name.
         $teams = SpiritkeeperAccessibleTeams();
-        $this->assertIsArray($teams);
+        $this->assertCount(2, $teams);
+        $this->assertSame('Helsinki Heat', $teams[0]['name']);
+        $this->assertSame('Tampere Tempest', $teams[1]['name']);
     }
 
     // --- SpiritkeeperCurrentSeasons ---
 
     public function testSpiritkeeperCurrentSeasonsReturnsArray(): void
     {
+        // Fixture's only season (HRN2026) has iscurrent=1.
         $seasons = SpiritkeeperCurrentSeasons();
-        $this->assertIsArray($seasons);
+        $this->assertSame(['HRN2026'], array_keys($seasons));
     }
 
     // --- SpiritCategoryFactors ---
 
     public function testSpiritCategoryFactorsReturnsArray(): void
     {
+        // Reads ALL uo_spirit_category rows (no mode filter) — base schema seeds 25
+        // rows across modes 1001-1004. Mode 1003 (fixture's spiritmode) categories
+        // all have factor=1; mode 1004's "ours" categories (even index) have factor=0.
         $factors = SpiritCategoryFactors();
-        $this->assertIsArray($factors);
+        $this->assertCount(25, $factors);
+        $this->assertEquals(1, $factors[1009]);
+        $this->assertEquals(0, $factors[1016]);
     }
 
     // --- TeamSpiritPointsReceived / TeamSpiritPointsGiven ---
 
     public function testTeamSpiritPointsReceivedReturnsArray(): void
     {
+        // uo_spirit_score.team_id is the team being rated; submitHomeSpirit() inserts
+        // rows keyed to team 300, so "received" (ratedTeamId=teamId=300) sees them:
+        // total = 4+3+4+4+3 = 18 (factor=1 for every mode-1003 category).
         $this->submitHomeSpirit();
         $result = TeamSpiritPointsReceived('HRN2026', 300);
-        $this->assertIsArray($result);
+        $this->assertCount(1, $result);
+        $this->assertSame(700, $result[0]['game_id']);
+        $this->assertEquals(18, $result[0]['total']);
     }
 
     public function testTeamSpiritPointsGivenReturnsArray(): void
     {
+        // "Given" rates the opponent (301), but submitHomeSpirit() only inserted
+        // rows for team 300, so team 301's points are still unset → total is null.
         $this->submitHomeSpirit();
         $result = TeamSpiritPointsGiven('HRN2026', 300);
-        $this->assertIsArray($result);
+        $this->assertCount(1, $result);
+        $this->assertNull($result[0]['total']);
     }
 
     // --- CanViewSpiritScoresForGame / CanViewSpiritCommentsForGame ---
@@ -744,8 +812,8 @@ final class SpiritFunctionsLibTest extends TestCase
 
     public function testSpiritTeamIdForCommentTypeReturnsInt(): void
     {
-        $result = SpiritTeamIdForCommentType(700, 5);
-        $this->assertIsInt($result);
+        // type=5 is COMMENT_TYPE_SPIRIT_HOME → game 700's hometeam (300).
+        $this->assertSame(300, SpiritTeamIdForCommentType(700, 5));
     }
 
     // --- SpiritTokenHasOwnSubmission / SpiritTokenHasReceivedSubmission ---
@@ -764,14 +832,16 @@ final class SpiritFunctionsLibTest extends TestCase
 
     public function testSpiritTokenCanSubmitReturnsBoolForValidGame(): void
     {
-        $result = SpiritTokenCanSubmit(700, 300);
-        $this->assertIsBool($result);
+        // Game 700 has started, spiritmode set, event not readonly, and the rated
+        // opponent (301) hasn't completed a submission yet to trip the lock.
+        $this->assertTrue(SpiritTokenCanSubmit(700, 300));
     }
 
     public function testSpiritTokenCanViewReceivedPointsReturnsBoolForValidGame(): void
     {
-        $result = SpiritTokenCanViewReceivedPoints(700, 300);
-        $this->assertIsBool($result);
+        // Neither team has submitted anything yet, so team 300 has no "own
+        // submission" (of the opponent) to unlock viewing received points.
+        $this->assertFalse(SpiritTokenCanViewReceivedPoints(700, 300));
     }
 
     // --- SpiritTokenRatedTeamId ---
@@ -815,8 +885,9 @@ final class SpiritFunctionsLibTest extends TestCase
 
     public function testTeamSpiritCategoryStatsReturnsArray(): void
     {
-        $result = TeamSpiritCategoryStats(300, 'HRN2026', 1003);
-        $this->assertIsArray($result);
+        // Reads uo_team_spirit_stats, only populated by CalcTeamSpiritStats()
+        // (archival rebuild), which this test never runs.
+        $this->assertSame([], TeamSpiritCategoryStats(300, 'HRN2026', 1003));
     }
 
     // --- CalcTeamSpiritStats ---
@@ -902,9 +973,14 @@ final class SpiritFunctionsLibTest extends TestCase
             $points[(int) $cat['category_id']] = 2;
         }
 
+        // tokenTeamId=300 rates the opponent (301, ratedTeamId); points are valid
+        // (all 5 categories, values within 0-4), so this succeeds and creates a new
+        // spirit comment (ApplyCommentChange's "create" branch always returns true).
         $result = SpiritTokenSaveSubmissionWithComment(700, 300, $points, $categories, 'Good game!');
-        // May return true or false depending on comment infrastructure
-        $this->assertIsBool($result);
+        $this->assertTrue($result);
+        $this->assertSame(5, (int) DBQueryToValue(
+            "SELECT COUNT(*) FROM uo_spirit_score WHERE game_id=700 AND team_id=301"
+        ));
     }
 
     // --- TeamSpiritTotal with includeIncomplete ---
@@ -921,12 +997,15 @@ final class SpiritFunctionsLibTest extends TestCase
 
     public function testSpiritMissingGamesByPoolWithIncompleteSubmission(): void
     {
-        // Only home team submits → game 700 is incomplete
+        // Only home team submits → game 700 is still "missing" because both teams
+        // must be complete to be excluded; home's 5-category submission now gives a
+        // real homesotg (4+3+4+4+3=18), while visitor's stays null (nothing submitted).
         $this->submitHomeSpirit();
         $result = SpiritMissingGamesByPool(200);
-        $this->assertIsArray($result);
-        // Pool 200 has game 700 which is incomplete since visitor hasn't submitted
-        // (SpiritMissingGames returns games needing spirit)
+        $this->assertCount(1, $result);
+        $this->assertSame(700, $result[0]['game_id']);
+        $this->assertEquals(18, $result[0]['homesotg']);
+        $this->assertNull($result[0]['visitorsotg']);
     }
 
     // --- SpiritTokenHasOwnSubmission / HasReceivedSubmission after submit ---
@@ -1002,8 +1081,10 @@ final class SpiritFunctionsLibTest extends TestCase
 
     public function testSpiritkeeperCurrentAccessibleTeamsReturnsArray(): void
     {
+        // HRN2026 is the current season, so this matches SpiritkeeperAccessibleTeams().
         $teams = SpiritkeeperCurrentAccessibleTeams();
-        $this->assertIsArray($teams);
+        $this->assertCount(2, $teams);
+        $this->assertSame('Helsinki Heat', $teams[0]['name']);
     }
 
     // --- SpiritkeeperSeasonAccessibleTeams ---
@@ -1025,24 +1106,27 @@ final class SpiritFunctionsLibTest extends TestCase
 
     public function testSpiritkeeperSeasonTeamGroupsReturnsArray(): void
     {
+        // Single series ('Open') containing both accessible teams.
         $groups = SpiritkeeperSeasonTeamGroups('HRN2026');
-        $this->assertIsArray($groups);
+        $this->assertCount(1, $groups);
+        $this->assertSame('Open', $groups[0]['seriesname']);
+        $this->assertCount(2, $groups[0]['teams']);
     }
 
     // --- TeamSpiritCategoryHistoryAveragesByName ---
 
     public function testTeamSpiritCategoryHistoryAveragesByNameReturnsArray(): void
     {
-        $result = TeamSpiritCategoryHistoryAveragesByName('Helsinki Heat', 'open', 1003);
-        $this->assertIsArray($result);
+        // Same uo_team_spirit_stats dependency as TeamSpiritCategoryStats — empty
+        // unless CalcTeamSpiritStats() has been run.
+        $this->assertSame([], TeamSpiritCategoryHistoryAveragesByName('Helsinki Heat', 'open', 1003));
     }
 
     // --- TeamSpiritAveragesByName ---
 
     public function testTeamSpiritAveragesByNameReturnsArray(): void
     {
-        $result = TeamSpiritAveragesByName('Helsinki Heat', 'open');
-        $this->assertIsArray($result);
+        $this->assertSame([], TeamSpiritAveragesByName('Helsinki Heat', 'open'));
     }
 
     // --- SpiritSubmissionLocked ---
@@ -1103,8 +1187,8 @@ final class SpiritFunctionsLibTest extends TestCase
 
     public function testSpiritTimeoutGameRowsBySeasonReturnsArray(): void
     {
-        $rows = SpiritTimeoutGameRowsBySeason('HRN2026');
-        $this->assertIsArray($rows);
+        // GROUP BY query over uo_spirit_timeout, which the fixture never seeds.
+        $this->assertSame([], SpiritTimeoutGameRowsBySeason('HRN2026'));
     }
 
     public function testSpiritTimeoutGameRowsBySeasonReturnsEmptyForNoTimeouts(): void
