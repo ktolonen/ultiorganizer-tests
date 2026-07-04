@@ -401,7 +401,7 @@ final class UserFunctionsLibTest extends TestCase
     public function testGetPoolselectors(): void
     {
         $selectors = getPoolselectors('admin');
-        $this->assertIsArray($selectors);
+        $this->assertSame([], $selectors);
     }
 
     public function testGetUserLocale(): void
@@ -615,7 +615,7 @@ final class UserFunctionsLibTest extends TestCase
     public function testGetTeamAdmins(): void
     {
         $admins = GetTeamAdmins(300);
-        $this->assertIsArray($admins);
+        $this->assertSame([], $admins);
     }
 
     public function testUserExtraEmails(): void
@@ -886,7 +886,7 @@ final class UserFunctionsLibTest extends TestCase
     {
         // Superadmin has no explicit teamadmin role, returns empty array
         $result = TeamResponsibilities('admin', 'HRN2026');
-        $this->assertIsArray($result);
+        $this->assertSame([], $result);
     }
 
     public function testGameResponsibilitiesAsSuperadmin(): void
@@ -905,8 +905,17 @@ final class UserFunctionsLibTest extends TestCase
 
     public function testGameResponsibilityArray(): void
     {
+        // As superadmin, GameResponsibilities('HRN2026') includes both fixture games. Both
+        // reservations share one reservationgroup, so the result nests by reservation id (500,
+        // 501) under that single group key.
         $result = GameResponsibilityArray('HRN2026');
-        $this->assertIsArray($result);
+        $this->assertSame(['Harness Invitational 2026'], array_keys($result));
+        $group = $result['Harness Invitational 2026'];
+        $this->assertSame([500, 501], array_keys($group));
+        $this->assertSame('700', $group[500][700]['game_id']);
+        $this->assertSame('15', $group[500][700]['homescore']);
+        $this->assertSame('701', $group[501][701]['game_id']);
+        $this->assertNull($group[501][701]['homescore']);
     }
 
     // --- Additional coverage tests ---
@@ -975,8 +984,14 @@ final class UserFunctionsLibTest extends TestCase
             'series'        => [100 => 4],
             'pool'          => [200 => 5],
         ];
+        // All 5 OR'd conditions resolve to the same fixture pool 200, so the result is just
+        // that one row (not 5 duplicates - it's a WHERE, not a UNION).
         $pools = getViewPools('HRN2026');
-        $this->assertIsArray($pools);
+        $this->assertCount(1, $pools);
+        $this->assertSame('200', $pools[0]['pool']);
+        $this->assertSame('Pool A', $pools[0]['pool_name']);
+        $this->assertSame('100', $pools[0]['series']);
+        $this->assertSame('HRN2026', $pools[0]['season']);
     }
 
     public function testReadonlySeasonBlocksEditing(): void
@@ -1389,9 +1404,11 @@ final class UserFunctionsLibTest extends TestCase
     {
         LegacyApp::loginAsAdmin();
         try {
-            // HRN2026 has admin user as superadmin (not season-scoped) → preview returns empty or low count
+            // admin's only uo_userproperties 'userrole' value is 'superadmin' (not season-scoped),
+            // which doesn't match any of the season/series/team/game/reservation-scoped
+            // prefixes EventScopedUserRoleRows() looks for, so the result is empty.
             $rows = EventUserRoleCleanupPreview('HRN2026');
-            $this->assertIsArray($rows);
+            $this->assertSame([], $rows);
         } finally {
             $_SESSION = [];
         }
