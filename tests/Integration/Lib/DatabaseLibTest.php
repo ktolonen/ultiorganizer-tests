@@ -84,7 +84,11 @@ final class DatabaseLibTest extends TestCase
 
     public function testDBUserErrorMessageReturnsString(): void
     {
-        $this->assertIsString(DBUserErrorMessage());
+        // Fixed constant message, not derived from any error state.
+        $this->assertSame(
+            'Service is temporarily unavailable. Please try again shortly. If the problem persists, please contact the event organizer.',
+            DBUserErrorMessage(),
+        );
     }
 
     public function testDBErrorReturnsEmptyStringWhenNoError(): void
@@ -97,7 +101,9 @@ final class DatabaseLibTest extends TestCase
 
     public function testDBShouldThrowExceptionsReturnsBool(): void
     {
-        $this->assertIsBool(DBShouldThrowExceptions());
+        // Reads $GLOBALS['db_throw_exceptions'], unset by default (false) before any test
+        // in this class calls DBSetExceptionMode().
+        $this->assertFalse(DBShouldThrowExceptions());
     }
 
     public function testDBSetExceptionModeTogglesState(): void
@@ -349,29 +355,39 @@ final class DatabaseLibTest extends TestCase
 
     public function testDBStatReturnsString(): void
     {
-        $this->assertIsString(DBStat());
+        // Counters (uptime, questions, etc.) change every run — assert the mysqli_stat format
+        // instead of an exact value.
+        $stat = DBStat();
+        $this->assertStringStartsWith('Uptime: ', $stat);
+        $this->assertStringContainsString('Threads: ', $stat);
+        $this->assertStringContainsString('Questions: ', $stat);
     }
 
     public function testDBClientInfoReturnsString(): void
     {
-        $this->assertIsString(DBClientInfo());
+        // mysqlnd version string; assert the driver name rather than the exact PHP patch version.
+        $this->assertStringStartsWith('mysqlnd ', DBClientInfo());
     }
 
     public function testDBHostInfoReturnsString(): void
     {
-        $this->assertIsString(DBHostInfo());
+        // Harness always connects to the docker-compose 'mariadb' service over TCP.
+        $this->assertSame('mariadb via TCP/IP', DBHostInfo());
     }
 
     public function testDBServerInfoReturnsString(): void
     {
-        $this->assertIsString(DBServerInfo());
+        // MariaDB 10.11.x per docker-compose.yml's pinned image tag; assert the major.minor
+        // series and vendor rather than the exact patch/build suffix.
+        $this->assertMatchesRegularExpression('/^10\.11\.\d+-MariaDB/', DBServerInfo());
     }
 
     // --- DBProtocolInfo ---
 
     public function testDBProtocolInfoReturnsInteger(): void
     {
-        $this->assertIsInt(DBProtocolInfo());
+        // The MySQL wire protocol version has been a stable constant (10) since MySQL 4.1.
+        $this->assertSame(10, DBProtocolInfo());
     }
 
     // --- DBNumRows ---
@@ -557,8 +573,11 @@ final class DatabaseLibTest extends TestCase
     {
         // "\xc0\x80" is an overlong encoding — invalid UTF-8. mb_check_encoding fails
         // so DBEscapeString calls convertToUtf8() before escaping.
+        // convertToUtf8() falls back to treating the input as ISO-8859-1: 0xC0 -> U+00C0 (À),
+        // 0x80 -> U+0080 (control), re-encoded as UTF-8 bytes C3 80 C2 80. Neither byte needs
+        // escaping, so DBEscapeString leaves the converted string unchanged.
         $result = DBEscapeString("\xc0\x80");
-        $this->assertIsString($result);
+        $this->assertSame("\xc3\x80\xc2\x80", $result);
     }
 
     // --- GetServerName ---
