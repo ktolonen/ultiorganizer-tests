@@ -279,8 +279,9 @@ final class GameFunctionsLibTest extends TestCase
 
     public function testGameAdminsReturnsArray(): void
     {
+        // No 'gameadmin:700' userproperties row exists in the fixture.
         $admins = GameAdmins(700);
-        $this->assertIsArray($admins);
+        $this->assertSame([], $admins);
     }
 
     // --- GamePool ---
@@ -495,8 +496,11 @@ final class GameFunctionsLibTest extends TestCase
 
     public function testGameAllArrayReturnsPhpArray(): void
     {
+        // 100 is the row limit here, not a season/series id. Only game 700 has
+        // hasstarted>0 AND isongoing=0 (701 hasstarted=0), so it's the sole match.
         $games = GameAllArray(100);
-        $this->assertIsArray($games);
+        $this->assertCount(1, $games);
+        $this->assertSame('700', $games[0]['game_id']);
     }
 
     // --- GamePlayerFromNumber ---
@@ -524,14 +528,24 @@ final class GameFunctionsLibTest extends TestCase
 
     public function testGameTeamDefenseBoardArrayReturnsArray(): void
     {
+        // Both fixture players on team 300 (800, 801) played game 700; no uo_defense rows
+        // exist, so every rostered player comes back with done=0 via the RIGHT JOIN.
         $board = GameTeamDefenseBoardArray(700, 300);
-        $this->assertIsArray($board);
+        $this->assertCount(2, $board);
+        $ids = array_column($board, 'player_id');
+        sort($ids);
+        $this->assertSame(['800', '801'], $ids);
+        foreach ($board as $row) {
+            $this->assertEquals(0, $row['done']);
+        }
     }
 
     public function testGameScoreBoardArrayReturnsArray(): void
     {
+        // GameScoreBoard requires p.profile_id IS NOT NULL; fixture players all have
+        // profile_id=NULL, so this is always empty.
         $board = GameScoreBoardArray(700);
-        $this->assertIsArray($board);
+        $this->assertSame([], $board);
     }
 
     // --- GameGoals / GameDefenses / GameLastGoal ---
@@ -552,8 +566,9 @@ final class GameFunctionsLibTest extends TestCase
 
     public function testGameDefensesReturnsArray(): void
     {
+        // Fixture has no uo_defense rows.
         $defenses = GameDefenses(700);
-        $this->assertIsArray($defenses);
+        $this->assertSame([], $defenses);
     }
 
     public function testGameLastGoalReturnsHighestNumGoal(): void
@@ -614,34 +629,39 @@ final class GameFunctionsLibTest extends TestCase
 
     public function testGameEventsReturnsArray(): void
     {
+        // Fixture has no uo_timeout, uo_spirit_timeout, or uo_gameevent rows.
         $events = GameEvents(700);
-        $this->assertIsArray($events);
+        $this->assertSame([], $events);
     }
 
     public function testGameMediaEventsReturnsArray(): void
     {
+        // Fixture has no uo_gameevent rows of type 'media'.
         $events = GameMediaEvents(700);
-        $this->assertIsArray($events);
+        $this->assertSame([], $events);
     }
 
     // --- GameTimeouts / GameSpiritTimeouts ---
 
     public function testGameTimeoutsReturnsArray(): void
     {
+        // Fixture has no uo_timeout rows.
         $timeouts = GameTimeouts(700);
-        $this->assertIsArray($timeouts);
+        $this->assertSame([], $timeouts);
     }
 
     public function testGameSpiritTimeoutsArrayReturnsArray(): void
     {
+        // Fixture has no uo_spirit_timeout rows.
         $timeouts = GameSpiritTimeoutsArray(700);
-        $this->assertIsArray($timeouts);
+        $this->assertSame([], $timeouts);
     }
 
     public function testGameTurnoversArrayReturnsArray(): void
     {
+        // Fixture has no uo_gameevent rows of type 'turnover'.
         $turnovers = GameTurnoversArray(700);
-        $this->assertIsArray($turnovers);
+        $this->assertSame([], $turnovers);
     }
 
     // --- GameInfo ---
@@ -1215,26 +1235,27 @@ final class GameFunctionsLibTest extends TestCase
 
     public function testUnscheduledPoolGameInfoReturnsArray(): void
     {
+        // Both fixture games have a reservation and a time set, so neither is "unscheduled".
         $result = UnscheduledPoolGameInfo(200);
-        $this->assertIsArray($result);
+        $this->assertSame([], $result);
     }
 
     public function testUnscheduledSeriesGameInfoReturnsArray(): void
     {
         $result = UnscheduledSeriesGameInfo(100);
-        $this->assertIsArray($result);
+        $this->assertSame([], $result);
     }
 
     public function testUnscheduledSeasonGameInfoReturnsArray(): void
     {
         $result = UnscheduledSeasonGameInfo('HRN2026');
-        $this->assertIsArray($result);
+        $this->assertSame([], $result);
     }
 
     public function testUnscheduledGameInfoWithTeamFilterReturnsArray(): void
     {
         $result = UnscheduledGameInfo([300, 301]);
-        $this->assertIsArray($result);
+        $this->assertSame([], $result);
     }
 
     // --- ScheduleGame / UnScheduleGame ---
@@ -1378,7 +1399,10 @@ final class GameFunctionsLibTest extends TestCase
         $html = GameProcessMassInput($post);
         ob_end_clean();
 
-        $this->assertIsString($html);
+        $this->assertStringContainsString('Results cleared: 1', $html);
+        $info = GameInfo($gameId);
+        $this->assertNull($info['homescore']);
+        $this->assertNull($info['visitorscore']);
     }
 
     public function testGameProcessMassInputSetsResult(): void
@@ -1504,15 +1528,33 @@ final class GameFunctionsLibTest extends TestCase
         $this->assertStringContainsString('warning', $result);
     }
 
-    public function testCheckGameResultReturnsEmptyForValidInputOnUnlockedPool(): void
+    public function testCheckGameResultReturnsWarningForLockedPool(): void
     {
-        // Game 701 (no score yet, unlocked): score 5:3 with valid checksum
-        // getChkNum('701') = (10 - (7*1 + 0*3 + 1*7)%10)%10 = (10-(7+0+7)%10)%10 = (10-4)%10 = 6
-        // So valid scoresheet string for game 701 is '7016'
-        // Season HRN2026 has stats calculated, so "Event played" error will appear — result is non-empty.
-        // This test just exercises the code path without the scoresheet/negative errors.
+        // Game 701, valid checksum '7016' (getChkNum('701')=6), valid score 5:3.
+        // IsPoolLocked() reads uo_pool.played directly, but other tests in this suite call
+        // GameSetResult/GameClearResult against pool 200 (the createTempGame() default),
+        // which recalculate that flag via PoolResolvePlayed as a side effect — so its value
+        // can't be assumed from the static fixture insert. Set it explicitly for determinism.
+        DBQuery("UPDATE uo_pool SET played=1 WHERE pool_id=200");
+        try {
+            $result = CheckGameResult('7016', 5, 3);
+            $this->assertStringContainsString('Pool is locked.', $result);
+            $this->assertStringContainsString('Event played.', $result);
+            $this->assertStringNotContainsString('Erroneous scoresheet number', $result);
+            $this->assertStringNotContainsString('Points must be between', $result);
+            $this->assertStringNotContainsString('No goals.', $result);
+        } finally {
+            DBQuery("UPDATE uo_pool SET played=0 WHERE pool_id=200");
+        }
+    }
+
+    public function testCheckGameResultOmitsLockWarningWhenPoolUnlocked(): void
+    {
+        // Contrast: same call, but with the pool explicitly marked unlocked.
+        DBQuery("UPDATE uo_pool SET played=0 WHERE pool_id=200");
         $result = CheckGameResult('7016', 5, 3);
-        $this->assertIsString($result);
+        $this->assertStringNotContainsString('Pool is locked.', $result);
+        $this->assertStringContainsString('Event played.', $result);
     }
 
     // --- PoolDeleteAllGames ---
