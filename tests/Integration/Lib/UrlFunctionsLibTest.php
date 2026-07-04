@@ -69,11 +69,10 @@ final class UrlFunctionsLibTest extends TestCase
 
     public function testGetUrlListByTypeArrayReturnsMatchingRows(): void
     {
+        // GetUrlListByTypeArray hardcodes owner='ultiorganizer', but the fixture's menulink
+        // row has owner='season' — it never matches, regardless of type/ownerId.
         $rows = GetUrlListByTypeArray(['menulink'], 'HRN2026');
-        $this->assertIsArray($rows);
-        // uo_urls owner='ultiorganizer' rows — may be empty in baseline fixture
-        // Assert just that it runs and returns an array
-        $this->assertIsArray($rows);
+        $this->assertSame([], $rows);
     }
 
     public function testGetMediaUrlListReturnsEmptyForNoMediaLinks(): void
@@ -85,15 +84,17 @@ final class UrlFunctionsLibTest extends TestCase
 
     public function testGetMediaUrlListGameOwnerBranchReturnsArray(): void
     {
-        // Game owner — uses different JOIN query
+        // Game owner — uses different JOIN query, but still requires ismedialink=1, and no
+        // fixture uo_urls row has that flag set.
         $rows = GetMediaUrlList('game', '1');
-        $this->assertIsArray($rows);
+        $this->assertSame([], $rows);
     }
 
     public function testGetMediaUrlListWithTypeFilterReturnsArray(): void
     {
+        // No fixture uo_urls row has ismedialink=1, regardless of the type filter.
         $rows = GetMediaUrlList('season', 'HRN2026', 'image');
-        $this->assertIsArray($rows);
+        $this->assertSame([], $rows);
     }
 
     public function testGetMediaUrlListForGamesReturnsEmptyForNoIds(): void
@@ -103,14 +104,15 @@ final class UrlFunctionsLibTest extends TestCase
 
     public function testGetMediaUrlListForGamesReturnsArrayForValidIds(): void
     {
+        // Fixture has no uo_urls rows with owner='game', so no game ever has media urls.
         $result = GetMediaUrlListForGames([1, 2]);
-        $this->assertIsArray($result);
+        $this->assertSame([], $result);
     }
 
     public function testGetMediaUrlListForGamesWithTypeFilterReturnsArray(): void
     {
         $result = GetMediaUrlListForGames([1], 'image');
-        $this->assertIsArray($result);
+        $this->assertSame([], $result);
     }
 
     public function testGetUrlTypesReturnsList(): void
