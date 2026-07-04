@@ -138,13 +138,17 @@ final class ReservationFunctionsLibTest extends TestCase
         $this->assertSame('500', (string) $info['id']);
         $this->assertSame('HRN2026', $info['season']);
         $this->assertSame('1', $info['fieldname']);
+        // Game 700 is booked into reservation 500 → the games subquery counts it.
+        $this->assertSame('1', (string) $info['games']);
     }
 
-    public function testReservationInfoReturnsNullIdForUnknownId(): void
+    public function testReservationInfoReturnsNullForUnknownId(): void
     {
-        // COUNT(*) makes this an aggregate — always returns a row; id column will be NULL.
-        $info = ReservationInfo(99999);
-        $this->assertNull($info['id']);
+        // Regression: the query previously used an unqualified count(game_id) aggregate,
+        // so it always returned a phantom all-NULL row for a nonexistent id, defeating the
+        // "if (!$place)" not-found guard in reservationinfo.php. The games count is now a
+        // correlated subquery, so an unknown id returns no row (null).
+        $this->assertNull(ReservationInfo(99999));
     }
 
     // --- ReservationName ---
@@ -329,9 +333,9 @@ final class ReservationFunctionsLibTest extends TestCase
         $this->assertSame('New', $info['fieldname']);
 
         RemoveReservation($id, 'HRN2026');
-        // ReservationInfo uses COUNT aggregate so always returns a row; id will be NULL after delete.
-        $infoAfterDelete = ReservationInfo($id);
-        $this->assertNull($infoAfterDelete['id']);
+        // After delete the reservation no longer exists, so ReservationInfo returns falsy
+        // (no phantom row) — see testReservationInfoReturnsNullForUnknownId.
+        $this->assertNull(ReservationInfo($id));
 
         $this->createdReservationIds = array_diff($this->createdReservationIds, [$id]);
     }
