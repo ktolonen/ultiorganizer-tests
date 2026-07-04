@@ -202,50 +202,60 @@ final class TimetableFunctionsLibTest extends TestCase
 
     public function testTimetableGamesWithPlayedTimeFilter(): void
     {
+        // 'played' filters on hasstarted>0: only game 700 qualifies (701 hasstarted=0).
         $games = TimetableGames('HRN2026', 'season', 'played', 'time');
-        $this->assertIsArray($games);
+        $this->assertSame(['700'], array_column($games, 'game_id'));
     }
 
     public function testTimetableGamesWithOngoingTimeFilter(): void
     {
+        // No fixture game has isongoing=1.
         $games = TimetableGames('HRN2026', 'season', 'ongoing', 'time');
-        $this->assertIsArray($games);
+        $this->assertSame([], $games);
     }
 
     public function testTimetableGamesWithComingNotTodayFilter(): void
     {
+        // Despite the name, this filters on pp.time >= NOW(); both fixture games are
+        // scheduled in the past (2026-06-01), so neither ever qualifies.
         $games = TimetableGames('HRN2026', 'season', 'comingNotToday', 'time');
-        $this->assertIsArray($games);
+        $this->assertSame([], $games);
     }
 
     public function testTimetableGamesWithPastNotTodayFilter(): void
     {
+        // Filters on pp.time <= NOW(); both fixture games are in the past, so both qualify.
         $games = TimetableGames('HRN2026', 'season', 'pastNotToday', 'time');
-        $this->assertIsArray($games);
+        $ids = array_column($games, 'game_id');
+        sort($ids);
+        $this->assertSame(['700', '701'], $ids);
     }
 
     public function testTimetableGamesWithTodayFilter(): void
     {
+        // Fixture games are fixed at 2026-06-01, which never matches the real run date.
         $games = TimetableGames('HRN2026', 'season', 'today', 'time');
-        $this->assertIsArray($games);
+        $this->assertSame([], $games);
     }
 
     public function testTimetableGamesWithTomorrowFilter(): void
     {
         $games = TimetableGames('HRN2026', 'season', 'tomorrow', 'time');
-        $this->assertIsArray($games);
+        $this->assertSame([], $games);
     }
 
     public function testTimetableGamesWithYesterdayFilter(): void
     {
         $games = TimetableGames('HRN2026', 'season', 'yesterday', 'time');
-        $this->assertIsArray($games);
+        $this->assertSame([], $games);
     }
 
     public function testTimetableGamesWithComingTodayAndTomorrowFilter(): void
     {
+        // Requires the date to be today or tomorrow, which the fixed 2026-06-01 fixture date
+        // never matches, regardless of score/isongoing state.
         $games = TimetableGames('HRN2026', 'season', 'comingTodayAndTomorrow', 'time');
-        $this->assertIsArray($games);
+        $this->assertSame([], $games);
     }
 
     public function testTimetableGamesWithSpecificDateFilter(): void
@@ -312,17 +322,23 @@ final class TimetableFunctionsLibTest extends TestCase
 
     public function testTimetableGamesWithGroupfilter(): void
     {
-        // groupfilter != "all" appends AND pr.reservationgroup clause.
+        // groupfilter != "all" appends AND pr.reservationgroup clause. Both fixture
+        // reservations share the same reservationgroup, so both games still match.
         $groups = TimetableGrouping('HRN2026', 'season', 'all');
         $group = !empty($groups) ? $groups[0]['reservationgroup'] : 'Harness Invitational 2026';
         $games = TimetableGames('HRN2026', 'season', 'all', 'time', $group);
-        $this->assertIsArray($games);
+        $ids = array_column($games, 'game_id');
+        sort($ids);
+        $this->assertSame(['700', '701'], $ids);
     }
 
     public function testTimetableGamesWithOnlyPublicFlag(): void
     {
+        // Fixture pool 200 is visible=1 and series 100 is valid=1, so both games still match.
         $games = TimetableGames('HRN2026', 'season', 'all', 'time', '', true);
-        $this->assertIsArray($games);
+        $ids = array_column($games, 'game_id');
+        sort($ids);
+        $this->assertSame(['700', '701'], $ids);
     }
 
     // --- View functions ---
@@ -344,9 +360,11 @@ final class TimetableFunctionsLibTest extends TestCase
 
     public function testTournamentViewWithGroupingFalse(): void
     {
+        // grouping=false suppresses the <h1> reservationgroup heading.
         $games = TimetableGames('HRN2026', 'season', 'all', 'time');
         $html = TournamentView($games, false);
-        $this->assertIsString($html);
+        $this->assertStringContainsString('<table', $html);
+        $this->assertStringNotContainsString('<h1>', $html);
     }
 
     public function testSeriesViewReturnsHtmlForAllGames(): void
@@ -359,9 +377,18 @@ final class TimetableFunctionsLibTest extends TestCase
 
     public function testSeriesViewWithDateAndTime(): void
     {
+        // SUT BUG: SeriesView()'s $date/$time parameters are dead — the function body always
+        // calls GameRow(..., true, true, ...) regardless of what's passed, so every combination
+        // of arguments renders identically. games.php's SeriesView($games, false) call sites
+        // expect this to suppress the date column, but it never does. Documented, not fixed
+        // (see memory: project-sut-bugs-found).
         $games = TimetableGames('HRN2026', 'season', 'all', 'time');
-        $html = SeriesView($games, true, true);
-        $this->assertIsString($html);
+        $htmlDefault = SeriesView($games);
+        $htmlExplicitTrue = SeriesView($games, true, true);
+        $htmlDateTimeFalse = SeriesView($games, false, false);
+        $this->assertStringContainsString('<table', $htmlDefault);
+        $this->assertSame($htmlDefault, $htmlExplicitTrue);
+        $this->assertSame($htmlDefault, $htmlDateTimeFalse);
     }
 
     public function testPlaceViewReturnsHtmlForAllGames(): void
@@ -374,9 +401,10 @@ final class TimetableFunctionsLibTest extends TestCase
 
     public function testTimeViewReturnsHtmlForAllGames(): void
     {
+        // Fixture games 700/701 have different times, so each opens its own table.
         $games = TimetableGames('HRN2026', 'season', 'all', 'time');
         $html = TimeView($games);
-        $this->assertIsString($html);
+        $this->assertSame(2, substr_count($html, '<table'));
     }
 
     public function testExtTournamentViewReturnsHtmlForAllGames(): void
@@ -491,8 +519,11 @@ final class TimetableFunctionsLibTest extends TestCase
 
     public function testTimetableGroupingForPoolgroupFilter(): void
     {
+        // Pool 200 has fixture games (in the single shared reservationgroup); pool 201
+        // doesn't exist, so it contributes nothing extra.
         $result = TimetableGrouping('200,201', 'poolgroup', 'all');
-        $this->assertIsArray($result);
+        $this->assertCount(1, $result);
+        $this->assertSame('Harness Invitational 2026', $result[0]['reservationgroup']);
     }
 
     public function testTimetableGroupingForTeamFilter(): void
@@ -505,63 +536,75 @@ final class TimetableFunctionsLibTest extends TestCase
 
     public function testTimetableGroupingWithComingTimeFilter(): void
     {
+        // Game 701 has hasstarted=0, so the single reservationgroup still qualifies.
         $result = TimetableGrouping('HRN2026', 'season', 'coming');
-        $this->assertIsArray($result);
+        $this->assertCount(1, $result);
+        $this->assertSame('Harness Invitational 2026', $result[0]['reservationgroup']);
     }
 
     public function testTimetableGroupingWithPlayedTimeFilter(): void
     {
+        // Game 700 has hasstarted>0, so the single reservationgroup still qualifies.
         $result = TimetableGrouping('HRN2026', 'season', 'played');
-        $this->assertIsArray($result);
+        $this->assertCount(1, $result);
+        $this->assertSame('Harness Invitational 2026', $result[0]['reservationgroup']);
     }
 
     public function testTimetableGroupingWithOngoingTimeFilter(): void
     {
+        // No fixture game has isongoing=1.
         $result = TimetableGrouping('HRN2026', 'season', 'ongoing');
-        $this->assertIsArray($result);
+        $this->assertSame([], $result);
     }
 
     public function testTimetableGroupingWithComingNotTodayFilter(): void
     {
+        // Filters on pp.time >= NOW(); fixture games are all in the past.
         $result = TimetableGrouping('HRN2026', 'season', 'comingNotToday');
-        $this->assertIsArray($result);
+        $this->assertSame([], $result);
     }
 
     public function testTimetableGroupingWithPastNotTodayFilter(): void
     {
+        // Filters on pp.time <= NOW(); both fixture games qualify.
         $result = TimetableGrouping('HRN2026', 'season', 'pastNotToday');
-        $this->assertIsArray($result);
+        $this->assertCount(1, $result);
+        $this->assertSame('Harness Invitational 2026', $result[0]['reservationgroup']);
     }
 
     public function testTimetableGroupingWithTodayFilter(): void
     {
+        // Fixture games are fixed at 2026-06-01, which never matches the real run date.
         $result = TimetableGrouping('HRN2026', 'season', 'today');
-        $this->assertIsArray($result);
+        $this->assertSame([], $result);
     }
 
     public function testTimetableGroupingWithTomorrowFilter(): void
     {
         $result = TimetableGrouping('HRN2026', 'season', 'tomorrow');
-        $this->assertIsArray($result);
+        $this->assertSame([], $result);
     }
 
     public function testTimetableGroupingWithYesterdayFilter(): void
     {
         $result = TimetableGrouping('HRN2026', 'season', 'yesterday');
-        $this->assertIsArray($result);
+        $this->assertSame([], $result);
     }
 
     public function testTimetableGroupingWithSpecificDateFilter(): void
     {
-        // Default case: timefilter as a date string
+        // Default case: timefilter as a date string; both fixture games match 2026-06-01.
         $result = TimetableGrouping('HRN2026', 'season', '2026-06-01');
-        $this->assertIsArray($result);
+        $this->assertCount(1, $result);
+        $this->assertSame('Harness Invitational 2026', $result[0]['reservationgroup']);
     }
 
     public function testTimetableGroupingWithOnlyPublicFlag(): void
     {
+        // Fixture pool 200 is visible=1 and series 100 is valid=1.
         $result = TimetableGrouping('HRN2026', 'season', 'all', true);
-        $this->assertIsArray($result);
+        $this->assertCount(1, $result);
+        $this->assertSame('Harness Invitational 2026', $result[0]['reservationgroup']);
     }
 
     // --- TimetableFields and TimetableTimeslots ---
@@ -583,14 +626,20 @@ final class TimetableFunctionsLibTest extends TestCase
 
     public function testTimetableIntraPoolConflictsReturnsArray(): void
     {
+        // Games 700 (home=300,visitor=301) and 701 (home=301,visitor=300) share both teams,
+        // so they flag as a same-team conflict. Only the (700,701) direction is returned since
+        // the query requires g1.time <= g2.time (700 is at 10:00, 701 at 14:00).
         $result = TimetableIntraPoolConflicts('HRN2026');
-        $this->assertIsArray($result);
+        $this->assertCount(1, $result);
+        $this->assertSame('700', $result[0]['game1']);
+        $this->assertSame('701', $result[0]['game2']);
     }
 
     public function testTimetableInterPoolConflictsReturnsArray(): void
     {
+        // Driven by uo_moveteams, which the fixture has no rows for.
         $result = TimetableInterPoolConflicts('HRN2026');
-        $this->assertIsArray($result);
+        $this->assertSame([], $result);
     }
 
     // --- TimeTableMoveTimes / TimeTableMoveTime ---
