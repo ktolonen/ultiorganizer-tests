@@ -549,10 +549,26 @@ final class PoolFunctionsLibTest extends TestCase
         $this->assertNotFalse($result);
     }
 
+    // Each fixture player scored exactly 1 goal and assisted exactly 1 goal in game 700 (the
+    // only game any player has uo_played rows for), so every stat ties and every sort falls
+    // through to lastname ASC: Ace, Blade, North, Twist. Mirrors the series.functions.php board.
+    private function assertPoolScoreBoardRows(array $arr): void
+    {
+        $this->assertCount(4, $arr);
+        $this->assertSame(['Ace', 'Blade', 'North', 'Twist'], array_column($arr, 'lastname'));
+        foreach ($arr as $row) {
+            $this->assertEquals(1, $row['done']);
+            $this->assertEquals(1, $row['fedin']);
+            $this->assertEquals(0, $row['callahan']);
+            $this->assertEquals(2, $row['total']);
+            $this->assertEquals(1, $row['games']);
+        }
+    }
+
     public function testPoolScoreBoardArrayReturnsArray(): void
     {
         $result = PoolScoreBoardArray(200, 'total', 0);
-        $this->assertIsArray($result);
+        $this->assertPoolScoreBoardRows($result);
     }
 
     // --- PoolsScoreBoard ---
@@ -566,7 +582,7 @@ final class PoolFunctionsLibTest extends TestCase
     public function testPoolsScoreBoardArrayReturnsArray(): void
     {
         $result = PoolsScoreBoardArray([200], 'total', 0);
-        $this->assertIsArray($result);
+        $this->assertPoolScoreBoardRows($result);
     }
 
     public function testPoolScoreBoardSortingVariants(): void
@@ -591,10 +607,22 @@ final class PoolFunctionsLibTest extends TestCase
         $this->assertNotFalse($result);
     }
 
+    // Fixture has no uo_defense rows, so deftotal is 0 for every player and, as with the score
+    // board, all ties fall through to lastname ASC.
+    private function assertPoolDefenseBoardRows(array $arr): void
+    {
+        $this->assertCount(4, $arr);
+        $this->assertSame(['Ace', 'Blade', 'North', 'Twist'], array_column($arr, 'lastname'));
+        foreach ($arr as $row) {
+            $this->assertEquals(0, $row['deftotal']);
+            $this->assertEquals(1, $row['games']);
+        }
+    }
+
     public function testPoolScoreBoardWithDefensesArrayReturnsArray(): void
     {
         $result = PoolScoreBoardWithDefensesArray(200, 'total', 0);
-        $this->assertIsArray($result);
+        $this->assertPoolDefenseBoardRows($result);
     }
 
     public function testPoolsScoreBoardWithDefensesReturnsResult(): void
@@ -606,7 +634,7 @@ final class PoolFunctionsLibTest extends TestCase
     public function testPoolsScoreBoardWithDefensesArrayReturnsArray(): void
     {
         $result = PoolsScoreBoardWithDefensesArray([200], 'total', 0);
-        $this->assertIsArray($result);
+        $this->assertPoolDefenseBoardRows($result);
     }
 
     // --- PoolTeamFromStandings / PoolTeamsFromStandings / PoolTeamFromInitialRank ---
@@ -620,8 +648,10 @@ final class PoolFunctionsLibTest extends TestCase
 
     public function testPoolTeamFromStandingsCountByeFalse(): void
     {
+        // countbye=false corrects activerank by the count of valid=2 (BYE) teams ranked ahead;
+        // fixture has none, so the correction is 0 and the result is unchanged.
         $team = PoolTeamFromStandings(200, 1, false);
-        $this->assertIsArray($team);
+        $this->assertSame('300', (string) $team['team_id']);
     }
 
     public function testPoolTeamFromStandingsReturnsEmptyForMissingRank(): void
@@ -641,8 +671,10 @@ final class PoolFunctionsLibTest extends TestCase
 
     public function testPoolTeamsFromStandingsCountByeFalse(): void
     {
+        // No valid=2 (BYE) teams in the fixture, so the correction is 0.
         $teams = PoolTeamsFromStandings(200, 1, false);
-        $this->assertIsArray($teams);
+        $this->assertCount(1, $teams);
+        $this->assertSame('300', (string) $teams[0]['team_id']);
     }
 
     public function testPoolTeamFromInitialRankReturnsTeamAtRank1(): void
@@ -654,8 +686,9 @@ final class PoolFunctionsLibTest extends TestCase
 
     public function testPoolTeamFromInitialRankCountByeFalse(): void
     {
+        // No valid=2 (BYE) teams in the fixture, so the correction is 0.
         $team = PoolTeamFromInitialRank(200, 1, false);
-        $this->assertIsArray($team);
+        $this->assertSame('300', (string) $team['team_id']);
     }
 
     // --- PoolIsMoved ---
@@ -1026,11 +1059,17 @@ final class PoolFunctionsLibTest extends TestCase
 
     public function testSeriesRankingWithPlacementPool(): void
     {
-        // Temporarily mark pool 200 as a placement pool
-        DBQuery("UPDATE uo_pool SET placementpool=1 WHERE pool_id=200");
+        // Temporarily mark pool 200 as a placement pool. Pool 200 has 2 teams (activerank 1/2),
+        // no scheduling moves, and played=1 (restored by testPoolResolvePlayed), so both
+        // standings positions resolve to a placement immediately.
+        DBQuery("UPDATE uo_pool SET placementpool=1, played=1 WHERE pool_id=200");
         try {
             $ranking = SeriesRanking(100);
-            $this->assertIsArray($ranking);
+            $this->assertCount(2, $ranking);
+            $this->assertSame('300', (string) $ranking[0]['team_id']);
+            $this->assertSame(1, $ranking[0]['placement']);
+            $this->assertSame('301', (string) $ranking[1]['team_id']);
+            $this->assertSame(2, $ranking[1]['placement']);
         } finally {
             DBQuery("UPDATE uo_pool SET placementpool=0 WHERE pool_id=200");
         }
@@ -1398,8 +1437,16 @@ final class PoolFunctionsLibTest extends TestCase
         PoolAddMove($srcId, $destId, 1, 1, 'PseudoTeam1');
         PoolAddMove($srcId, $destId, 2, 2, 'PseudoTeam2');
         try {
+            // 2 pseudo-teams, 1 round -> exactly one round-robin matchup. Season
+            // hometeammode=0's round-robin parity rule (i=0,j=1) doesn't swap home/away here.
+            $schedIds = array_column(
+                DBQueryToArray("SELECT scheduling_id FROM uo_moveteams WHERE topool=$destId ORDER BY torank"),
+                'scheduling_id',
+            );
             $games = GenerateGames($destId, 1, false);
-            $this->assertIsArray($games);
+            $this->assertCount(1, $games);
+            $this->assertSame((int) $schedIds[0], $games[0]['home']);
+            $this->assertSame((int) $schedIds[1], $games[0]['away']);
         } finally {
             $schedIds = array_column(DBQueryToArray("SELECT scheduling_id FROM uo_moveteams WHERE topool=$destId"), 'scheduling_id');
             DBQuery("DELETE FROM uo_moveteams WHERE topool=$destId");
@@ -1447,8 +1494,16 @@ final class PoolFunctionsLibTest extends TestCase
         PoolAddMove($srcId, $destId, 1, 1, 'PSHom1');
         PoolAddMove($srcId, $destId, 2, 2, 'PSHom2');
         try {
+            $schedIds = array_column(
+                DBQueryToArray("SELECT scheduling_id FROM uo_moveteams WHERE topool=$destId ORDER BY torank"),
+                'scheduling_id',
+            );
             $games = GenerateGames($destId, 1, true, false, true);
-            $this->assertIsArray($games);
+            $this->assertCount(1, $games);
+            // homeresp=true stores the home scheduling id as the game's respteam.
+            $gameId = (int) DBQueryToValue("SELECT game FROM uo_game_pool WHERE pool=$destId");
+            $respteam = (int) DBQueryToValue("SELECT respteam FROM uo_game WHERE game_id=$gameId");
+            $this->assertSame((int) $schedIds[0], $respteam);
         } finally {
             $gameIds = array_column(DBQueryToArray("SELECT game FROM uo_game_pool WHERE pool=$destId"), 'game');
             DBQuery("DELETE FROM uo_game_pool WHERE pool=$destId");
@@ -1471,8 +1526,10 @@ final class PoolFunctionsLibTest extends TestCase
         DBQuery(sprintf("INSERT INTO uo_team_pool (team, pool, rank, activerank) VALUES (300, %d, 1, 1)", $poolId));
         DBQuery(sprintf("INSERT INTO uo_team_pool (team, pool, rank, activerank) VALUES (301, %d, 2, 2)", $poolId));
 
+        // Both teams were added directly to $poolId (not moved via uo_moveteams), so
+        // PoolGetFromPoolByTeamId returns null for each -> null==null -> the only pair is skipped.
         $games = GenerateGames($poolId, 1, false, true); // nomutual=true
-        $this->assertIsArray($games);
+        $this->assertSame([], $games);
 
         DBQuery(sprintf("DELETE FROM uo_team_pool WHERE pool=%d", $poolId));
         DBQuery(sprintf("DELETE FROM uo_pool WHERE pool_id=%d", $poolId));
@@ -1513,10 +1570,12 @@ final class PoolFunctionsLibTest extends TestCase
 
     public function testPoolPlacementStringGoldForFirstPlace(): void
     {
+        // Pool 200 is its own sole placement pool; pos=1 leaves placementfrom at its initial
+        // value of 1, which maps to "Gold".
         DBQuery("UPDATE uo_pool SET placementpool=1 WHERE pool_id=200");
         try {
             $result = PoolPlacementString(200, 1);
-            $this->assertIsString($result);
+            $this->assertSame('Gold', $result);
         } finally {
             DBQuery("UPDATE uo_pool SET placementpool=0 WHERE pool_id=200");
         }
@@ -1527,7 +1586,7 @@ final class PoolFunctionsLibTest extends TestCase
         DBQuery("UPDATE uo_pool SET placementpool=1 WHERE pool_id=200");
         try {
             $result = PoolPlacementString(200, 1, false);
-            $this->assertIsInt($result);
+            $this->assertSame(1, $result);
         } finally {
             DBQuery("UPDATE uo_pool SET placementpool=0 WHERE pool_id=200");
         }
@@ -1569,8 +1628,10 @@ final class PoolFunctionsLibTest extends TestCase
 
     public function testPlayoffTemplateReturnsStringForAnyInput(): void
     {
+        // Layout id becomes "4_teams_1_rounds"; only "4_teams_2_rounds.html" ships in
+        // cust/default/layouts, so no file matches and the function returns "".
         $result = PlayoffTemplate(4, 1);
-        $this->assertIsString($result);
+        $this->assertSame('', $result);
     }
 
     // --- SetPoolDetails ---
@@ -1656,8 +1717,16 @@ final class PoolFunctionsLibTest extends TestCase
         $this->createdTeamIds[] = $id2;
         DBQuery("INSERT INTO uo_team_pool (team, pool, rank, activerank) VALUES (300,$poolId,1,1),(301,$poolId,2,2),($id1,$poolId,3,3),($id2,$poolId,4,4)");
         try {
+            // 4 teams -> rounds=2 -> a single "Finals" playoff pool is generated (dry run: not
+            // persisted, since $generate=false only builds the return value).
             $result = GeneratePlayoffPools($poolId, false);
-            $this->assertIsArray($result);
+            $this->assertCount(1, $result);
+            $this->assertSame('TempPool Finals', $result[0]['name']);
+            $this->assertSame(2, $result[0]['type']);
+            $this->assertSame(2, $result[0]['teams']);
+            $this->assertSame(100, $result[0]['series']);
+            $this->assertSame('HRN2026', $result[0]['season']);
+            $this->assertTrue($result[0]['specialmoves']);
         } finally {
             DBQuery("DELETE FROM uo_team_pool WHERE pool=$poolId");
             DBQuery("DELETE FROM uo_pool WHERE pool_id=$poolId");
