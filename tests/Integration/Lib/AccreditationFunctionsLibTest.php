@@ -63,8 +63,10 @@ final class AccreditationFunctionsLibTest extends TestCase
 
     public function testSeasonUnaccreditedReturnsArray(): void
     {
+        // Every uo_played row in the fixture (and the temp player's row from setUp) has
+        // accredited=1, so no player qualifies as unaccredited.
         $result = SeasonUnaccredited('HRN2026');
-        $this->assertIsArray($result);
+        $this->assertSame([], $result);
     }
 
     public function testSeasonUnaccreditedReturnsEmptyForUnknownSeason(): void
@@ -78,16 +80,18 @@ final class AccreditationFunctionsLibTest extends TestCase
 
     public function testExternalLicenseValidityListReturnsArray(): void
     {
+        // Fixture has no uo_license rows.
         $result = ExternalLicenseValidityList();
-        $this->assertIsArray($result);
+        $this->assertSame([], $result);
     }
 
     // --- ExternalLicenseTypes ---
 
     public function testExternalLicenseTypesReturnsArray(): void
     {
+        // Fixture has no uo_license rows.
         $result = ExternalLicenseTypes();
-        $this->assertIsArray($result);
+        $this->assertSame([], $result);
     }
 
     // --- LicenseData ---
@@ -102,14 +106,15 @@ final class AccreditationFunctionsLibTest extends TestCase
 
     public function testSearchLicenseDataReturnsArrayForNameSearch(): void
     {
+        // Fixture has no uo_license rows regardless of the name filter.
         $result = SearchLicenseData('Ari', 'Ace');
-        $this->assertIsArray($result);
+        $this->assertSame([], $result);
     }
 
     public function testSearchLicenseDataReturnsArrayForEmptySearch(): void
     {
         $result = SearchLicenseData('', '');
-        $this->assertIsArray($result);
+        $this->assertSame([], $result);
     }
 
     // --- isAccredited ---
@@ -321,8 +326,10 @@ final class AccreditationFunctionsLibTest extends TestCase
 
     public function testSeasonAccreditationLogReturnsArray(): void
     {
+        // No uo_accreditationlog rows exist yet for this fresh test (each test's own log
+        // inserts are cleaned up in tearDown before the next test runs).
         $result = SeasonAccreditationLog('HRN2026');
-        $this->assertIsArray($result);
+        $this->assertSame([], $result);
     }
 
     public function testSeasonAccreditationLogContainsInsertedEntry(): void
