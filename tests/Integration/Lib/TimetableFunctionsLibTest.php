@@ -377,18 +377,25 @@ final class TimetableFunctionsLibTest extends TestCase
 
     public function testSeriesViewWithDateAndTime(): void
     {
-        // SUT BUG: SeriesView()'s $date/$time parameters are dead — the function body always
-        // calls GameRow(..., true, true, ...) regardless of what's passed, so every combination
-        // of arguments renders identically. games.php's SeriesView($games, false) call sites
-        // expect this to suppress the date column, but it never does. Documented, not fixed
-        // (see memory: project-sut-bugs-found).
+        // Fixed SUT bug: SeriesView()'s $date/$time parameters used to be dead (the function
+        // body always called GameRow(..., true, true, ...) regardless of what was passed).
+        // GameRow() renders a "<span>1.6.2026</span>" date cell for each game when $date is
+        // true (ShortDate of the fixture's 2026-06-01 games), and "<span>10:00</span>" /
+        // "<span>14:00</span>" time cells (DefHourFormat of games 700/701) when $time is true.
+        // Note: the date/field-name <td>s coincidentally share the same 'width:60px' style, so
+        // asserting on the rendered date/time text (not the style attribute) is what actually
+        // isolates these two parameters.
         $games = TimetableGames('HRN2026', 'season', 'all', 'time');
-        $htmlDefault = SeriesView($games);
-        $htmlExplicitTrue = SeriesView($games, true, true);
-        $htmlDateTimeFalse = SeriesView($games, false, false);
-        $this->assertStringContainsString('<table', $htmlDefault);
-        $this->assertSame($htmlDefault, $htmlExplicitTrue);
-        $this->assertSame($htmlDefault, $htmlDateTimeFalse);
+
+        $htmlBothTrue = SeriesView($games, true, true);
+        $this->assertSame(2, substr_count($htmlBothTrue, '<span>1.6.2026</span>'));
+        $this->assertStringContainsString('<span>10:00</span>', $htmlBothTrue);
+        $this->assertStringContainsString('<span>14:00</span>', $htmlBothTrue);
+
+        $htmlBothFalse = SeriesView($games, false, false);
+        $this->assertStringNotContainsString('<span>1.6.2026</span>', $htmlBothFalse);
+        $this->assertStringNotContainsString('<span>10:00</span>', $htmlBothFalse);
+        $this->assertStringNotContainsString('<span>14:00</span>', $htmlBothFalse);
     }
 
     public function testPlaceViewReturnsHtmlForAllGames(): void
