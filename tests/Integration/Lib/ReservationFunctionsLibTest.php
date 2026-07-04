@@ -374,8 +374,12 @@ final class ReservationFunctionsLibTest extends TestCase
 
     public function testReservationGroupTimeoutStatsReturnsArray(): void
     {
+        // Both fixture reservations share one reservationgroup with 2 games and 0 timeouts.
         $stats = ReservationGroupTimeoutStats();
-        $this->assertIsArray($stats);
+        $this->assertCount(1, $stats);
+        $this->assertSame('Harness Invitational 2026', $stats[0]['reservationgroup']);
+        $this->assertEquals(2, $stats[0]['games']);
+        $this->assertEquals(0, $stats[0]['timeouts']);
     }
 
     public function testReservationGroupTimeoutStatsHasExpectedShape(): void
@@ -392,11 +396,13 @@ final class ReservationFunctionsLibTest extends TestCase
 
     public function testUnscheduledTeamsAsSuperadminReturnsArray(): void
     {
+        // Both fixture games have reservation and time set, so the inner "unscheduled" subquery
+        // never matches any hometeam/visitorteam, regardless of role.
         ob_start();
         $teams = UnscheduledTeams();
         ob_end_clean();
 
-        $this->assertIsArray($teams);
+        $this->assertSame([], $teams);
     }
 
     public function testUnscheduledTeamsWithNoAdminRolesReturnsEmpty(): void
@@ -428,7 +434,9 @@ final class ReservationFunctionsLibTest extends TestCase
         $_SESSION['userproperties']['userrole']['superadmin'] = true;
         unset($_SESSION['userproperties']['userrole']['seasonadmin']);
 
-        $this->assertIsArray($result);
+        // Both fixture games are already scheduled, so the unscheduled subquery is empty
+        // regardless of which admin role gates the outer query.
+        $this->assertSame([], $result);
     }
 
     public function testUnscheduledTeamsWithSeriesadminRoleExecutesQuery(): void
@@ -444,7 +452,7 @@ final class ReservationFunctionsLibTest extends TestCase
         $_SESSION['userproperties']['userrole']['superadmin'] = true;
         unset($_SESSION['userproperties']['userrole']['seriesadmin']);
 
-        $this->assertIsArray($result);
+        $this->assertSame([], $result);
     }
 
     public function testUnscheduledTeamsWithBothAdminRolesAddsOrClause(): void
@@ -461,7 +469,7 @@ final class ReservationFunctionsLibTest extends TestCase
         $_SESSION['userproperties']['userrole']['superadmin'] = true;
         unset($_SESSION['userproperties']['userrole']['seasonadmin'], $_SESSION['userproperties']['userrole']['seriesadmin']);
 
-        $this->assertIsArray($result);
+        $this->assertSame([], $result);
     }
 
     // --- CanDeleteReservation ---
