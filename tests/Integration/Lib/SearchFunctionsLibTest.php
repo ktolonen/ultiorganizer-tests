@@ -258,7 +258,11 @@ final class SearchFunctionsLibTest extends TestCase
 
         $_POST = [];
         $_GET  = [];
-        $this->assertIsString($result);
+        // registerrequest=true selects from uo_registerrequest, which the fixture never
+        // seeds, so this is always header-only (proves the register-table branch runs
+        // without error, not that it has rows).
+        $this->assertStringContainsString('<table', $result);
+        $this->assertStringNotContainsString('Harness Admin', $result);
     }
 
     public function testUserResultsWithUseSeasonsFilter(): void
@@ -271,7 +275,9 @@ final class SearchFunctionsLibTest extends TestCase
 
         $_POST = [];
         $_GET  = [];
-        $this->assertIsString($result);
+        // Fixture has no 'editseason' uo_userproperties rows at all, so the
+        // useseasons subquery matches no userid.
+        $this->assertStringNotContainsString('Harness Admin', $result);
     }
 
     public function testUserResultsWithTeamnameFilter(): void
@@ -284,7 +290,9 @@ final class SearchFunctionsLibTest extends TestCase
 
         $_POST = [];
         $_GET  = [];
-        $this->assertIsString($result);
+        // Fixture's admin user has no 'teamadmin:' uo_userproperties row, so the
+        // teamname subquery matches no userid.
+        $this->assertStringNotContainsString('Harness Admin', $result);
     }
 
     public function testUserResultsWithUsernameAndEmailFilters(): void
@@ -298,7 +306,8 @@ final class SearchFunctionsLibTest extends TestCase
 
         $_POST = [];
         $_GET  = [];
-        $this->assertIsString($result);
+        // 'Admin' matches name 'Harness Admin'; 'example.com' matches email 'admin@example.com'.
+        $this->assertStringContainsString('Harness Admin', $result);
     }
 
     // --- PlayerResults ---
@@ -349,6 +358,9 @@ final class SearchFunctionsLibTest extends TestCase
 
     public function testReservationResultsWithSearchendFilter(): void
     {
+        // No searchstart → ToInternalTimeFormat("") falls back to 1971-01-01, so both
+        // fixture reservations (June 2026) are after the start bound; both are also
+        // before the 31.12.2026 end bound.
         $_GET['season']      = 'HRN2026';
         $_POST['searchend']  = '31.12.2026';
 
@@ -356,11 +368,12 @@ final class SearchFunctionsLibTest extends TestCase
 
         $_GET  = [];
         $_POST = [];
-        $this->assertIsString($result);
+        $this->assertSame(2, substr_count($result, "class='admintablerow'"));
     }
 
     public function testReservationResultsWithGroupFilter(): void
     {
+        // Both fixture reservations share reservationgroup 'Harness Invitational 2026'.
         $_GET['season']       = 'HRN2026';
         $_POST['searchgroup'] = 'Harness';
 
@@ -368,11 +381,13 @@ final class SearchFunctionsLibTest extends TestCase
 
         $_GET  = [];
         $_POST = [];
-        $this->assertIsString($result);
+        $this->assertSame(2, substr_count($result, "class='admintablerow'"));
     }
 
     public function testReservationResultsWithFieldFilter(): void
     {
+        // fieldname is matched with an exact (unwildcarded) LIKE; only reservation
+        // 500 has fieldname='1' (reservation 501 has fieldname='2').
         $_GET['season']       = 'HRN2026';
         $_POST['searchfield'] = '1';
 
@@ -380,11 +395,12 @@ final class SearchFunctionsLibTest extends TestCase
 
         $_GET  = [];
         $_POST = [];
-        $this->assertIsString($result);
+        $this->assertSame(1, substr_count($result, "class='admintablerow'"));
     }
 
     public function testReservationResultsWithLocationFilter(): void
     {
+        // Both fixture reservations share location 400, 'Harness Field Complex'.
         $_GET['season']           = 'HRN2026';
         $_POST['searchlocation']  = 'Harness';
 
@@ -392,7 +408,7 @@ final class SearchFunctionsLibTest extends TestCase
 
         $_GET  = [];
         $_POST = [];
-        $this->assertIsString($result);
+        $this->assertSame(2, substr_count($result, "class='admintablerow'"));
     }
 
     // --- GameResults ---
@@ -415,35 +431,42 @@ final class SearchFunctionsLibTest extends TestCase
 
     public function testGameResultsWithEndDateFilter(): void
     {
+        // No searchstart → defaults to today (real date), which is well after the
+        // fixture's June 2026 reservations, so the start bound alone excludes them
+        // regardless of the 31.12.2026 end bound.
         $_POST['searchgame'] = '1';
         $_POST['searchend']  = '31.12.2026';
 
         $result = GameResults();
 
         $_POST = [];
-        $this->assertIsString($result);
+        $this->assertSame(0, substr_count($result, "name='games[]'"));
     }
 
     public function testGameResultsWithGroupFilter(): void
     {
+        // No searchstart → same today-default exclusion as above, regardless of the
+        // matching reservationgroup filter.
         $_POST['searchgame']  = '1';
         $_POST['searchgroup'] = 'Harness';
 
         $result = GameResults();
 
         $_POST = [];
-        $this->assertIsString($result);
+        $this->assertSame(0, substr_count($result, "name='games[]'"));
     }
 
     public function testGameResultsWithTeamsFilter(): void
     {
+        // No searchstart → same today-default exclusion, regardless of the matching
+        // team-name filter.
         $_POST['searchgame']  = '1';
         $_POST['searchteams'] = 'Helsinki,Tampere';
 
         $result = GameResults();
 
         $_POST = [];
-        $this->assertIsString($result);
+        $this->assertSame(0, substr_count($result, "name='games[]'"));
     }
 
     // --- Coverage-deepening tests (line-specific branches not hit by the tests above) ---
@@ -539,11 +562,12 @@ final class SearchFunctionsLibTest extends TestCase
 
     public function testSeriesResultsWithSearchseasonsPostCoversLine454(): void
     {
-        // line 454: searchseasons in POST (array_flip branch)
+        // line 454: searchseasons in POST (array_flip branch). Fixture's only
+        // series in season HRN2026 is 'Open'.
         $_POST['searchser']     = '1';
         $_POST['searchseasons'] = ['HRN2026'];
         $result = SeriesResults();
-        $this->assertIsString($result);
+        $this->assertStringContainsString('Open', $result);
     }
 
     public function testSeriesResultsWithSessionEditseasonsCoversLine458(): void
@@ -552,25 +576,28 @@ final class SearchFunctionsLibTest extends TestCase
         $_POST['searchser'] = '1';
         $_SESSION['userproperties']['editseason'] = ['HRN2026' => 1];
         $result = SeriesResults();
-        $this->assertIsString($result);
+        $this->assertStringContainsString('Open', $result);
     }
 
     public function testSeriesResultsWithSeriesnameFilterCoversLine466(): void
     {
-        // line 466: seriesname filter appended to query
+        // line 466: seriesname filter appended to query. 'Ope' is a substring of
+        // the fixture's series name 'Open', proving the LIKE filter actually matches
+        // (rather than merely executing without error).
         $_POST['searchser']    = '1';
         $_GET['Season']        = 'HRN2026';
-        $_POST['seriesname']   = 'HRN';
+        $_POST['seriesname']   = 'Ope';
         $result = SeriesResults();
-        $this->assertIsString($result);
+        $this->assertStringContainsString('Open', $result);
     }
 
     public function testPoolResultsWithSearchseasonsCoversLine492(): void
     {
+        // Fixture's only pool in season HRN2026 is 'Pool A'.
         $_POST['searchpool']    = '1';
         $_POST['searchseasons'] = ['HRN2026'];
         $result = PoolResults();
-        $this->assertIsString($result);
+        $this->assertStringContainsString('Pool A', $result);
     }
 
     public function testPoolResultsWithSessionCoversLine496(): void
@@ -578,26 +605,29 @@ final class SearchFunctionsLibTest extends TestCase
         $_POST['searchpool'] = '1';
         $_SESSION['userproperties']['editseason'] = ['HRN2026' => 1];
         $result = PoolResults();
-        $this->assertIsString($result);
+        $this->assertStringContainsString('Pool A', $result);
     }
 
     public function testPoolResultsWithFiltersCoversLines504And507(): void
     {
-        // lines 504, 507: seriesname + poolname filters
+        // lines 504, 507: seriesname + poolname filters, both matching the fixture
+        // ('Open' series, 'Pool A' pool) to prove the AND'd LIKE filters both pass.
         $_POST['searchpool']  = '1';
         $_GET['Season']       = 'HRN2026';
-        $_POST['seriesname']  = 'HRN';
+        $_POST['seriesname']  = 'Ope';
         $_POST['poolname']    = 'Pool';
         $result = PoolResults();
-        $this->assertIsString($result);
+        $this->assertStringContainsString('Pool A', $result);
     }
 
     public function testTeamResultsWithSearchseasonsCoversLine535(): void
     {
+        // Fixture has 2 teams in season HRN2026.
         $_POST['searchteam']    = '1';
         $_POST['searchseasons'] = ['HRN2026'];
         $result = TeamResults();
-        $this->assertIsString($result);
+        $this->assertStringContainsString('Helsinki Heat', $result);
+        $this->assertStringContainsString('Tampere Tempest', $result);
     }
 
     public function testTeamResultsWithSessionCoversLine539(): void
@@ -605,57 +635,64 @@ final class SearchFunctionsLibTest extends TestCase
         $_POST['searchteam'] = '1';
         $_SESSION['userproperties']['editseason'] = ['HRN2026' => 1];
         $result = TeamResults();
-        $this->assertIsString($result);
+        $this->assertStringContainsString('Helsinki Heat', $result);
+        $this->assertStringContainsString('Tampere Tempest', $result);
     }
 
     public function testTeamResultsWithFiltersCoversLines547And550(): void
     {
-        // lines 547, 550: seriesname + teamname filters
+        // lines 547, 550: seriesname ('Ope' matches 'Open') + teamname ('Helsinki'
+        // matches 'Helsinki Heat' but not 'Tampere Tempest') filters.
         $_POST['searchteam']  = '1';
         $_GET['Season']       = 'HRN2026';
-        $_POST['seriesname']  = 'HRN';
+        $_POST['seriesname']  = 'Ope';
         $_POST['teamname']    = 'Helsinki';
         $result = TeamResults();
-        $this->assertIsString($result);
+        $this->assertStringContainsString('Helsinki Heat', $result);
+        $this->assertStringNotContainsString('Tampere Tempest', $result);
     }
 
     public function testUserResultsWithSearchseasonsCoversLine580(): void
     {
-        // line 580: searchseasons in POST
+        // line 580: searchseasons in POST, but no useseasons/teamname/username/email
+        // filter is set, so $selected is computed but unused → all users returned.
         $_POST['searchuser']    = '1';
         $_POST['searchseasons'] = ['HRN2026'];
         $result = UserResults();
-        $this->assertIsString($result);
+        $this->assertStringContainsString('Harness Admin', $result);
     }
 
     public function testUserResultsWithSessionCoversLine584(): void
     {
-        // line 584: session editseason branch
+        // line 584: session editseason branch, same no-criteria-filter reasoning.
         $_POST['searchuser'] = '1';
         $_SESSION['userproperties']['editseason'] = ['HRN2026' => 1];
         $result = UserResults();
-        $this->assertIsString($result);
+        $this->assertStringContainsString('Harness Admin', $result);
     }
 
     public function testUserResultsWithUseseasonsAndTeamnameCoversLines598And612(): void
     {
-        // lines 598, 612: criteria len > 0 when adding teamname, then username
+        // lines 598, 612: criteria len > 0 when adding teamname, then username.
+        // Fixture has no 'editseason' properties, so useseasons alone already
+        // excludes every user; combined with teamname/username the result stays empty.
         $_POST['searchuser']  = '1';
         $_GET['Season']       = 'HRN2026';
         $_POST['useseasons']  = 'true';
         $_POST['teamname']    = 'Helsinki';
         $_POST['username']    = 'Ari';
         $result = UserResults();
-        $this->assertIsString($result);
+        $this->assertStringNotContainsString('Harness Admin', $result);
     }
 
     public function testReservationResultsWithStartDateCoversLine749(): void
     {
-        // line 749: searchstart from POST
+        // line 749: searchstart from POST. Both fixture reservations (500, 501,
+        // June 2026) are after 01.01.2026, and no searchend caps the range.
         $_POST['searchreservation'] = '1';
         $_POST['searchstart']       = '01.01.2026';
         $result = ReservationResults();
-        $this->assertIsString($result);
+        $this->assertSame(2, substr_count($result, "class='admintablerow'"));
     }
 
     public function testReservationResultsWithZeroGamesRowCoversLine798(): void
@@ -677,22 +714,26 @@ final class SearchFunctionsLibTest extends TestCase
 
     public function testGameResultsWithStartDateCoversLine829(): void
     {
-        // line 829: searchstart from POST (else branch = today is default)
+        // line 829: searchstart from POST (else branch = today is default).
+        // Both fixture games' reservations (500, 501) start 2026-06-01, after the
+        // 01.01.2026 bound, and no other filter narrows the set.
         $_POST['searchgame']  = '1';
         $_POST['searchstart'] = '01.01.2026';
         $result = GameResults();
-        $this->assertIsString($result);
+        $this->assertSame(2, substr_count($result, "name='games[]'"));
     }
 
     public function testGameResultsWithFieldAndLocationFiltersCoversLines849To853(): void
     {
-        // lines 849, 852-853: field + location filters appended to query
+        // lines 849, 852-853: field + location filters. fieldname='1' matches only
+        // reservation 500 (game 700); location 'Helsinki' matches the fixture
+        // location's address ('Disc Park 1, Helsinki'), not its name.
         $_POST['searchgame']      = '1';
         $_POST['searchstart']     = '01.01.2026';
         $_POST['searchfield']     = '1';
         $_POST['searchlocation']  = 'Helsinki';
         $result = GameResults();
-        $this->assertIsString($result);
+        $this->assertSame(1, substr_count($result, "name='games[]'"));
     }
 
     public function testGameResultsReturnsRowsForFixtureGamesCoversLines865To870(): void
@@ -701,7 +742,7 @@ final class SearchFunctionsLibTest extends TestCase
         $_POST['searchgame']  = '1';
         $_POST['searchstart'] = '01.01.2026';
         $result = GameResults();
-        // Fixture has games linked to reservations starting 2026-06-01
-        $this->assertStringContainsString('<table>', $result);
+        // Fixture has 2 games (700, 701) linked to reservations starting 2026-06-01.
+        $this->assertSame(2, substr_count($result, "name='games[]'"));
     }
 }
