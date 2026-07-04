@@ -61,14 +61,19 @@ final class CountryFunctionsLibTest extends TestCase
 
     public function testCountryListWithOnlyPlayedFilter(): void
     {
+        // Only Finland (1064) has any fixture teams, so it's the sole "played" country.
         $list = CountryList(false, true);
-        $this->assertIsArray($list);
+        $this->assertCount(1, $list);
+        $this->assertSame('1064', $list[0]['country_id']);
+        $this->assertSame('Finland', $list[0]['name']);
     }
 
     public function testCountryListWithBothFilters(): void
     {
+        // Finland is also valid=1, so combining both filters gives the same single result.
         $list = CountryList(true, true);
-        $this->assertIsArray($list);
+        $this->assertCount(1, $list);
+        $this->assertSame('1064', $list[0]['country_id']);
     }
 
     public function testCountryListWithNoFilters(): void
@@ -80,8 +85,9 @@ final class CountryFunctionsLibTest extends TestCase
 
     public function testHasPlayableCountriesReturnsBoolBasedOnFixture(): void
     {
+        // Finland (1064, valid=1) has fixture teams, so at least one playable country exists.
         $result = HasPlayableCountries();
-        $this->assertIsBool($result);
+        $this->assertTrue($result);
     }
 
     public function testCountryDropListReturnsHtmlSelect(): void
@@ -121,9 +127,10 @@ final class CountryFunctionsLibTest extends TestCase
 
     public function testCountryTeamsWithNoSeasonReturnsAllTeams(): void
     {
+        // No-season branch requires a matching uo_team_stats row; both fixture teams have one.
         $teams = CountryTeams(1064);
-        $this->assertIsArray($teams);
-        // Without season filter, uses different query branch
+        $this->assertCount(2, $teams);
+        $this->assertSame(['Helsinki Heat', 'Tampere Tempest'], array_column($teams, 'name'));
     }
 
     public function testCanDeleteCountryReturnsFalseWhenTeamsExist(): void
@@ -207,8 +214,11 @@ final class CountryFunctionsLibTest extends TestCase
 
     public function testCountryPoolsReturnsPoolsForSeason(): void
     {
+        // The query LEFT JOINs uo_team_pool -> uo_team without dedup, so pool 200 appears once
+        // per matching team row (300 and 301, both country 1064) - 2 rows, same pool.
         $pools = CountryPools('HRN2026', 1064);
-        $this->assertIsArray($pools);
+        $this->assertCount(2, $pools);
+        $this->assertSame(['200', '200'], array_column($pools, 'pool_id'));
     }
 
     public function testGetTimeZoneArrayReturnsNonEmptyList(): void
