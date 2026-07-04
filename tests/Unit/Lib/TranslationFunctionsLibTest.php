@@ -80,19 +80,22 @@ final class TranslationFunctionsLibTest extends TestCase
     public function testAutocompleteTranslateHandlesExactMatch(): void
     {
         $result = autocompleteTranslate('hello', ['hello' => 'Hei']);
-        $this->assertIsArray($result);
+        $this->assertSame(['hello' => 'Hei'], $result);
     }
 
     public function testAutocompleteTranslateHandlesMultiWordInput(): void
     {
         $result = autocompleteTranslate('hello world', ['hello' => 'Hei', 'world' => 'Maailma']);
-        $this->assertIsArray($result);
+        $this->assertSame(['hello world' => 'Hei Maailma'], $result);
     }
 
-    public function testAutocompleteTranslateNoMatchReturnsInput(): void
+    public function testAutocompleteTranslateNoMatchReturnsEmptyArray(): void
     {
+        // Despite the underscore splitting 'xyz_no_match' into 3 word parts (WORD_DELIMITER
+        // includes '_'), an empty translation_array means no candidate ever matches at any
+        // step, so $ret stays empty — this does NOT echo the input back.
         $result = autocompleteTranslate('xyz_no_match', []);
-        $this->assertIsArray($result);
+        $this->assertSame([], $result);
     }
 
     // --- TranslatedField / TranslationScript ---
@@ -149,23 +152,26 @@ final class TranslationFunctionsLibTest extends TestCase
 
     public function testGetTranslationsWithSearchParam(): void
     {
+        // These tests run before any test sets `global $locales`, so AllTranslations()'s
+        // `foreach ($locales as ...)` iterates nothing, no locale results are populated, and
+        // the "not found" fallback kicks in: ['None' => [search => search]].
         $_GET['search'] = 'team';
         $result = GetTranslations();
-        $this->assertIsArray($result);
+        $this->assertSame(['None' => ['team' => 'team']], $result);
     }
 
     public function testGetTranslationsWithQueryParam(): void
     {
         $_GET['query'] = 'pool';
         $result = GetTranslations();
-        $this->assertIsArray($result);
+        $this->assertSame(['None' => ['pool' => 'pool']], $result);
     }
 
     public function testGetTranslationsWithQParam(): void
     {
         $_GET['q'] = 'game';
         $result = GetTranslations();
-        $this->assertIsArray($result);
+        $this->assertSame(['None' => ['game' => 'game']], $result);
     }
 
     public function testGetTranslationsWithAutocompleteParam(): void
@@ -173,7 +179,7 @@ final class TranslationFunctionsLibTest extends TestCase
         $_GET['search'] = 'team';
         $_GET['autocomplete'] = 'true';
         $result = GetTranslations();
-        $this->assertIsArray($result);
+        $this->assertSame(['None' => ['team' => 'team']], $result);
     }
 
     // --- GetAutocompleteTranslations() ---
@@ -182,21 +188,21 @@ final class TranslationFunctionsLibTest extends TestCase
     {
         $_GET['search'] = 'pool';
         $result = GetAutocompleteTranslations();
-        $this->assertIsArray($result);
+        $this->assertSame(['None' => ['pool' => 'pool']], $result);
     }
 
     public function testGetAutocompleteTranslationsWithQueryParam(): void
     {
         $_GET['query'] = 'team';
         $result = GetAutocompleteTranslations();
-        $this->assertIsArray($result);
+        $this->assertSame(['None' => ['team' => 'team']], $result);
     }
 
     public function testGetAutocompleteTranslationsWithQParam(): void
     {
         $_GET['q'] = 'game';
         $result = GetAutocompleteTranslations();
-        $this->assertIsArray($result);
+        $this->assertSame(['None' => ['game' => 'game']], $result);
     }
 
     // --- AllTranslations() with $locales populated ---
@@ -242,11 +248,25 @@ final class TranslationFunctionsLibTest extends TestCase
 
     public function testTranslationsReturnsArrayAsSuperAdmin(): void
     {
+        // The SUT installer seeds 10 default Timekeeper UI translation keys for en_GB_utf8
+        // (no test in this class adds them — all insert tests clean up in `finally` and run
+        // after this one), ordered by translation_key ASC.
         LegacyApp::loadUserFunctions();
         LegacyApp::loginAsAdmin();
         try {
             $rows = Translations();
-            $this->assertIsArray($rows);
+            $this->assertSame([
+                'Approaching start',
+                'Defence warning',
+                'Halftime ending',
+                'Halftime over',
+                'Offence warning',
+                'Play',
+                'Play must restart',
+                'Resolve call or discussion',
+                'Start of play',
+                'Timeout over',
+            ], array_column($rows, 'translation_key'));
         } finally {
             $_SESSION = [];
         }
