@@ -532,7 +532,11 @@ final class StandingsFunctionsLibTest extends TestCase
 
     public function testFinalStandingLabelReturnsOrdinalForFourthPlus(): void
     {
-        // GetDefaultLocale() (fixture: 'en_GB.utf8') → ordinal()'s English suffix branch.
+        // ordinal() falls back to GetDefaultLocale() (server config's DefaultLocale) when no
+        // session locale is set, and that varies by matrix case profile (e.g. 'fi_FI.utf8' for
+        // config-overrides) — pin the session locale explicitly so this doesn't depend on which
+        // profile the suite happens to run under.
+        $_SESSION['userproperties']['locale'] = 'en_GB.utf8';
         $this->assertSame('4th', FinalStandingLabel(4));
     }
 

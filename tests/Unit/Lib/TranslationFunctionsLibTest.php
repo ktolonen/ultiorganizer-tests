@@ -248,25 +248,23 @@ final class TranslationFunctionsLibTest extends TestCase
 
     public function testTranslationsReturnsArrayAsSuperAdmin(): void
     {
-        // The SUT installer seeds 10 default Timekeeper UI translation keys for en_GB_utf8
-        // (no test in this class adds them — all insert tests clean up in `finally` and run
-        // after this one), ordered by translation_key ASC.
+        // The SUT installer seeds default Timekeeper UI translation keys for en_GB_utf8 (no
+        // test in this class adds them — all insert tests clean up in `finally` and run after
+        // this one). The exact set varies by matrix case config (config-overrides' install path
+        // seeds extra timekeeper templates beyond baseline-default's single WFDF template), so
+        // assert the query shape and the stable core subset rather than an exact snapshot.
         LegacyApp::loadUserFunctions();
         LegacyApp::loginAsAdmin();
         try {
             $rows = Translations();
-            $this->assertSame([
-                'Approaching start',
-                'Defence warning',
-                'Halftime ending',
-                'Halftime over',
-                'Offence warning',
-                'Play',
-                'Play must restart',
-                'Resolve call or discussion',
-                'Start of play',
-                'Timeout over',
-            ], array_column($rows, 'translation_key'));
+            $keys = array_column($rows, 'translation_key');
+            $sorted = $keys;
+            sort($sorted);
+            $this->assertSame($sorted, $keys, 'Translations() must order by translation_key ASC');
+            $this->assertContains('Play', $keys);
+            $this->assertContains('Offence warning', $keys);
+            $this->assertContains('Halftime over', $keys);
+            $this->assertGreaterThanOrEqual(10, count($keys));
         } finally {
             $_SESSION = [];
         }
