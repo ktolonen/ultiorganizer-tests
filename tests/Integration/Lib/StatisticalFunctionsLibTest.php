@@ -90,8 +90,16 @@ final class StatisticalFunctionsLibTest extends TestCase
 
     public function testSeriesStatisticsByTypeReturnsArrayForKnownTypes(): void
     {
+        // Fixture series 100 (type='open') and season HRN2026 (type='outdoor') match, and
+        // uo_series_stats has one precomputed row for series 100.
         $result = SeriesStatisticsByType('open', 'outdoor');
-        $this->assertIsArray($result);
+        $this->assertCount(1, $result);
+        $this->assertSame('100', (string) $result[0]['series_id']);
+        $this->assertSame('Open', $result[0]['seriesname']);
+        $this->assertEquals(2, $result[0]['teams']);
+        $this->assertEquals(2, $result[0]['games']);
+        $this->assertEquals(4, $result[0]['players']);
+        $this->assertEquals(26, $result[0]['goals_total']);
     }
 
     public function testSeriesStatisticsByTypeReturnsEmptyForUnknownTypes(): void
@@ -188,74 +196,79 @@ final class StatisticalFunctionsLibTest extends TestCase
 
     public function testPlayerStatisticsReturnsArrayForAnyProfileId(): void
     {
+        // Fixture has no uo_player_stats rows at all (populated only by CalcPlayerStats,
+        // which the later tests in this class run and clean back up).
         $result = PlayerStatistics(800);
-        $this->assertIsArray($result);
+        $this->assertSame([], $result);
     }
 
     // --- AlltimeScoreboard ---
 
     public function testAlltimeScoreboardReturnsArray(): void
     {
+        // Reads uo_player_stats, which is empty in the fixture.
         $result = AlltimeScoreboard('HRN2026', 'open');
-        $this->assertIsArray($result);
+        $this->assertSame([], $result);
     }
 
     // --- ScoreboardAllTime branches ---
 
     public function testScoreboardAllTimeDefaultSortingReturnsArray(): void
     {
+        // Reads uo_player_stats, which is empty in the fixture, regardless of filters/sorting.
         $result = ScoreboardAllTime(10);
-        $this->assertIsArray($result);
+        $this->assertSame([], $result);
     }
 
     public function testScoreboardAllTimeWithBothTypeFiltersReturnsArray(): void
     {
         $result = ScoreboardAllTime(10, 'outdoor', 'open');
-        $this->assertIsArray($result);
+        $this->assertSame([], $result);
     }
 
     public function testScoreboardAllTimeWithOnlySeasonTypeReturnsArray(): void
     {
         $result = ScoreboardAllTime(10, 'outdoor', '');
-        $this->assertIsArray($result);
+        $this->assertSame([], $result);
     }
 
     public function testScoreboardAllTimeWithOnlySeriesTypeReturnsArray(): void
     {
         $result = ScoreboardAllTime(10, '', 'open');
-        $this->assertIsArray($result);
+        $this->assertSame([], $result);
     }
 
     public function testScoreboardAllTimeTotalSortingReturnsArray(): void
     {
         $result = ScoreboardAllTime(5, '', '', '', 'total');
-        $this->assertIsArray($result);
+        $this->assertSame([], $result);
     }
 
     public function testScoreboardAllTimeGoalSortingReturnsArray(): void
     {
         $result = ScoreboardAllTime(5, '', '', '', 'goal');
-        $this->assertIsArray($result);
+        $this->assertSame([], $result);
     }
 
     public function testScoreboardAllTimePassSortingReturnsArray(): void
     {
         $result = ScoreboardAllTime(5, '', '', '', 'pass');
-        $this->assertIsArray($result);
+        $this->assertSame([], $result);
     }
 
     public function testScoreboardAllTimeGamesSortingReturnsArray(): void
     {
         $result = ScoreboardAllTime(5, '', '', '', 'games');
-        $this->assertIsArray($result);
+        $this->assertSame([], $result);
     }
 
     // --- SeasonSpiritTopTeamsBySeriesType ---
 
     public function testSeasonSpiritTopTeamsBySeriesTypeReturnsArray(): void
     {
+        // Reads uo_team_spirit_stats, which has no fixture rows.
         $result = SeasonSpiritTopTeamsBySeriesType('HRN2026', 'open', 3);
-        $this->assertIsArray($result);
+        $this->assertSame([], $result);
     }
 
     // --- SetTeamSeasonStanding ---
