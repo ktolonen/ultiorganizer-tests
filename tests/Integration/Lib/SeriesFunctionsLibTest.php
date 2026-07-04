@@ -58,14 +58,18 @@ final class SeriesFunctionsLibTest extends TestCase
 
     public function testSeriesPoolsNoContinuingPoolsFilter(): void
     {
+        // Fixture pool 200 has continuingpool=0, so the filter keeps it.
         $pools = SeriesPools(100, false, true);
-        $this->assertIsArray($pools);
+        $this->assertCount(1, $pools);
+        $this->assertSame('Pool A', $pools[0]['name']);
     }
 
     public function testSeriesPoolsNoPlacementPoolsFilter(): void
     {
+        // Fixture pool 200 has placementpool=0, so the filter keeps it.
         $pools = SeriesPools(100, false, false, true);
-        $this->assertIsArray($pools);
+        $this->assertCount(1, $pools);
+        $this->assertSame('Pool A', $pools[0]['name']);
     }
 
     public function testSeriesPoolsReturnsEmptyForUnknownSeries(): void
@@ -77,8 +81,9 @@ final class SeriesFunctionsLibTest extends TestCase
 
     public function testSeriesPlacementPoolIdsReturnsArray(): void
     {
+        // Fixture pool 200 has placementpool=0, so no placement pools exist.
         $ids = SeriesPlacementPoolIds(100);
-        $this->assertIsArray($ids);
+        $this->assertSame([], $ids);
     }
 
     // --- SeriesTypes ---
@@ -104,8 +109,11 @@ final class SeriesFunctionsLibTest extends TestCase
 
     public function testSeriesTeamsWithOrderBySeedingReturnsTeams(): void
     {
+        // Fixture ranks: team 300=1, team 301=2, so seeding order matches name order here.
         $teams = SeriesTeams(100, true);
-        $this->assertIsArray($teams);
+        $this->assertCount(2, $teams);
+        $this->assertSame('Helsinki Heat', $teams[0]['name']);
+        $this->assertSame('Tampere Tempest', $teams[1]['name']);
     }
 
     public function testSeriesTeamsReturnsEmptyForUnknownSeries(): void
@@ -117,16 +125,28 @@ final class SeriesFunctionsLibTest extends TestCase
 
     public function testSeriesTeamStatsPointsReturnsArray(): void
     {
+        // Only game 700 has hasstarted>0; game 701 is excluded. Home team 300 won 15-11.
         $stats = SeriesTeamStatsPoints(100);
-        $this->assertIsArray($stats);
+        $this->assertCount(2, $stats);
+        $this->assertEquals(1, $stats['300']['games']);
+        $this->assertEquals(1, $stats['300']['wins']);
+        $this->assertEquals(0, $stats['300']['losses']);
+        $this->assertEquals(15, $stats['300']['scores']);
+        $this->assertEquals(11, $stats['300']['against']);
+        $this->assertEquals(1, $stats['301']['games']);
+        $this->assertEquals(0, $stats['301']['wins']);
+        $this->assertEquals(1, $stats['301']['losses']);
+        $this->assertEquals(11, $stats['301']['scores']);
+        $this->assertEquals(15, $stats['301']['against']);
     }
 
     // --- SeriesTeamsWithoutPool ---
 
     public function testSeriesTeamsWithoutPoolReturnsArray(): void
     {
+        // Both fixture teams are assigned to pool 200 via uo_team_pool, so none qualify.
         $teams = SeriesTeamsWithoutPool(100);
-        $this->assertIsArray($teams);
+        $this->assertSame([], $teams);
     }
 
     // --- Series() ---
@@ -149,16 +169,22 @@ final class SeriesFunctionsLibTest extends TestCase
 
     public function testSeriesWithOrderingReturnsCorrectly(): void
     {
+        // Fixture has exactly one series row.
         $series = DBFetchAllAssoc(Series(null, ['series.series_id' => 'ASC']));
-        $this->assertIsArray($series);
+        $this->assertCount(1, $series);
+        $this->assertSame('100', $series[0]['series_id']);
     }
 
     // --- SeriesAllPlayers ---
 
     public function testSeriesAllPlayersReturnsArray(): void
     {
+        // 4 fixture players across the 2 fixture teams in series 100.
         $players = SeriesAllPlayers(100);
-        $this->assertIsArray($players);
+        $this->assertCount(4, $players);
+        $ids = array_column($players, 'player_id');
+        sort($ids);
+        $this->assertSame(['800', '801', '802', '803'], $ids);
     }
 
     // --- SeriesName / SeriesSeasonName ---
@@ -172,7 +198,7 @@ final class SeriesFunctionsLibTest extends TestCase
     public function testSeriesSeasonNameReturnsSeasonForFixtureSeries(): void
     {
         $name = SeriesSeasonName(100);
-        $this->assertIsString($name);
+        $this->assertSame('Harness Invitational 2026', $name);
     }
 
     // --- SeriesSeasonId ---
@@ -213,97 +239,126 @@ final class SeriesFunctionsLibTest extends TestCase
 
     // --- SeriesScoreBoard / SeriesScoreBoardArray (all sorting branches) ---
 
+    // Each fixture player scored exactly 1 goal and assisted exactly 1 goal in game 700
+    // (the only game with uo_played rows), so every stat ties across all 4 players and every
+    // sorting branch falls through its tie-breaks to lastname ASC: Ace, Blade, North, Twist.
+    private function assertSeriesScoreBoardRows(array $arr): void
+    {
+        $this->assertCount(4, $arr);
+        $this->assertSame(['Ace', 'Blade', 'North', 'Twist'], array_column($arr, 'lastname'));
+        foreach ($arr as $row) {
+            $this->assertEquals(1, $row['done']);
+            $this->assertEquals(1, $row['fedin']);
+            $this->assertEquals(0, $row['callahan']);
+            $this->assertEquals(2, $row['total']);
+            $this->assertEquals(1, $row['games']);
+        }
+    }
+
     public function testSeriesScoreBoardReturnsResult(): void
     {
         // SeriesScoreBoard returns mysqli_result; SeriesScoreBoardArray wraps it
-        $arr = SeriesScoreBoardArray(100, 'total', null);
-        $this->assertIsArray($arr);
+        $this->assertSeriesScoreBoardRows(SeriesScoreBoardArray(100, 'total', null));
     }
 
     public function testSeriesScoreBoardWithLimitReturnsResult(): void
     {
         $arr = SeriesScoreBoardArray(100, 'total', 5);
-        $this->assertIsArray($arr);
+        $this->assertSeriesScoreBoardRows($arr);
     }
 
     public function testSeriesScoreBoardGoalSorting(): void
     {
-        $this->assertIsArray(SeriesScoreBoardArray(100, 'goal', null));
+        $this->assertSeriesScoreBoardRows(SeriesScoreBoardArray(100, 'goal', null));
     }
 
     public function testSeriesScoreBoardGoalAvgSorting(): void
     {
-        $this->assertIsArray(SeriesScoreBoardArray(100, 'goalavg', null));
+        $this->assertSeriesScoreBoardRows(SeriesScoreBoardArray(100, 'goalavg', null));
     }
 
     public function testSeriesScoreBoardPassSorting(): void
     {
-        $this->assertIsArray(SeriesScoreBoardArray(100, 'pass', null));
+        $this->assertSeriesScoreBoardRows(SeriesScoreBoardArray(100, 'pass', null));
     }
 
     public function testSeriesScoreBoardPassAvgSorting(): void
     {
-        $this->assertIsArray(SeriesScoreBoardArray(100, 'passavg', null));
+        $this->assertSeriesScoreBoardRows(SeriesScoreBoardArray(100, 'passavg', null));
     }
 
     public function testSeriesScoreBoardGamesSorting(): void
     {
-        $this->assertIsArray(SeriesScoreBoardArray(100, 'games', null));
+        $this->assertSeriesScoreBoardRows(SeriesScoreBoardArray(100, 'games', null));
     }
 
     public function testSeriesScoreBoardTeamSorting(): void
     {
-        $this->assertIsArray(SeriesScoreBoardArray(100, 'team', null));
+        $this->assertSeriesScoreBoardRows(SeriesScoreBoardArray(100, 'team', null));
     }
 
     public function testSeriesScoreBoardNameSorting(): void
     {
-        $this->assertIsArray(SeriesScoreBoardArray(100, 'name', null));
+        $this->assertSeriesScoreBoardRows(SeriesScoreBoardArray(100, 'name', null));
     }
 
     public function testSeriesScoreBoardCallahanSorting(): void
     {
-        $this->assertIsArray(SeriesScoreBoardArray(100, 'callahan', null));
+        $this->assertSeriesScoreBoardRows(SeriesScoreBoardArray(100, 'callahan', null));
     }
 
     public function testSeriesScoreBoardTotalAvgSorting(): void
     {
-        $this->assertIsArray(SeriesScoreBoardArray(100, 'totalavg', null));
+        $this->assertSeriesScoreBoardRows(SeriesScoreBoardArray(100, 'totalavg', null));
     }
 
     // --- SeriesDefenseBoard / SeriesDefenseBoardArray ---
 
+    // Fixture has no uo_defense rows, so deftotal is 0 for every player and, as with the score
+    // board, all tie-breaks fall through to lastname ASC.
+    private function assertSeriesDefenseBoardRows(array $arr): void
+    {
+        $this->assertCount(4, $arr);
+        $this->assertSame(['Ace', 'Blade', 'North', 'Twist'], array_column($arr, 'lastname'));
+        foreach ($arr as $row) {
+            $this->assertEquals(0, $row['deftotal']);
+            $this->assertEquals(1, $row['games']);
+        }
+    }
+
     public function testSeriesDefenseBoardReturnsResult(): void
     {
-        // SeriesDefenseBoard returns mysqli_result; SeriesDefenseBoardArray wraps it
-        $arr = SeriesDefenseBoardArray(100, 'blocks', null);
-        $this->assertIsArray($arr);
+        // SeriesDefenseBoard returns mysqli_result; SeriesDefenseBoardArray wraps it.
+        // 'blocks' is not a recognized sort key, so it falls through to the default branch.
+        $this->assertSeriesDefenseBoardRows(SeriesDefenseBoardArray(100, 'blocks', null));
     }
 
     public function testSeriesDefenseBoardAllSortings(): void
     {
         foreach (['deftotal', 'games', 'team', 'name', 'callahan', 'default_unknown'] as $sort) {
-            $this->assertIsArray(SeriesDefenseBoardArray(100, $sort, null), "Sort: $sort");
+            $this->assertSeriesDefenseBoardRows(SeriesDefenseBoardArray(100, $sort, null));
         }
     }
 
     public function testSeriesDefenseBoardWithLimit(): void
     {
-        $this->assertIsArray(SeriesDefenseBoardArray(100, 'deftotal', 5));
+        $arr = SeriesDefenseBoardArray(100, 'deftotal', 5);
+        $this->assertSeriesDefenseBoardRows($arr);
     }
 
     public function testSeriesScoreBoardDefaultSort(): void
     {
         // 'unknown_sort' triggers the default branch
-        $this->assertIsArray(SeriesScoreBoardArray(100, 'unknown_sort', null));
+        $this->assertSeriesScoreBoardRows(SeriesScoreBoardArray(100, 'unknown_sort', null));
     }
 
     // --- SeriesAllGames ---
 
     public function testSeriesAllGamesReturnsFixtureGames(): void
     {
+        // Both fixture games (700, 701) are in pool 200's timetable.
         $games = SeriesAllGames(100);
-        $this->assertIsArray($games);
+        $this->assertSame(['700', '701'], array_column($games, 'game'));
     }
 
     // --- SeriesInfo ---
@@ -341,11 +396,12 @@ final class SeriesFunctionsLibTest extends TestCase
 
     public function testSeriesEnrolledTeamsReturnsArrayAsAdmin(): void
     {
+        // Fixture has no uo_enrolledteam rows for series 100.
         LegacyApp::loadUserFunctions();
         LegacyApp::loginAsAdmin();
         try {
             $teams = SeriesEnrolledTeams(100);
-            $this->assertIsArray($teams);
+            $this->assertSame([], $teams);
         } finally {
             $_SESSION = [];
         }
@@ -365,11 +421,12 @@ final class SeriesFunctionsLibTest extends TestCase
 
     public function testSeriesEnrolledTeamsByUserReturnsArrayAsAdmin(): void
     {
+        // Fixture has no uo_enrolledteam rows for 'admin' in series 100.
         LegacyApp::loadUserFunctions();
         LegacyApp::loginAsAdmin();
         try {
             $teams = SeriesEnrolledTeamsByUser(100, 'admin');
-            $this->assertIsArray($teams);
+            $this->assertSame([], $teams);
         } finally {
             $_SESSION = [];
         }
@@ -633,8 +690,11 @@ final class SeriesFunctionsLibTest extends TestCase
         DBQuery("INSERT INTO uo_userproperties (userid, name, value) VALUES ('admin', 'editseason', 'HRN2026')");
         $propId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
         try {
+            // No uo_userproperties 'teamadmin:<id>' rows exist in the fixture, so this is empty
+            // even though 'admin' has editseason rights (the SUT distinguishes season-admin
+            // rights, which gate access, from teamadmin properties, which populate the rows).
             $rows = SeriesTeamResponsibles(100);
-            $this->assertIsArray($rows);
+            $this->assertSame([], $rows);
         } finally {
             DBQuery("DELETE FROM uo_userproperties WHERE prop_id=$propId");
             $_SESSION = [];
