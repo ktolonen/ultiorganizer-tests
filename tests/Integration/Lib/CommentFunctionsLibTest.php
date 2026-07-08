@@ -57,6 +57,21 @@ final class CommentFunctionsLibTest extends TestCase
         LegacyApp::closeDatabaseConnection();
     }
 
+    // DBQueryToValue/Array/Row/RowCount persistently cache by query string; a
+    // DBQuery UPDATE followed by a re-read through SeasonInfo() needs both the
+    // season_info runtime namespace and the underlying db_query_row cache cleared.
+    private static function flushQueryCaches(): void
+    {
+        foreach (['db_query_value', 'db_query_array', 'db_query_row', 'db_query_rowcount'] as $ns) {
+            if (function_exists('CacheForgetPersistent')) {
+                CacheForgetPersistent($ns);
+            }
+            if (function_exists('CacheForgetNamespace')) {
+                CacheForgetNamespace($ns);
+            }
+        }
+    }
+
     // --- CommentNormalize ---
 
     public function testCommentNormalizeTrimsWhitespace(): void
@@ -229,6 +244,106 @@ final class CommentFunctionsLibTest extends TestCase
         $html = GameCommentHtml(700, COMMENT_TYPE_GAME);
         $this->assertStringContainsString('comment', $html);
         $this->assertStringContainsString('Test HTML comment', $html);
+    }
+
+    // --- CanViewGameComment ---
+    // game.functions.php (GameRespTeam/GameSeries) must be loaded before exercising
+    // any non-anonymous permission path, including hasEditGameEventsRight() itself
+    // in the regression test below. CanViewGameComment() does NOT call
+    // hasEditGameEventsRight() (removed after code review feedback restricted
+    // private game-note viewing to season admins / spirit director only) -- a
+    // superadmin still passes because isSpiritAdmin() short-circuits true for
+    // superadmin regardless of season, not because of any game-edit right.
+
+    public function testCanViewGameCommentReturnsTrueForSuperAdminRegardlessOfShowgamecomments(): void
+    {
+        LegacyApp::requireTopLevelLib('game.functions.php');
+        // Superadmin -> hasSpiritToolsRight('HRN2026') -> isSpiritAdmin() short-
+        // circuits true, even though showgamecomments is explicitly off.
+        $seasoninfo = ['season_id' => 'HRN2026', 'showgamecomments' => 0];
+        $this->assertTrue(CanViewGameComment(700, $seasoninfo));
+    }
+
+    public function testCanViewGameCommentDeniesGameEventsAdminWithoutSpiritToolsRight(): void
+    {
+        // Regression pin: a team/series/game/reservation admin who can edit game
+        // events is no longer sufficient on its own -- only season admins and the
+        // spirit director (hasSpiritToolsRight) or the public showgamecomments
+        // flag grant visibility now.
+        LegacyApp::requireTopLevelLib('game.functions.php');
+        $_SESSION['userproperties']['userrole'] = [];
+        $_SESSION['userproperties']['userrole']['teamadmin'][300] = 1;
+        try {
+            // Allow precondition: teamadmin:300 (game 700's respteam) still
+            // satisfies hasEditGameEventsRight, so the deny below is attributable
+            // to CanViewGameComment's own logic, not a broken permission grant.
+            $this->assertTrue(hasEditGameEventsRight(700));
+
+            $seasoninfo = ['season_id' => 'HRN2026', 'showgamecomments' => 0];
+            $this->assertFalse(CanViewGameComment(700, $seasoninfo));
+        } finally {
+            unset($_SESSION['userproperties']['userrole']['teamadmin']);
+            $_SESSION['userproperties']['userrole']['superadmin'] = true;
+        }
+    }
+
+    public function testCanViewGameCommentSpiritToolsRightOverridesShowgamecommentsOff(): void
+    {
+        LegacyApp::requireTopLevelLib('game.functions.php');
+        $seasoninfo = ['season_id' => 'HRN2026', 'showgamecomments' => 0];
+        // Baseline: no admin/spirit rights and showgamecomments off -> deny.
+        // Anchors the contrast below so the true result is attributable to
+        // hasSpiritToolsRight(), not a leftover superadmin session.
+        $_SESSION['userproperties']['userrole'] = [];
+        $this->assertFalse(CanViewGameComment(700, $seasoninfo));
+
+        // Spirit director for the season (not a game/season admin) -> hasSpiritToolsRight
+        // true -> overrides the still-off showgamecomments flag.
+        $_SESSION['userproperties']['userrole']['spiritadmin']['HRN2026'] = 1;
+        try {
+            $this->assertTrue(CanViewGameComment(700, $seasoninfo));
+        } finally {
+            unset($_SESSION['userproperties']['userrole']['spiritadmin']);
+            $_SESSION['userproperties']['userrole']['superadmin'] = true;
+        }
+    }
+
+    public function testCanViewGameCommentPublicPathRespectsShowgamecommentsFlag(): void
+    {
+        LegacyApp::requireTopLevelLib('game.functions.php');
+        // No admin/spirit rights at all -> only the showgamecomments flag decides.
+        $_SESSION['userproperties']['userrole'] = [];
+        try {
+            $off = ['season_id' => 'HRN2026', 'showgamecomments' => 0];
+            $this->assertFalse(CanViewGameComment(700, $off));
+
+            $on = ['season_id' => 'HRN2026', 'showgamecomments' => 1];
+            $this->assertTrue(CanViewGameComment(700, $on));
+        } finally {
+            $_SESSION['userproperties']['userrole']['superadmin'] = true;
+        }
+    }
+
+    public function testCanViewGameCommentAutoLoadsSeasonInfoWhenOmitted(): void
+    {
+        LegacyApp::requireTopLevelLib('game.functions.php');
+        // No $seasoninfo argument -> CanViewGameComment resolves it itself via
+        // GameSeason(700) + SeasonInfo('HRN2026'). Fixture season has
+        // showgamecomments=0 by column default.
+        $_SESSION['userproperties']['userrole'] = [];
+        try {
+            $this->assertFalse(CanViewGameComment(700));
+
+            DBQuery("UPDATE uo_season SET showgamecomments=1 WHERE season_id='HRN2026'");
+            ClearSeasonRuntimeCache();
+            self::flushQueryCaches();
+            $this->assertTrue(CanViewGameComment(700));
+        } finally {
+            DBQuery("UPDATE uo_season SET showgamecomments=0 WHERE season_id='HRN2026'");
+            ClearSeasonRuntimeCache();
+            self::flushQueryCaches();
+            $_SESSION['userproperties']['userrole']['superadmin'] = true;
+        }
     }
 
     // --- CanCreateGameComment ---

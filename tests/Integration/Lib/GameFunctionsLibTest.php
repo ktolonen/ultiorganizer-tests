@@ -59,8 +59,33 @@ final class GameFunctionsLibTest extends TestCase
             DBQuery(sprintf("DELETE FROM uo_game WHERE game_id=%d", (int) $gameId));
         }
         $this->createdGameIds = [];
+        // GameSetForfeit() now also calls ResolvePoolStandings(200)/
+        // PoolResolvePlayed(200) whenever a test creates a temp game in the
+        // default pool (200, shared with fixture games 700/701) and forfeits
+        // it. The temp game's hasstarted=0 keeps getMatchesWins() (and thus
+        // activerank) unaffected, but PoolResolvePlayed() unconditionally
+        // flips uo_pool.played to 0 (games=3 vs started=1) and nothing flips
+        // it back once the temp game is deleted above. Restore it every test
+        // so later files in the same suite run (StandingsFunctionsLibTest,
+        // SeasonTeamPoolFunctionsTest, ...) don't inherit a stale flag.
+        DBQuery("UPDATE uo_pool SET played=1 WHERE pool_id=200");
         unset($_SESSION['userproperties'], $_SESSION['uid']);
         LegacyApp::closeDatabaseConnection();
+    }
+
+    // DBQueryToValue/Array/Row/RowCount persistently cache by query string. Not
+    // reliably disabled by $serverConf['PersistentCacheEnabled']='false' alone
+    // in a full-suite run, so mutate-then-reread tests flush explicitly.
+    private static function flushQueryCaches(): void
+    {
+        foreach (['db_query_value', 'db_query_array', 'db_query_row', 'db_query_rowcount'] as $ns) {
+            if (function_exists('CacheForgetPersistent')) {
+                CacheForgetPersistent($ns);
+            }
+            if (function_exists('CacheForgetNamespace')) {
+                CacheForgetNamespace($ns);
+            }
+        }
     }
 
     private function createTempGame(
@@ -786,6 +811,24 @@ final class GameFunctionsLibTest extends TestCase
         }
     }
 
+    public function testSeasonForfeitGamesIncludesAwayAndBothForfeitCodes(): void
+    {
+        // Regression pin: the filter widened from "g.forfeit = 1" to
+        // "g.forfeit > 0", so codes 2 (away forfeited) and 3 (both forfeited)
+        // must be reported too, not just code 1 (home forfeited).
+        $awayForfeit = $this->createTempGame();
+        $bothForfeit = $this->createTempGame();
+        DBQuery(sprintf("UPDATE uo_game SET forfeit=2 WHERE game_id=%d", $awayForfeit));
+        DBQuery(sprintf("UPDATE uo_game SET forfeit=3 WHERE game_id=%d", $bothForfeit));
+        try {
+            $ids = array_column(SeasonForfeitGames('HRN2026'), 'game_id');
+            $this->assertContains((string) $awayForfeit, $ids);
+            $this->assertContains((string) $bothForfeit, $ids);
+        } finally {
+            DBQuery(sprintf("UPDATE uo_game SET forfeit=0 WHERE game_id IN (%d, %d)", $awayForfeit, $bothForfeit));
+        }
+    }
+
     // --- GameSetForfeit ---
 
     public function testGameSetForfeitTogglesFlag(): void
@@ -801,6 +844,70 @@ final class GameFunctionsLibTest extends TestCase
         GameSetForfeit($gameId, false);
         $forfeit = (int) DBQueryToValue(sprintf("SELECT forfeit FROM uo_game WHERE game_id=%d", $gameId));
         $this->assertSame(0, $forfeit);
+    }
+
+    public function testGameSetForfeitAcceptsDirectionCodes(): void
+    {
+        // $isForfeit was renamed/repurposed to a 0-3 direction code (0=none,
+        // 1=home forfeited, 2=away forfeited, 3=both forfeited); the boolean
+        // test above only exercises 0/1. This pins the other two codes.
+        $gameId = $this->createTempGame();
+
+        GameSetForfeit($gameId, 2);
+        $forfeit = (int) DBQueryToValue(sprintf("SELECT forfeit FROM uo_game WHERE game_id=%d", $gameId));
+        $this->assertSame(2, $forfeit);
+
+        GameSetForfeit($gameId, 3);
+        $forfeit = (int) DBQueryToValue(sprintf("SELECT forfeit FROM uo_game WHERE game_id=%d", $gameId));
+        $this->assertSame(3, $forfeit);
+    }
+
+    public function testGameSetForfeitClampsOutOfRangeValues(): void
+    {
+        // GameSetForfeit() clamps its input to [0,3] via max(0, min(3, intval($forfeit))).
+        $gameId = $this->createTempGame();
+
+        GameSetForfeit($gameId, 99);
+        $forfeit = (int) DBQueryToValue(sprintf("SELECT forfeit FROM uo_game WHERE game_id=%d", $gameId));
+        $this->assertSame(3, $forfeit);
+
+        GameSetForfeit($gameId, -5);
+        $forfeit = (int) DBQueryToValue(sprintf("SELECT forfeit FROM uo_game WHERE game_id=%d", $gameId));
+        $this->assertSame(0, $forfeit);
+    }
+
+    public function testGameSetForfeitRefreshesSpiritVisibility(): void
+    {
+        $gameId = $this->createTempGame();
+        // showspiritpointsonlyoncomplete=0 makes visibility deterministic from
+        // spiritmode/showspiritpoints/forfeit alone, without needing an actual
+        // spirit submission to satisfy GameSpiritComplete().
+        DBQuery("UPDATE uo_season SET showspiritpoints=1, showspiritpointsonlyoncomplete=0 WHERE season_id='HRN2026'");
+        ClearSeasonRuntimeCache();
+        self::flushQueryCaches();
+        try {
+            GameSetForfeit($gameId, true);
+            self::flushQueryCaches();
+            // Pins that GameSetForfeit() now calls RefreshGameSpiritData(), which
+            // recomputes show_spirit via GameSpiritVisibilityValue(); a forfeited
+            // game must be hidden even though showspiritpoints=1 would otherwise
+            // show it.
+            $showSpirit = (int) DBQueryToValue(sprintf("SELECT show_spirit FROM uo_game WHERE game_id=%d", $gameId));
+            $this->assertSame(0, $showSpirit);
+
+            GameSetForfeit($gameId, false);
+            self::flushQueryCaches();
+            // Contrast: un-forfeiting the same game recomputes visibility back to
+            // visible, proving the refresh runs on both toggle directions.
+            $showSpirit = (int) DBQueryToValue(sprintf("SELECT show_spirit FROM uo_game WHERE game_id=%d", $gameId));
+            $this->assertSame(1, $showSpirit);
+        } finally {
+            DBQuery("UPDATE uo_season SET showspiritpoints=0, showspiritpointsonlyoncomplete=1 WHERE season_id='HRN2026'");
+            ClearSeasonRuntimeCache();
+            self::flushQueryCaches();
+            // See tearDown(): GameSetForfeit() now also recomputes pool 200's
+            // standings/played flag as a side effect, restored there.
+        }
     }
 
     // --- GameSetResult / GameUpdateResult / GameClearResult ---
@@ -838,6 +945,26 @@ final class GameFunctionsLibTest extends TestCase
         $this->assertNull($info['homescore']);
         $this->assertNull($info['visitorscore']);
         $this->assertSame('0', (string) $info['hasstarted']);
+    }
+
+    public function testGameClearResultDoesNotClearForfeitFlag(): void
+    {
+        // Regression pin: GameClearResult()'s UPDATE dropped the forfeit='0'
+        // clause, so clearing a game's result must no longer silently un-forfeit
+        // it (scores/hasstarted still reset as before).
+        $gameId = $this->createTempGame();
+        DBQuery(sprintf(
+            "UPDATE uo_game SET homescore=8, visitorscore=3, hasstarted=2, forfeit=1 WHERE game_id=%d",
+            $gameId,
+        ));
+
+        GameClearResult($gameId);
+
+        $info = GameInfo($gameId);
+        $this->assertNull($info['homescore']);
+        $this->assertSame('0', (string) $info['hasstarted']);
+        $forfeit = (int) DBQueryToValue(sprintf("SELECT forfeit FROM uo_game WHERE game_id=%d", $gameId));
+        $this->assertSame(1, $forfeit);
     }
 
     // --- GameSetDefenses ---

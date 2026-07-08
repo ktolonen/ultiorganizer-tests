@@ -471,6 +471,50 @@ final class StandingsFunctionsLibTest extends TestCase
         $this->assertEquals(1, $result[1]['losses']);
     }
 
+    public function testGetMatchesWinsFlipsResultOnHomeForfeit(): void
+    {
+        $points = [
+            ['team' => 300, 'wins' => 0, 'arank' => 1],
+            ['team' => 301, 'wins' => 0, 'arank' => 1],
+        ];
+        // Game 700 naturally favors home team 300 (15-11), per
+        // testGetMatchesWinsReturnsArrayForFixtureTeams above. forfeit=1 (home
+        // forfeited) must flip the winner to the visitor regardless of score.
+        DBQuery("UPDATE uo_game SET forfeit=1 WHERE game_id=700");
+        self::flushQueryCaches();
+        try {
+            $result = getMatchesWins($points, 200);
+            $this->assertEquals(0, $result[0]['wins']);
+            $this->assertEquals(1, $result[0]['losses']);
+            $this->assertEquals(1, $result[1]['wins']);
+            $this->assertEquals(0, $result[1]['losses']);
+        } finally {
+            DBQuery("UPDATE uo_game SET forfeit=0 WHERE game_id=700");
+            self::flushQueryCaches();
+        }
+    }
+
+    public function testGetMatchesWinsBothTeamsLoseWhenBothForfeit(): void
+    {
+        $points = [
+            ['team' => 300, 'wins' => 0, 'arank' => 1],
+            ['team' => 301, 'wins' => 0, 'arank' => 1],
+        ];
+        // forfeit=3 (both teams forfeited): neither side wins, both lose.
+        DBQuery("UPDATE uo_game SET forfeit=3 WHERE game_id=700");
+        self::flushQueryCaches();
+        try {
+            $result = getMatchesWins($points, 200);
+            $this->assertEquals(0, $result[0]['wins']);
+            $this->assertEquals(1, $result[0]['losses']);
+            $this->assertEquals(0, $result[1]['wins']);
+            $this->assertEquals(1, $result[1]['losses']);
+        } finally {
+            DBQuery("UPDATE uo_game SET forfeit=0 WHERE game_id=700");
+            self::flushQueryCaches();
+        }
+    }
+
     public function testGetMatchesGoalsReturnsArrayForFixtureTeams(): void
     {
         $points = [
@@ -983,6 +1027,28 @@ final class StandingsFunctionsLibTest extends TestCase
         }
     }
 
+    public function testResolvePlayoffPoolStandingsFlipsWinnerOnForfeit(): void
+    {
+        $poolId = $this->buildResolvePool(2);
+        $t1 = self::TB + 4;
+        $t2 = $t1 + 1;
+        $gPlayed = self::GB + 4;
+        try {
+            // t1 naturally wins the played game 15-9 (per
+            // testResolvePlayoffPoolStandingsRanksWinnerFirst above), but
+            // forfeit=1 (home/t1 forfeited) must flip the winner to t2
+            // regardless of score.
+            DBQuery("UPDATE uo_game SET forfeit=1 WHERE game_id=$gPlayed");
+            self::flushQueryCaches();
+            ResolvePlayoffPoolStandings($poolId);
+            self::flushQueryCaches();
+            $rank = DBQueryToValue("SELECT activerank FROM uo_team_pool WHERE pool=$poolId AND team=$t2");
+            $this->assertSame('1', $rank);
+        } finally {
+            $this->dropResolvePool(2);
+        }
+    }
+
     public function testResolvePlayoffViaResolvePoolStandingsDispatch(): void
     {
         $poolId = $this->buildResolvePool(2);
@@ -1029,6 +1095,27 @@ final class StandingsFunctionsLibTest extends TestCase
             ResolveCrossMatchPoolStandings($poolId);
             self::flushQueryCaches();
             $rank = DBQueryToValue("SELECT activerank FROM uo_team_pool WHERE pool=$poolId AND team=$t1");
+            $this->assertSame('1', $rank);
+        } finally {
+            $this->dropResolvePool(4);
+        }
+    }
+
+    public function testResolveCrossMatchPoolStandingsFlipsWinnerOnForfeit(): void
+    {
+        $poolId = $this->buildResolvePool(4);
+        $t1 = self::TB + 8;
+        $t2 = $t1 + 1;
+        $gPlayed = self::GB + 8;
+        try {
+            // Same forfeit-reversal contract as ResolvePlayoffPoolStandings:
+            // t1 naturally wins 15-9, forfeit=1 (home/t1 forfeited) must flip
+            // the winner to t2.
+            DBQuery("UPDATE uo_game SET forfeit=1 WHERE game_id=$gPlayed");
+            self::flushQueryCaches();
+            ResolveCrossMatchPoolStandings($poolId);
+            self::flushQueryCaches();
+            $rank = DBQueryToValue("SELECT activerank FROM uo_team_pool WHERE pool=$poolId AND team=$t2");
             $this->assertSame('1', $rank);
         } finally {
             $this->dropResolvePool(4);

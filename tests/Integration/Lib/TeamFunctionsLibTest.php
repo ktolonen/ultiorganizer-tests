@@ -349,6 +349,39 @@ final class TeamFunctionsLibTest extends TestCase
         $this->assertEquals(0, $stats['losses']);
     }
 
+    public function testTeamStatsAwardsLossWhenTeamForfeits(): void
+    {
+        // testTeamStatsReturnsArray above is the allow baseline: team 300
+        // (home) naturally wins game 700 15-11. forfeit=1 (home forfeited)
+        // must flip this to a loss regardless of the real score.
+        DBQuery("UPDATE uo_game SET forfeit=1 WHERE game_id=700");
+        self::flushQueryCaches();
+        try {
+            $stats = TeamStats(300);
+            $this->assertEquals(0, $stats['wins']);
+            $this->assertEquals(1, $stats['losses']);
+        } finally {
+            DBQuery("UPDATE uo_game SET forfeit=0 WHERE game_id=700");
+            self::flushQueryCaches();
+        }
+    }
+
+    public function testTeamStatsExcludesDrawWhenGameForfeitedWithTiedScore(): void
+    {
+        // A forfeit must never count as a draw even if the scores end up
+        // tied; forfeit=3 (both teams forfeited) means team 300 gets a loss.
+        DBQuery("UPDATE uo_game SET forfeit=3, homescore=10, visitorscore=10 WHERE game_id=700");
+        self::flushQueryCaches();
+        try {
+            $stats = TeamStats(300);
+            $this->assertEquals(0, $stats['draws']);
+            $this->assertEquals(1, $stats['losses']);
+        } finally {
+            DBQuery("UPDATE uo_game SET forfeit=0, homescore=15, visitorscore=11 WHERE game_id=700");
+            self::flushQueryCaches();
+        }
+    }
+
     public function testTeamVictoryPointsByPoolReturnsValueOrArray(): void
     {
         // Only game 700 (hasstarted>0) counts: team 300 won 15-11 (diff +4).

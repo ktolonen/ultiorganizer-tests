@@ -428,6 +428,7 @@ final class SeasonFunctionsLibTest extends TestCase
             'event_readonly' => 0,
             'maintenance_mode' => 0,
             'api_public' => 0,
+            'showgamecomments' => 0,
             'timezone' => 'Europe/Helsinki',
         ];
     }
@@ -460,6 +461,31 @@ final class SeasonFunctionsLibTest extends TestCase
         }
     }
 
+    public function testAddSeasonPersistsShowgamecommentsFlag(): void
+    {
+        LegacyApp::loadUserFunctions();
+        LegacyApp::loginAsAdmin();
+        $newId = 'TST' . substr(uniqid(), -7);
+        try {
+            $params = self::minimalSeasonParams('Game Comments Season');
+            $params['showgamecomments'] = 1;
+            AddSeason($newId, $params);
+            ClearSeasonRuntimeCache();
+            $this->assertEquals(1, SeasonInfo($newId)['showgamecomments']);
+
+            $params['showgamecomments'] = 0;
+            SetSeason($newId, $params);
+            ClearSeasonRuntimeCache();
+            $this->assertEquals(0, SeasonInfo($newId)['showgamecomments']);
+        } finally {
+            if (SeasonExists($newId)) {
+                DeleteSeason($newId);
+            }
+            ClearSeasonRuntimeCache();
+            $_SESSION = [];
+        }
+    }
+
     public function testSetSeasonSpiritSettingsRunsWithoutError(): void
     {
         LegacyApp::loadUserFunctions();
@@ -472,6 +498,50 @@ final class SeasonFunctionsLibTest extends TestCase
                 'spirit_public' => 0,
             ]);
             $this->assertTrue(SeasonExists($newId));
+        } finally {
+            if (SeasonExists($newId)) {
+                DeleteSeason($newId);
+            }
+            ClearSeasonRuntimeCache();
+            $_SESSION = [];
+        }
+    }
+
+    public function testSetSeasonSpiritSettingsPersistsShowspiritcommentstoteamsFlag(): void
+    {
+        // testSetSeasonSpiritSettingsRunsWithoutError above passes
+        // spirit_enabled/spirit_public, neither of which SetSeasonSpiritSettings
+        // reads (its real keys are spiritmode/showspiritpoints/showspiritcomments/
+        // showspiritcommentstoteams/showspiritpointsonlyoncomplete/
+        // lockteamspiritonsubmit) — so that test never pins a persisted value.
+        // This one uses the real keys and asserts the round trip both ways.
+        LegacyApp::loadUserFunctions();
+        LegacyApp::loginAsAdmin();
+        $newId = 'TST' . substr(uniqid(), -7);
+        try {
+            AddSeason($newId, self::minimalSeasonParams('Spirit Comments Season'));
+
+            SetSeasonSpiritSettings($newId, [
+                'spiritmode' => 1003,
+                'showspiritpoints' => 1,
+                'showspiritcomments' => 1,
+                'showspiritcommentstoteams' => 1,
+                'showspiritpointsonlyoncomplete' => 0,
+                'lockteamspiritonsubmit' => 0,
+            ]);
+            ClearSeasonRuntimeCache();
+            $this->assertEquals(1, SeasonInfo($newId)['showspiritcommentstoteams']);
+
+            SetSeasonSpiritSettings($newId, [
+                'spiritmode' => 1003,
+                'showspiritpoints' => 1,
+                'showspiritcomments' => 1,
+                'showspiritcommentstoteams' => 0,
+                'showspiritpointsonlyoncomplete' => 0,
+                'lockteamspiritonsubmit' => 0,
+            ]);
+            ClearSeasonRuntimeCache();
+            $this->assertEquals(0, SeasonInfo($newId)['showspiritcommentstoteams']);
         } finally {
             if (SeasonExists($newId)) {
                 DeleteSeason($newId);

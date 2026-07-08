@@ -57,6 +57,21 @@ final class SpiritFunctionsLibTest extends TestCase
         LegacyApp::closeDatabaseConnection();
     }
 
+    // DBQueryToValue/Array/Row/RowCount persistently cache by query string; a
+    // DBQuery UPDATE followed by a re-read through SpiritGameRow()/DBQueryToRow()
+    // needs these flushed or the reread returns the pre-write value.
+    private static function flushQueryCaches(): void
+    {
+        foreach (['db_query_value', 'db_query_array', 'db_query_row', 'db_query_rowcount'] as $ns) {
+            if (function_exists('CacheForgetPersistent')) {
+                CacheForgetPersistent($ns);
+            }
+            if (function_exists('CacheForgetNamespace')) {
+                CacheForgetNamespace($ns);
+            }
+        }
+    }
+
     // --- SpiritModeDisabledName ---
 
     public function testSpiritModeDisabledNameReturnsString(): void
@@ -223,6 +238,10 @@ final class SpiritFunctionsLibTest extends TestCase
         $this->assertSame('700', (string) $row['game_id']);
         $this->assertSame('HRN2026', $row['season_id']);
         $this->assertSame('1003', (string) $row['spiritmode']);
+        // Fixture never sets these, so they carry their table defaults (0);
+        // pins that the SELECT actually returns the two new columns.
+        $this->assertEquals(0, $row['forfeit']);
+        $this->assertEquals(0, $row['showspiritcommentstoteams']);
     }
 
     public function testSpiritGameRowReturnsFalseForMissingGame(): void
@@ -455,6 +474,33 @@ final class SpiritFunctionsLibTest extends TestCase
         $this->assertSame('Pool A', $result[0]['poolname']);
     }
 
+    public function testSpiritMissingGamesByPoolExcludesForfeitedGame(): void
+    {
+        // testSpiritMissingGamesByPoolReturnsArray above is the allow precondition:
+        // game 700 is reported missing when not forfeited. The new g.forfeit=0
+        // filter must drop it once forfeited.
+        DBQuery("UPDATE uo_game SET forfeit=1 WHERE game_id=700");
+        self::flushQueryCaches();
+        try {
+            $this->assertSame([], SpiritMissingGamesByPool(200));
+        } finally {
+            DBQuery("UPDATE uo_game SET forfeit=0 WHERE game_id=700");
+            self::flushQueryCaches();
+        }
+    }
+
+    public function testSpiritMissingGamesBySeriesExcludesForfeitedGame(): void
+    {
+        DBQuery("UPDATE uo_game SET forfeit=1 WHERE game_id=700");
+        self::flushQueryCaches();
+        try {
+            $this->assertSame([], SpiritMissingGamesBySeries(100));
+        } finally {
+            DBQuery("UPDATE uo_game SET forfeit=0 WHERE game_id=700");
+            self::flushQueryCaches();
+        }
+    }
+
     // --- SpiritTeamIdByToken ---
 
     public function testSpiritTeamIdByTokenReturns0ForUnknownToken(): void
@@ -571,6 +617,24 @@ final class SpiritFunctionsLibTest extends TestCase
         $this->assertSame(0, $result);
     }
 
+    public function testGameSpiritVisibilityValueReturnsZeroWhenGameForfeited(): void
+    {
+        // Passing $game directly bypasses SpiritGameRow()'s DB read and
+        // showspiritpointsonlyoncomplete=0 skips the GameSpiritComplete() DB
+        // check, isolating the new forfeit short-circuit as a pure function.
+        $game = [
+            'spiritmode' => 1003,
+            'showspiritpoints' => 1,
+            'showspiritpointsonlyoncomplete' => 0,
+            'forfeit' => 0,
+        ];
+        // Allow precondition: without forfeit, spirit is visible immediately.
+        $this->assertSame(1, GameSpiritVisibilityValue(700, $game));
+
+        $game['forfeit'] = 1;
+        $this->assertSame(0, GameSpiritVisibilityValue(700, $game));
+    }
+
     // --- SpiritEntryUrl ---
 
     public function testSpiritEntryUrlReturnsString(): void
@@ -683,6 +747,21 @@ final class SpiritFunctionsLibTest extends TestCase
         $this->assertSame('Tampere Tempest', $result[1]['teamname']);
     }
 
+    public function testSpiritSeriesMissingPointRowsExcludesForfeitedGame(): void
+    {
+        // testSpiritSeriesMissingPointRowsReturnsArray above proves game 700
+        // produces 2 rows when not forfeited; the new g.forfeit=0 filter must
+        // drop both once the game is forfeited.
+        DBQuery("UPDATE uo_game SET forfeit=1 WHERE game_id=700");
+        self::flushQueryCaches();
+        try {
+            $this->assertSame([], SpiritSeriesMissingPointRows(100));
+        } finally {
+            DBQuery("UPDATE uo_game SET forfeit=0 WHERE game_id=700");
+            self::flushQueryCaches();
+        }
+    }
+
     // --- SpiritSeriesScoreRows ---
 
     public function testSpiritSeriesScoreRowsReturnsArray(): void
@@ -710,6 +789,26 @@ final class SpiritFunctionsLibTest extends TestCase
     {
         // Reads uo_spirit_score, which is empty in the fixture.
         $this->assertSame([], SpiritToolRowsBySeason('HRN2026'));
+    }
+
+    public function testSpiritToolRowsBySeasonExcludesForfeitedGame(): void
+    {
+        // SpiritToolRowsBySeason() briefly took an $includeForfeits parameter;
+        // that was reverted in favor of always excluding forfeits (the caller,
+        // SpiritToCsv(), no longer passes a second argument either).
+        $this->submitHomeSpirit();
+
+        // Allow precondition: the submitted score is included while not forfeited.
+        $this->assertNotEmpty(SpiritToolRowsBySeason('HRN2026'));
+
+        DBQuery("UPDATE uo_game SET forfeit=1 WHERE game_id=700");
+        self::flushQueryCaches();
+        try {
+            $this->assertSame([], SpiritToolRowsBySeason('HRN2026'));
+        } finally {
+            DBQuery("UPDATE uo_game SET forfeit=0 WHERE game_id=700");
+            self::flushQueryCaches();
+        }
     }
 
     // --- SpiritTimeoutSummaryBySeason ---
@@ -837,6 +936,26 @@ final class SpiritFunctionsLibTest extends TestCase
         $this->assertTrue(SpiritTokenCanSubmit(700, 300));
     }
 
+    public function testSpiritTokenCanSubmitReturnsFalseWhenGameForfeited(): void
+    {
+        // Passing $game directly bypasses SpiritTokenGame()'s DB read, so this
+        // isolates the forfeit short-circuit as a pure function of the game row.
+        $game = [
+            'spiritmode' => 1003,
+            'event_readonly' => 0,
+            'forfeit' => 0,
+            'hometeam' => 300,
+            'visitorteam' => 301,
+            'hasstarted' => 1,
+            'lockteamspiritonsubmit' => 0,
+        ];
+        // Allow precondition: without forfeit, this exact game row is submittable.
+        $this->assertTrue(SpiritTokenCanSubmit(700, 300, $game));
+
+        $game['forfeit'] = 1;
+        $this->assertFalse(SpiritTokenCanSubmit(700, 300, $game));
+    }
+
     public function testSpiritTokenCanViewReceivedPointsReturnsBoolForValidGame(): void
     {
         // Neither team has submitted anything yet, so team 300 has no "own
@@ -906,6 +1025,23 @@ final class SpiritFunctionsLibTest extends TestCase
         $csv = SpiritToCsv('HRN2026', ',');
         $this->assertIsString($csv);
         $this->assertStringContainsString('Helsinki Heat', $csv);
+    }
+
+    public function testSpiritToCsvExcludesForfeitedGame(): void
+    {
+        // SpiritToCsv() calls SpiritToolRowsBySeason(), which always excludes
+        // forfeits, so a forfeited game's submitted score must not appear in
+        // the export even though testSpiritToCsvWithScoresContainsData above
+        // proves the same submission is included when not forfeited.
+        $this->submitHomeSpirit();
+        DBQuery("UPDATE uo_game SET forfeit=1 WHERE game_id=700");
+        self::flushQueryCaches();
+        try {
+            $this->assertSame('', SpiritToCsv('HRN2026', ','));
+        } finally {
+            DBQuery("UPDATE uo_game SET forfeit=0 WHERE game_id=700");
+            self::flushQueryCaches();
+        }
     }
 
     // --- SeriesSpiritBoard and SeriesSpiritBoardAlt2 with data ---
@@ -1300,6 +1436,33 @@ final class SpiritFunctionsLibTest extends TestCase
             $result = CanEditSpiritSubmission(700, 300);
             $this->assertTrue($result);
         } finally {
+            unset($_SESSION['userproperties']['userrole']['teamadmin']);
+            $_SESSION['userproperties']['userrole']['superadmin'] = true;
+            $_SESSION['userproperties']['userrole']['seasonadmin']['HRN2026'] = 1;
+        }
+    }
+
+    public function testCanEditSpiritSubmissionReturnsFalseWhenGameForfeited(): void
+    {
+        // Same grant as testCanEditSpiritSubmissionViaOpposingTeamAdmin (teamadmin:301
+        // allows team 300 to edit) so the only variable is the forfeit flag added at
+        // lib/spirit.functions.php:917-919 (checked after HasFullGameSpiritEditRight,
+        // before the hasEditPlayersRight branch this permission grant exercises).
+        LegacyApp::requireTopLevelLib('game.functions.php');
+        unset($_SESSION['userproperties']['userrole']['superadmin']);
+        unset($_SESSION['userproperties']['userrole']['seasonadmin']);
+        $_SESSION['userproperties']['userrole']['teamadmin'][301] = 1;
+        try {
+            // Allow precondition: proves the permission grant works before forfeit,
+            // so the deny below is attributable to the forfeit flag, not the setup.
+            $this->assertTrue(CanEditSpiritSubmission(700, 300));
+
+            DBQuery("UPDATE uo_game SET forfeit=1 WHERE game_id=700");
+            self::flushQueryCaches();
+            $this->assertFalse(CanEditSpiritSubmission(700, 300));
+        } finally {
+            DBQuery("UPDATE uo_game SET forfeit=0 WHERE game_id=700");
+            self::flushQueryCaches();
             unset($_SESSION['userproperties']['userrole']['teamadmin']);
             $_SESSION['userproperties']['userrole']['superadmin'] = true;
             $_SESSION['userproperties']['userrole']['seasonadmin']['HRN2026'] = 1;
