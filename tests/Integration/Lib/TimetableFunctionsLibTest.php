@@ -341,6 +341,66 @@ final class TimetableFunctionsLibTest extends TestCase
         $this->assertSame(['700', '701'], $ids);
     }
 
+    public function testTimetableGamesAndGroupingWithOnlyPublicFlagDeriveFollowerVisibilityFromRoot(): void
+    {
+        // #84: a playoff follower pool's own `visible` flag is no longer the
+        // gate for public game listings -- the pool's *root* ancestor's
+        // visible flag is, read fresh via TimetablePublicVisibilityCondition().
+        // The follower pool here keeps visible=1 for its entire life (as if a
+        // cascade helper was never re-run after the root was hidden/shown), so
+        // a passing assertion is only possible if the root's flag -- not the
+        // follower's own, unchanged flag -- is what's actually being read.
+        DBQuery("INSERT INTO uo_reservation (location, fieldname, reservationgroup, starttime, endtime, season, date)
+            VALUES (400, '3', 'Temp Follower Reservation', '2026-06-03 09:00:00', '2026-06-03 10:30:00', 'HRN2026', '2026-06-03 00:00:00')");
+        $resId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+
+        DBQuery("INSERT INTO uo_pool (name, visible, continuingpool, played, series, type)
+            VALUES ('Temp Follower Pool', 1, 0, 1, 100, 2)");
+        $followerId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+        DBQuery(sprintf(
+            "INSERT INTO uo_pool (name, visible, continuingpool, played, series, type, follower)
+             VALUES ('Temp Root Pool', 0, 0, 1, 100, 2, %d)",
+            $followerId,
+        ));
+        $rootId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+
+        DBQuery(sprintf(
+            "INSERT INTO uo_game (hometeam, visitorteam, valid, time, reservation)
+             VALUES (300, 301, 1, '2026-06-03 09:00:00', %d)",
+            $resId,
+        ));
+        $followerGameId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+        DBQuery(sprintf(
+            "INSERT INTO uo_game_pool (game, pool, timetable) VALUES (%d, %d, 1)",
+            $followerGameId,
+            $followerId,
+        ));
+
+        try {
+            // Root hidden (visible=0): the follower's own visible=1 must not
+            // leak its game onto public listings.
+            $gameIds = array_column(TimetableGames('HRN2026', 'season', 'all', 'time', '', true), 'game_id');
+            $this->assertNotContains((string) $followerGameId, $gameIds);
+            $groups = array_column(TimetableGrouping('HRN2026', 'season', 'all', true), 'reservationgroup');
+            $this->assertNotContains('Temp Follower Reservation', $groups);
+
+            // Root shown (visible=1), follower's own flag left at 1 throughout:
+            // the game must now appear, proving it's read from the root, not
+            // cascaded/cached on the follower row.
+            DBQuery(sprintf("UPDATE uo_pool SET visible=1 WHERE pool_id=%d", $rootId));
+            $gameIds = array_column(TimetableGames('HRN2026', 'season', 'all', 'time', '', true), 'game_id');
+            $this->assertContains((string) $followerGameId, $gameIds);
+            $groups = array_column(TimetableGrouping('HRN2026', 'season', 'all', true), 'reservationgroup');
+            $this->assertContains('Temp Follower Reservation', $groups);
+        } finally {
+            DBQuery(sprintf("DELETE FROM uo_game_pool WHERE game=%d", $followerGameId));
+            DBQuery(sprintf("DELETE FROM uo_game WHERE game_id=%d", $followerGameId));
+            DBQuery(sprintf("DELETE FROM uo_pool WHERE pool_id=%d", $rootId));
+            DBQuery(sprintf("DELETE FROM uo_pool WHERE pool_id=%d", $followerId));
+            DBQuery(sprintf("DELETE FROM uo_reservation WHERE id=%d", $resId));
+        }
+    }
+
     // --- View functions ---
 
     public function testTournamentViewReturnsHtmlForAllGames(): void
