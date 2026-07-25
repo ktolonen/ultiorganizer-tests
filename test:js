@@ -15,4 +15,13 @@ if [ ! -d "$SUT_PATH" ]; then
 fi
 SUT_PATH="$(cd "$SUT_PATH" && pwd)"
 
-exec node "$ROOT/tests/Js/timekeeper-engine.test.js" "$SUT_PATH"
+status=0
+for test_file in "$ROOT"/tests/Js/*.test.js; do
+    echo "=== $(basename "$test_file") ==="
+    if ! node "$test_file" "$SUT_PATH"; then
+        status=1
+    fi
+    echo
+done
+
+exit "$status"

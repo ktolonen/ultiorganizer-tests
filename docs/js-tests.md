@@ -37,6 +37,17 @@ a standalone step).
   signal), and the WFDF before-pull timeout anchoring (A5.5.2: end-of-timeout is
   measured from the start of the point, not the call). The representative
   template in the test mirrors the seeded WFDF default.
+- `tests/Js/scorekeeper-clock.test.js`: the Scorekeeper game clock and
+  double-submit guard (`script/scorekeeper.js`). Pins the Date.now()-delta
+  drift model (paused freezes elapsed; ongoing derives it fresh on every read
+  instead of counting a `setInterval`, so a suspended screen can't fall
+  behind), the `roundedTime()` 5s-rounding/60→minute-carry rule, every
+  `serverSampleClientMs()` anchor-acceptance/rejection branch (missing
+  Performance API, no navigation entries, a future anchor, a stale
+  >300000ms-old anchor, and the valid case that credits transfer time), and
+  the double-submit guard (deferred, not synchronous, control disabling; a
+  second submit on a still-busy form is blocked; a persisted `pageshow`
+  restores the form).
 
 ## Adding a test
 
