@@ -375,6 +375,23 @@ final class GameFunctionsLibTest extends TestCase
         $this->assertCount(0, $players);
     }
 
+    public function testGamePlayersOrdersByShirtNumberAscending(): void
+    {
+        // uo_played's PRIMARY KEY is (player, game), so an unordered scan on
+        // InnoDB naturally comes back in player_id order (800 before 801)
+        // regardless of insertion order. Assign the *lower* player_id the
+        // *higher* number so that a passing assertion is only possible if
+        // GamePlayers() actually applies `ORDER BY pg.num ASC` rather than
+        // relying on primary-key/insertion order.
+        $gameId = $this->createTempGame();
+        GameAddPlayer($gameId, 800, 99); // Ari Ace, player_id 800
+        GameAddPlayer($gameId, 801, 1);  // Bea Blade, player_id 801
+
+        $players = GamePlayers($gameId, 300);
+
+        $this->assertSame(['801', '800'], array_column($players, 'player_id'));
+    }
+
     // --- GameRolePlayers / GameCaptains / GameSpiritCaptains ---
 
     public function testGameCaptainsReturnsCapedPlayerIds(): void
@@ -740,8 +757,10 @@ final class GameFunctionsLibTest extends TestCase
         $this->assertArrayHasKey('started', $state);
         $this->assertArrayHasKey('ongoing', $state);
         $this->assertArrayHasKey('paused', $state);
+        $this->assertArrayHasKey('elapsed', $state);
         $this->assertArrayHasKey('mm', $state);
         $this->assertArrayHasKey('ss', $state);
+        $this->assertSame(0, $state['elapsed']);
     }
 
     public function testGameTimerStateReturnsFalseStartedForUnknownGame(): void
@@ -749,6 +768,29 @@ final class GameFunctionsLibTest extends TestCase
         $state = GameTimerState(99999);
         $this->assertFalse($state['started']);
         $this->assertFalse($state['ongoing']);
+        $this->assertSame(0, $state['elapsed']);
+    }
+
+    // --- GameTimeoutsPerTeam ---
+
+    public function testGameTimeoutsPerTeamUsesPoolFormatPerHalfPlusOvertime(): void
+    {
+        // Fixture pool 200: timeouts=2, timeoutsper='half' (doubles to 4),
+        // timeoutsovertime=1 -> 4 + 1 = 5. Game 700 is in pool 200.
+        $this->assertSame(5, GameTimeoutsPerTeam(700));
+    }
+
+    public function testGameTimeoutsPerTeamFallsBackToDefaultWhenPoolHasNoLimit(): void
+    {
+        DBQuery("INSERT INTO uo_pool (name, visible, continuingpool, played, series, type)
+            VALUES ('Temp No-Timeouts Pool', 1, 0, 1, 100, 1)");
+        $poolId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+        try {
+            $gameId = $this->createTempGame(300, 301, $poolId);
+            $this->assertSame(4, GameTimeoutsPerTeam($gameId));
+        } finally {
+            DBQuery(sprintf("DELETE FROM uo_pool WHERE pool_id=%d", $poolId));
+        }
     }
 
     // --- isGameLive / isGameOngoing / isGamePaused / GameLiveURL ---
@@ -1460,6 +1502,9 @@ final class GameFunctionsLibTest extends TestCase
         $this->assertTrue($state['started']);
         $this->assertTrue($state['ongoing']);
         $this->assertFalse($state['paused']);
+        // 'elapsed' (added alongside 'mm'/'ss') must be the same seconds count
+        // those two are derived from, not just present.
+        $this->assertSame($state['mm'] * 60 + $state['ss'], $state['elapsed']);
 
         GameTimePause($gameId);
         $state = GameTimerState($gameId);
