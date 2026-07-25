@@ -324,6 +324,26 @@ final class SeasonFunctionsLibTest extends TestCase
         $this->assertSame('Harness Invitational 2026', $result[0]['reservationgroup']);
     }
 
+    public function testSeasonReservationgroupsOrdersByEarliestStarttimeNotName(): void
+    {
+        // 'Zulu Group' starts before the fixture group (10:00) and 'Alpha Group'
+        // starts after it, so alphabetical order (Alpha, Harness, Zulu) and
+        // chronological order (Zulu, Harness, Alpha) disagree. This pins the
+        // `ORDER BY MIN(pr.starttime), pr.reservationgroup` behavior added in #82.
+        try {
+            DBQuery("INSERT INTO uo_reservation (location, fieldname, reservationgroup, starttime, endtime, season, date)
+                VALUES (400, '1', 'Zulu Group', '2026-06-01 08:00:00', '2026-06-01 09:00:00', 'HRN2026', '2026-06-01 00:00:00')");
+            DBQuery("INSERT INTO uo_reservation (location, fieldname, reservationgroup, starttime, endtime, season, date)
+                VALUES (400, '1', 'Alpha Group', '2026-06-01 20:00:00', '2026-06-01 21:00:00', 'HRN2026', '2026-06-01 00:00:00')");
+
+            $groups = array_column(SeasonReservationgroups('HRN2026'), 'reservationgroup');
+
+            $this->assertSame(['Zulu Group', 'Harness Invitational 2026', 'Alpha Group'], $groups);
+        } finally {
+            DBQuery("DELETE FROM uo_reservation WHERE reservationgroup IN ('Zulu Group', 'Alpha Group')");
+        }
+    }
+
     public function testSeasonReservationLocationsReturnsArray(): void
     {
         // DISTINCT is over (location, name, fieldname); the two fixture reservations
