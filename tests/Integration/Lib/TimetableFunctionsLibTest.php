@@ -742,7 +742,25 @@ final class TimetableFunctionsLibTest extends TestCase
         try {
             $result = TimetableInterPoolConflicts('HRN2026');
             $this->assertSame([], $result);
+
+            // Contrast: add the uo_team_pool row that proves the team at
+            // (pool=$semiPoolId, rank=1) really does play in $semiGameId. The
+            // gate is now satisfied and the same call must report the conflict.
+            // Without this half, an implementation hardwired to return [] for
+            // any playoff from-pool -- i.e. one that over-tightened the gate
+            // and silently dropped genuine conflicts -- would pass the
+            // assertion above.
+            DBQuery(sprintf(
+                "INSERT INTO uo_team_pool (team, pool, rank, activerank) VALUES (300, %d, 1, 1)",
+                $semiPoolId,
+            ));
+
+            $result = TimetableInterPoolConflicts('HRN2026');
+            $game2Ids = array_unique(array_column($result, 'game2'));
+            sort($game2Ids);
+            $this->assertSame(['700', '701'], $game2Ids);
         } finally {
+            DBQuery(sprintf("DELETE FROM uo_team_pool WHERE pool=%d", $semiPoolId));
             DBQuery(sprintf("DELETE FROM uo_moveteams WHERE frompool=%d", $semiPoolId));
             DBQuery(sprintf("DELETE FROM uo_game_pool WHERE game=%d", $semiGameId));
             DBQuery(sprintf("DELETE FROM uo_game WHERE game_id=%d", $semiGameId));

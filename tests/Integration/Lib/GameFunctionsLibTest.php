@@ -771,6 +771,30 @@ final class GameFunctionsLibTest extends TestCase
         $this->assertSame(0, $state['elapsed']);
     }
 
+    public function testGameTimerStateElapsedCountsWallClockSecondsSinceTimerStart(): void
+    {
+        // 'elapsed' must be a real seconds-since-timer_start count, not merely
+        // present. Asserting elapsed === mm*60 + ss would be a tautology: the
+        // SUT derives mm = floor(elapsed/60) and ss = elapsed % 60 from the
+        // same value, so that identity holds for ANY elapsed. Backdate
+        // timer_start (a UNIX timestamp) instead and pin the wall-clock value.
+        $gameId = $this->createTempGame();
+        GameTimeStart($gameId);
+        DBQuery(sprintf(
+            "UPDATE uo_game SET timer_start=%d WHERE game_id=%d",
+            time() - 125,
+            $gameId,
+        ));
+        // GameTimerState reads through DBQueryToRow, which caches by query
+        // string; without a flush this re-reads the pre-UPDATE row.
+        self::flushQueryCaches();
+
+        $state = GameTimerState($gameId);
+
+        $this->assertEqualsWithDelta(125, $state['elapsed'], 2);
+        $this->assertSame(2, $state['mm']);
+    }
+
     // --- GameTimeoutsPerTeam ---
 
     public function testGameTimeoutsPerTeamUsesPoolFormatPerHalfPlusOvertime(): void
@@ -778,6 +802,23 @@ final class GameFunctionsLibTest extends TestCase
         // Fixture pool 200: timeouts=2, timeoutsper='half' (doubles to 4),
         // timeoutsovertime=1 -> 4 + 1 = 5. Game 700 is in pool 200.
         $this->assertSame(5, GameTimeoutsPerTeam(700));
+    }
+
+    public function testGameTimeoutsPerTeamDoesNotDoubleWhenTimeoutsAreCountedPerGame(): void
+    {
+        // timeoutsper='game' must NOT double, and timeoutsovertime=0 adds
+        // nothing -> 3. Distinct from both 4 (the no-limit default) and 5 (the
+        // fixture pool), so unconditional doubling or a phantom overtime add
+        // would each produce a different number here.
+        DBQuery("INSERT INTO uo_pool (name, visible, continuingpool, played, series, type, timeouts, timeoutsper, timeoutsovertime)
+            VALUES ('Temp Per-Game Timeouts Pool', 1, 0, 1, 100, 1, 3, 'game', 0)");
+        $poolId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+        try {
+            $gameId = $this->createTempGame(300, 301, $poolId);
+            $this->assertSame(3, GameTimeoutsPerTeam($gameId));
+        } finally {
+            DBQuery(sprintf("DELETE FROM uo_pool WHERE pool_id=%d", $poolId));
+        }
     }
 
     public function testGameTimeoutsPerTeamFallsBackToDefaultWhenPoolHasNoLimit(): void
@@ -1502,9 +1543,6 @@ final class GameFunctionsLibTest extends TestCase
         $this->assertTrue($state['started']);
         $this->assertTrue($state['ongoing']);
         $this->assertFalse($state['paused']);
-        // 'elapsed' (added alongside 'mm'/'ss') must be the same seconds count
-        // those two are derived from, not just present.
-        $this->assertSame($state['mm'] * 60 + $state['ss'], $state['elapsed']);
 
         GameTimePause($gameId);
         $state = GameTimerState($gameId);
