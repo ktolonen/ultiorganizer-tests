@@ -54,6 +54,9 @@ final class DatabaseLibTest extends TestCase
             $this->insertedUrlId = null;
         }
         unset($_SESSION['userproperties'], $_SESSION['uid']);
+        // DisablePersistentCacheForRequest() sets a $GLOBALS flag for the rest of
+        // the (whole PHPUnit) process; unset it so it doesn't leak into other tests.
+        unset($GLOBALS['uo_persistent_cache_bypass']);
         LegacyApp::closeDatabaseConnection();
     }
 
@@ -545,6 +548,23 @@ final class DatabaseLibTest extends TestCase
         $_SERVER['REQUEST_METHOD'] = 'POST';
         $result = DBQueryCacheable('SELECT 1');
         $_SERVER['REQUEST_METHOD'] = 'GET';
+        $serverConf['PersistentCacheEnabled'] = 'false';
+        $this->assertFalse($result);
+    }
+
+    public function testDBQueryCacheableReturnsFalseWhenBypassed(): void
+    {
+        global $serverConf;
+        $serverConf['PersistentCacheEnabled'] = 'true';
+        $_SERVER['REQUEST_METHOD'] = 'GET';
+
+        // Prove the query would be cacheable but for the bypass, so the
+        // assertion below shows discrimination rather than a hardwired false.
+        $this->assertTrue(DBQueryCacheable('SELECT 1'));
+
+        DisablePersistentCacheForRequest();
+        $result = DBQueryCacheable('SELECT 1');
+
         $serverConf['PersistentCacheEnabled'] = 'false';
         $this->assertFalse($result);
     }

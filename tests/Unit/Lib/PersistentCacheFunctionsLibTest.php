@@ -40,6 +40,9 @@ final class PersistentCacheFunctionsLibTest extends TestCase
             @unlink($file);
             @unlink($file . '.lock');
         }
+        // DisablePersistentCacheForRequest() sets a $GLOBALS flag for the rest of
+        // the (whole PHPUnit) process; unset it so it doesn't leak into other tests.
+        unset($GLOBALS['uo_persistent_cache_bypass']);
     }
 
     private function tmpPath(): string
@@ -449,5 +452,21 @@ final class PersistentCacheFunctionsLibTest extends TestCase
             @unlink($dir);
             @mkdir($dir, 0700, true);
         }
+    }
+
+    // --- DisablePersistentCacheForRequest / IsPersistentCacheBypassed ---
+
+    public function testIsPersistentCacheBypassedDefaultsToFalse(): void
+    {
+        $this->assertFalse(IsPersistentCacheBypassed());
+    }
+
+    public function testDisablePersistentCacheForRequestSetsBypassed(): void
+    {
+        $this->assertFalse(IsPersistentCacheBypassed());
+
+        DisablePersistentCacheForRequest();
+
+        $this->assertTrue(IsPersistentCacheBypassed());
     }
 }
