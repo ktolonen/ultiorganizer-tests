@@ -649,6 +649,108 @@ final class TimetableFunctionsLibTest extends TestCase
         $this->assertSame([], $result);
     }
 
+    public function testTimetableInterPoolConflictsRequiresPlacementValidationForPlayoffFrompool(): void
+    {
+        // #81 added a validation gate on the "from" side whenever the from-pool
+        // is a playoff/crossmatch pool (type 2/4): a game only counts as the
+        // source game for `fromplacing` if a uo_moveteams/uo_team_pool row
+        // actually proves that placement plays in it. Before #81, the join had
+        // no such gate, so ANY game in the from-pool matched -- an unrelated
+        // playoff game that happens to reuse fixture teams would then be
+        // reported as a false "conflict" purely by sharing a team id with a
+        // real fixture game, which is exactly what this pool/game/moveteams
+        // row would trigger if the gate were missing.
+        DBQuery("INSERT INTO uo_pool (name, visible, continuingpool, played, series, type)
+            VALUES ('Temp Semifinal Pool', 1, 0, 1, 100, 2)");
+        $semiPoolId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+        DBQuery("INSERT INTO uo_game (hometeam, visitorteam, valid, time)
+            VALUES (300, 301, 1, '2026-06-01 12:00:00')");
+        $semiGameId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+        DBQuery(sprintf(
+            "INSERT INTO uo_game_pool (game, pool, timetable) VALUES (%d, %d, 1)",
+            $semiGameId,
+            $semiPoolId,
+        ));
+        // No uo_moveteams/uo_team_pool row proves that the team at
+        // (frompool=$semiPoolId, fromplacing=1) actually plays in $semiGameId,
+        // so this placement is unvalidated.
+        DBQuery(sprintf(
+            "INSERT INTO uo_moveteams (frompool, topool, fromplacing, torank) VALUES (%d, 200, 1, 1)",
+            $semiPoolId,
+        ));
+
+        try {
+            $result = TimetableInterPoolConflicts('HRN2026');
+            $this->assertSame([], $result);
+        } finally {
+            DBQuery(sprintf("DELETE FROM uo_moveteams WHERE frompool=%d", $semiPoolId));
+            DBQuery(sprintf("DELETE FROM uo_game_pool WHERE game=%d", $semiGameId));
+            DBQuery(sprintf("DELETE FROM uo_game WHERE game_id=%d", $semiGameId));
+            DBQuery(sprintf("DELETE FROM uo_pool WHERE pool_id=%d", $semiPoolId));
+        }
+    }
+
+    public function testTimetableInterPoolConflictsMatchesOnlyTheSchedulingLinkedTopoolGame(): void
+    {
+        // #81 also tightened the "to" side: a topool game with unresolved
+        // placeholder teams (hometeam/visitorteam NULL, common before a
+        // bracket is fully seeded) now only matches the specific moveteams row
+        // that names it via `scheduling_id`, instead of matching every
+        // moveteams row targeting that pool. Before #81, a NULL hometeam or
+        // visitorteam on either side satisfied the WHERE clause outright, so
+        // an unrelated placeholder game in the same to-pool would also be
+        // reported as a conflict.
+        DBQuery("INSERT INTO uo_scheduling_name (name) VALUES ('Temp Winner Pool A')");
+        $linkedSchedId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+        DBQuery("INSERT INTO uo_scheduling_name (name) VALUES ('Temp Winner Pool B')");
+        $unrelatedSchedId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+
+        DBQuery("INSERT INTO uo_pool (name, visible, continuingpool, played, series, type)
+            VALUES ('Temp Playoff Pool', 1, 0, 1, 100, 2)");
+        $playoffPoolId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+
+        DBQuery(sprintf(
+            "INSERT INTO uo_game (valid, time, scheduling_name_home) VALUES (1, '2026-06-02 09:00:00', %d)",
+            $linkedSchedId,
+        ));
+        $linkedGameId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+        DBQuery(sprintf(
+            "INSERT INTO uo_game (valid, time, scheduling_name_home) VALUES (1, '2026-06-02 09:00:00', %d)",
+            $unrelatedSchedId,
+        ));
+        $unrelatedGameId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+
+        DBQuery(sprintf(
+            "INSERT INTO uo_game_pool (game, pool, timetable) VALUES (%d, %d, 1), (%d, %d, 1)",
+            $linkedGameId,
+            $playoffPoolId,
+            $unrelatedGameId,
+            $playoffPoolId,
+        ));
+
+        // Pool 200 (fixture) is a roundrobin pool (type=1), so the from-side
+        // placement gate is a pass-through; only the scheduling_id link on the
+        // to-side is under test here.
+        DBQuery(sprintf(
+            "INSERT INTO uo_moveteams (frompool, topool, fromplacing, torank, scheduling_id) VALUES (200, %d, 1, 1, %d)",
+            $playoffPoolId,
+            $linkedSchedId,
+        ));
+
+        try {
+            $result = TimetableInterPoolConflicts('HRN2026');
+            $game2Ids = array_unique(array_column($result, 'game2'));
+            sort($game2Ids);
+            $this->assertSame([(string) $linkedGameId], $game2Ids);
+        } finally {
+            DBQuery(sprintf("DELETE FROM uo_moveteams WHERE frompool=200 AND topool=%d", $playoffPoolId));
+            DBQuery(sprintf("DELETE FROM uo_game_pool WHERE pool=%d", $playoffPoolId));
+            DBQuery(sprintf("DELETE FROM uo_game WHERE game_id IN (%d, %d)", $linkedGameId, $unrelatedGameId));
+            DBQuery(sprintf("DELETE FROM uo_pool WHERE pool_id=%d", $playoffPoolId));
+            DBQuery(sprintf("DELETE FROM uo_scheduling_name WHERE scheduling_id IN (%d, %d)", $linkedSchedId, $unrelatedSchedId));
+        }
+    }
+
     // --- TimeTableMoveTimes / TimeTableMoveTime ---
 
     public function testTimeTableMoveTimesReturnsEmptyArrayWhenNoRows(): void
