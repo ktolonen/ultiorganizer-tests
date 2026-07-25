@@ -31,6 +31,13 @@ jobs:
       - name: Run doctor
         working-directory: ultiorganizer-tests
         run: ./doctor
+      # Host-only Node tests over the SUT's script/*.js. Deliberately not part
+      # of ./test:matrix (no DB, browser, or container), so they need their own
+      # step or they never run in CI. Fast, and resolves the SUT from the
+      # sibling checkout above by default.
+      - name: Run client JavaScript tests
+        working-directory: ultiorganizer-tests
+        run: ./test:js
       - name: Run full matrix
         working-directory: ultiorganizer-tests
         run: ./test:matrix
