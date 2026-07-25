@@ -449,6 +449,7 @@ final class SeasonFunctionsLibTest extends TestCase
             'maintenance_mode' => 0,
             'api_public' => 0,
             'showgamecomments' => 0,
+            'require_accreditation' => 0,
             'timezone' => 'Europe/Helsinki',
         ];
     }
@@ -497,6 +498,31 @@ final class SeasonFunctionsLibTest extends TestCase
             SetSeason($newId, $params);
             ClearSeasonRuntimeCache();
             $this->assertEquals(0, SeasonInfo($newId)['showgamecomments']);
+        } finally {
+            if (SeasonExists($newId)) {
+                DeleteSeason($newId);
+            }
+            ClearSeasonRuntimeCache();
+            $_SESSION = [];
+        }
+    }
+
+    public function testAddSeasonPersistsRequireAccreditationFlag(): void
+    {
+        LegacyApp::loadUserFunctions();
+        LegacyApp::loginAsAdmin();
+        $newId = 'TST' . substr(uniqid(), -7);
+        try {
+            $params = self::minimalSeasonParams('Accreditation Season');
+            $params['require_accreditation'] = 1;
+            AddSeason($newId, $params);
+            ClearSeasonRuntimeCache();
+            $this->assertEquals(1, SeasonInfo($newId)['require_accreditation']);
+
+            $params['require_accreditation'] = 0;
+            SetSeason($newId, $params);
+            ClearSeasonRuntimeCache();
+            $this->assertEquals(0, SeasonInfo($newId)['require_accreditation']);
         } finally {
             if (SeasonExists($newId)) {
                 DeleteSeason($newId);
