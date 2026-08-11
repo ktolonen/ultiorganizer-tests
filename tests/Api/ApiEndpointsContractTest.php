@@ -119,13 +119,13 @@ final class ApiEndpointsContractTest extends TestCase
         $payload = self::authorizedJson('/api/v1/gameplay?game=700');
 
         $events = $payload['data']['events'];
-        $this->assertCount(2, $events);
+        $this->assertCount(3, $events);
 
         $byType = [];
         foreach ($events as $event) {
             $byType[$event['type']] = $event;
         }
-        $this->assertSame(['half_cap', 'time_cap'], array_keys($byType));
+        $this->assertSame(['half_cap', 'turnover', 'time_cap'], array_keys($byType));
 
         $this->assertNull($byType['half_cap']['team']);
         $this->assertSame(400, $byType['half_cap']['time']);
@@ -134,6 +134,13 @@ final class ApiEndpointsContractTest extends TestCase
         $this->assertNull($byType['time_cap']['team']);
         $this->assertSame(900, $byType['time_cap']['time']);
         $this->assertSame(13, $byType['time_cap']['target']);
+
+        // Contrast in the same payload: a non-cap event keeps its team and gets
+        // no target key at all, so the nulls above are the cap rule and not a
+        // feed that stopped attributing events.
+        $this->assertSame('home', $byType['turnover']['team']);
+        $this->assertSame(500, $byType['turnover']['time']);
+        $this->assertArrayNotHasKey('target', $byType['turnover']);
     }
 
     public function testGameplayEndpointReportsCallahansPerPlayer(): void

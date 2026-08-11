@@ -669,16 +669,23 @@ final class GameFunctionsLibTest extends TestCase
 
     // --- GameEvents / GameMediaEvents ---
 
-    public function testGameEventsReturnsFixtureCapEventsInTimeOrder(): void
+    public function testGameEventsReturnsFixtureEventsInTimeOrder(): void
     {
-        // Fixture has no uo_timeout or uo_spirit_timeout rows; the only
-        // uo_gameevent rows for game 700 are the two caps (half_cap at 400,
-        // time_cap at 900), which GameEvents() must return ordered by time.
+        // Fixture has no uo_timeout or uo_spirit_timeout rows; game 700's
+        // uo_gameevent rows are half_cap at 400, turnover at 500 and time_cap at
+        // 900. GameEvents() unions the three sources and orders by time, so the
+        // turnover has to land between the two caps rather than after them.
         $events = GameEvents(700);
-        $this->assertCount(2, $events);
-        $this->assertSame(['half_cap', 'time_cap'], array_column($events, 'type'));
-        $this->assertSame(['400', '900'], array_map('strval', array_column($events, 'time')));
-        $this->assertSame(['9', '13'], array_map('strval', array_column($events, 'info')));
+        $this->assertCount(3, $events);
+        $this->assertSame(['half_cap', 'turnover', 'time_cap'], array_column($events, 'type'));
+        $this->assertSame(['400', '500', '900'], array_map('strval', array_column($events, 'time')));
+        // Caps carry their target in info and no team; the turnover is the other
+        // way round.
+        $this->assertSame('9', (string) $events[0]['info']);
+        $this->assertSame('13', (string) $events[2]['info']);
+        $this->assertNull($events[1]['info']);
+        $this->assertEquals(0, $events[0]['ishome']);
+        $this->assertEquals(1, $events[1]['ishome']);
     }
 
     public function testGameMediaEventsReturnsArray(): void
@@ -704,11 +711,20 @@ final class GameFunctionsLibTest extends TestCase
         $this->assertSame([], $timeouts);
     }
 
-    public function testGameTurnoversArrayReturnsArray(): void
+    public function testGameTurnoversArrayReturnsOnlyTurnoverEvents(): void
     {
-        // Fixture has no uo_gameevent rows of type 'turnover'.
+        // Game 700 has three uo_gameevent rows but only one turnover (t=500,
+        // home), so this pins the type filter rather than the row count.
         $turnovers = GameTurnoversArray(700);
-        $this->assertSame([], $turnovers);
+        $this->assertCount(1, $turnovers);
+        $this->assertEquals(500, $turnovers[0]['time']);
+        $this->assertEquals(1, $turnovers[0]['ishome']);
+    }
+
+    public function testGameTurnoversArrayIsEmptyForGameWithoutTurnovers(): void
+    {
+        // Contrast: game 701 has no uo_gameevent rows at all.
+        $this->assertSame([], GameTurnoversArray(701));
     }
 
     // --- GameInfo ---

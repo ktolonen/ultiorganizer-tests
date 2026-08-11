@@ -126,13 +126,16 @@ INSERT INTO uo_goal (
   (700, 3, 800, 801, 480, 2, 1, 1, 0, '2026-06-01 10:08:00'),
   (700, 4, 802, 803, 660, 2, 2, 0, 0, '2026-06-01 10:11:00');
 
--- Cap events for game 700, one between goals 2 and 3 (time 400) and one after
--- the last goal (time 900), so the scoresheet/RSS/API renderers exercise both
--- their between-goals and after-last-goal branches. Caps belong to neither
--- team, hence ishome=0 with no team attribution; the cap target lives in info.
+-- Game events for game 700. Two caps, one between goals 2 and 3 (time 400) and
+-- one after the last goal (time 900), so the scoresheet/RSS/API renderers
+-- exercise both their between-goals and after-last-goal branches. Caps belong
+-- to neither team, hence ishome=0 with no team attribution; the cap target
+-- lives in info. The home turnover at 500 is the contrast case: a regular event
+-- that must keep its team attribution wherever a cap loses it.
 INSERT INTO uo_gameevent (game, num, time, type, ishome, info) VALUES
   (700, 1, 400, 'half_cap', 0, '9'),
-  (700, 2, 900, 'time_cap', 0, '13');
+  (700, 2, 900, 'time_cap', 0, '13'),
+  (700, 3, 500, 'turnover', 1, NULL);
 
 INSERT INTO uo_season_stats (
   season, teams, games, players, goals_total, home_wins, defenses_total

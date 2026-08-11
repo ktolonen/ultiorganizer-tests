@@ -86,9 +86,10 @@ final class ExportEndpointsContractTest extends TestCase
 
         $this->assertStringContainsString('Halftime cap target: 9', $body);
         $this->assertStringContainsString('Time cap target: 13', $body);
-        // Team names do reach this feed through the goal lines, so their absence
-        // right after a cap label is the discriminating check.
-        $this->assertStringContainsString('Helsinki Heat', $response['body']);
+
+        // Contrast: the fixture's home turnover at t=500 renders with its team
+        // name appended, which is exactly what a cap must not do.
+        $this->assertStringContainsString('Turnover Helsinki Heat', $body);
         $this->assertDoesNotMatchRegularExpression(
             '/cap target: \d+\s*(Helsinki Heat|Tampere Tempest)/',
             $body,
