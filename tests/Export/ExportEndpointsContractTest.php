@@ -64,6 +64,37 @@ final class ExportEndpointsContractTest extends TestCase
         $this->assertStringContainsString('Helsinki Heat - Tampere Tempest 15 - 11', $response['body']);
     }
 
+    public function testRssGameFeedRendersCapEventsWithoutTeamAttribution(): void
+    {
+        // Fixture game 700 carries a half cap at 400 (between goals 2 and 3) and a
+        // time cap at 900 (after the last goal), so this exercises both cap
+        // branches of the game feed. Caps belong to neither team: their target
+        // text must appear with no team name appended, unlike a team event.
+        $response = self::httpGet('/ext/rss.php?feed=game&id1=700');
+
+        self::assertSuccessfulExportResponse('rss.php', $response, 'text/xml');
+
+        $xml = simplexml_load_string($response['body']);
+        $this->assertInstanceOf(SimpleXMLElement::class, $xml);
+        $this->assertSame('rss', $xml->getName());
+
+        $descriptions = [];
+        foreach ($xml->channel->item as $item) {
+            $descriptions[] = (string) $item->description;
+        }
+        $body = implode("\n", $descriptions);
+
+        $this->assertStringContainsString('Halftime cap target: 9', $body);
+        $this->assertStringContainsString('Time cap target: 13', $body);
+        // Team names do reach this feed through the goal lines, so their absence
+        // right after a cap label is the discriminating check.
+        $this->assertStringContainsString('Helsinki Heat', $response['body']);
+        $this->assertDoesNotMatchRegularExpression(
+            '/cap target: \d+\s*(Helsinki Heat|Tampere Tempest)/',
+            $body,
+        );
+    }
+
     public static function csvExportProvider(): array
     {
         return [

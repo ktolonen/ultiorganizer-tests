@@ -111,6 +111,51 @@ final class ApiEndpointsContractTest extends TestCase
         $this->assertNotEmpty($payload['data']['goals']);
     }
 
+    public function testGameplayEndpointReportsCapEventsAsNeutralWithTarget(): void
+    {
+        // Caps belong to neither team, so the gameplay feed reports team=null and
+        // adds the cap target; every other event type keeps a home/away team and
+        // carries no target key.
+        $payload = self::authorizedJson('/api/v1/gameplay?game=700');
+
+        $events = $payload['data']['events'];
+        $this->assertCount(2, $events);
+
+        $byType = [];
+        foreach ($events as $event) {
+            $byType[$event['type']] = $event;
+        }
+        $this->assertSame(['half_cap', 'time_cap'], array_keys($byType));
+
+        $this->assertNull($byType['half_cap']['team']);
+        $this->assertSame(400, $byType['half_cap']['time']);
+        $this->assertSame(9, $byType['half_cap']['target']);
+
+        $this->assertNull($byType['time_cap']['team']);
+        $this->assertSame(900, $byType['time_cap']['time']);
+        $this->assertSame(13, $byType['time_cap']['target']);
+    }
+
+    public function testGameplayEndpointReportsCallahansPerPlayer(): void
+    {
+        // Fixture goals are all iscallahan=0, so every rostered player reports 0
+        // callahans while still reporting the goals and assists they did record.
+        // The point here is the field's presence and wiring; the counting itself
+        // is pinned by GameFunctionsLibTest against seeded callahan goals.
+        $payload = self::authorizedJson('/api/v1/gameplay?game=700');
+
+        $home = $payload['data']['scoreboard']['home'];
+        $this->assertCount(2, $home);
+
+        $scored = 0;
+        foreach ($home as $player) {
+            $this->assertArrayHasKey('callahans', $player);
+            $this->assertSame(0, $player['callahans']);
+            $scored += $player['goals'];
+        }
+        $this->assertSame(2, $scored);
+    }
+
     private static function authorizedJson(string $path): array
     {
         $response = self::apiGet($path, self::TOKEN);

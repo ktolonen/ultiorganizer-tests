@@ -35,8 +35,88 @@ final class StatisticalFunctionsLibTest extends TestCase
 
     protected function tearDown(): void
     {
+        $this->removeSeededPlayerStats();
         unset($_SESSION['userproperties'], $_SESSION['uid']);
         LegacyApp::closeDatabaseConnection();
+    }
+
+    // DBQueryToValue/Array/Row/RowCount persistently cache by query string, and
+    // $serverConf['PersistentCacheEnabled']='false' is not reliable in a
+    // full-suite run, so seed-then-read tests flush explicitly.
+    private static function flushQueryCaches(): void
+    {
+        foreach (['db_query_value', 'db_query_array', 'db_query_row', 'db_query_rowcount'] as $ns) {
+            if (function_exists('CacheForgetPersistent')) {
+                CacheForgetPersistent($ns);
+            }
+            if (function_exists('CacheForgetNamespace')) {
+                CacheForgetNamespace($ns);
+            }
+        }
+    }
+
+    /**
+     * uo_player_stats profile ids seeded by seedPlayerStats(), in the order the
+     * three rows are written. uo_player_stats has PRIMARY KEY(player_id) and FKs
+     * to uo_player and uo_player_profile, so each row reuses a fixture player and
+     * gets its own throwaway profile.
+     *
+     *   profile 900 (player 800): goals 5, passes 1, callahans 2, games 2 → total 6
+     *   profile 901 (player 801): goals 1, passes 4, callahans 1, games 6 → total 5
+     *   profile 902 (player 802): goals 2, passes 2, callahans 3, games 4 → total 4
+     *
+     * Every ScoreboardAllTime sorting produces a different permutation of these
+     * three, so an ordering assertion cannot pass under the wrong ORDER BY.
+     */
+    private const SEEDED_PROFILE_IDS = [900, 901, 902];
+
+    private function seedPlayerStats(): void
+    {
+        foreach (self::SEEDED_PROFILE_IDS as $profileId) {
+            DBQuery(sprintf(
+                "INSERT INTO uo_player_profile (profile_id, firstname, lastname)
+                 VALUES (%d, 'Stat', 'Profile%d')",
+                $profileId,
+                $profileId,
+            ));
+        }
+
+        $rows = [
+            // player_id, profile_id, team, games, goals, passes, callahans
+            [800, 900, 300, 2, 5, 1, 2],
+            [801, 901, 300, 6, 1, 4, 1],
+            [802, 902, 301, 4, 2, 2, 3],
+        ];
+        foreach ($rows as [$playerId, $profileId, $team, $games, $goals, $passes, $callahans]) {
+            DBQuery(sprintf(
+                "INSERT INTO uo_player_stats
+                    (player_id, profile_id, team, season, series, games, goals, passes, callahans)
+                 VALUES (%d, %d, %d, 'HRN2026', 100, %d, %d, %d, %d)",
+                $playerId,
+                $profileId,
+                $team,
+                $games,
+                $goals,
+                $passes,
+                $callahans,
+            ));
+        }
+
+        self::flushQueryCaches();
+    }
+
+    private function removeSeededPlayerStats(): void
+    {
+        $ids = implode(',', self::SEEDED_PROFILE_IDS);
+        DBQuery("DELETE FROM uo_player_stats WHERE profile_id IN ($ids)");
+        DBQuery("DELETE FROM uo_player_profile WHERE profile_id IN ($ids)");
+        self::flushQueryCaches();
+    }
+
+    /** @param array<int,array<string,mixed>> $rows */
+    private static function profileOrder(array $rows): array
+    {
+        return array_map('intval', array_column($rows, 'profile_id'));
     }
 
     // --- IsSeasonStatsCalculated ---
@@ -238,28 +318,115 @@ final class StatisticalFunctionsLibTest extends TestCase
         $this->assertSame([], $result);
     }
 
-    public function testScoreboardAllTimeTotalSortingReturnsArray(): void
+    // ScoreboardAllTime sortings, against seeded uo_player_stats rows. Each
+    // sorting yields a different permutation of profiles 900/901/902 (see
+    // seedPlayerStats), so these pin the ORDER BY rather than the row count.
+
+    public function testScoreboardAllTimeTotalSortingOrdersByGoalsPlusPasses(): void
     {
+        $this->seedPlayerStats();
+
         $result = ScoreboardAllTime(5, '', '', '', 'total');
-        $this->assertSame([], $result);
+        $this->assertSame([900, 901, 902], self::profileOrder($result));
+        $this->assertEquals(6, $result[0]['total']);
     }
 
-    public function testScoreboardAllTimeGoalSortingReturnsArray(): void
+    public function testScoreboardAllTimeGoalSortingOrdersByGoalsTotal(): void
     {
+        $this->seedPlayerStats();
+
         $result = ScoreboardAllTime(5, '', '', '', 'goal');
-        $this->assertSame([], $result);
+        $this->assertSame([900, 902, 901], self::profileOrder($result));
+        $this->assertEquals(5, $result[0]['goalstotal']);
     }
 
-    public function testScoreboardAllTimePassSortingReturnsArray(): void
+    public function testScoreboardAllTimePassSortingOrdersByPassesTotal(): void
     {
+        $this->seedPlayerStats();
+
         $result = ScoreboardAllTime(5, '', '', '', 'pass');
-        $this->assertSame([], $result);
+        $this->assertSame([901, 902, 900], self::profileOrder($result));
+        $this->assertEquals(4, $result[0]['passestotal']);
     }
 
-    public function testScoreboardAllTimeGamesSortingReturnsArray(): void
+    public function testScoreboardAllTimeGamesSortingOrdersByGamesTotal(): void
     {
+        $this->seedPlayerStats();
+
         $result = ScoreboardAllTime(5, '', '', '', 'games');
-        $this->assertSame([], $result);
+        $this->assertSame([901, 902, 900], self::profileOrder($result));
+        $this->assertEquals(6, $result[0]['gamestotal']);
+    }
+
+    public function testScoreboardAllTimeCallahanSortingOrdersByCallahansTotal(): void
+    {
+        $this->seedPlayerStats();
+
+        // Callahan ordering must differ from every other sorting: profile 902 has
+        // the fewest goals+passes and the second-most games, so it can only lead
+        // here if callahanstotal is what the query sorts on.
+        $result = ScoreboardAllTime(5, '', '', '', 'callahan');
+        $this->assertSame([902, 900, 901], self::profileOrder($result));
+        $this->assertEquals(3, $result[0]['callahanstotal']);
+        $this->assertEquals(2, $result[1]['callahanstotal']);
+        $this->assertEquals(1, $result[2]['callahanstotal']);
+    }
+
+    public function testScoreboardAllTimeUnknownSortingFallsBackToTotalOrdering(): void
+    {
+        $this->seedPlayerStats();
+
+        // Contrast against the callahan case above: an unrecognised sorting must
+        // hit the default branch, not silently keep the previous ORDER BY.
+        $this->assertSame(
+            [900, 901, 902],
+            self::profileOrder(ScoreboardAllTime(5, '', '', '', 'no-such-sorting')),
+        );
+        $this->assertSame(
+            [902, 900, 901],
+            self::profileOrder(ScoreboardAllTime(5, '', '', '', 'callahan')),
+        );
+    }
+
+    public function testScoreboardAllTimeSumsCallahansAcrossRowsOfTheSameProfile(): void
+    {
+        // SUM(ps.callahans) grouped by profile: two rows sharing a profile must
+        // aggregate, not report only one of them.
+        $this->seedPlayerStats();
+        DBQuery(
+            "INSERT INTO uo_player_stats
+                (player_id, profile_id, team, season, series, games, goals, passes, callahans)
+             VALUES (803, 902, 301, 'HRN2026', 100, 1, 0, 0, 4)"
+        );
+        self::flushQueryCaches();
+
+        $result = ScoreboardAllTime(5, '', '', '', 'callahan');
+        $this->assertSame(902, (int) $result[0]['profile_id']);
+        $this->assertEquals(7, $result[0]['callahanstotal']);
+
+        DBQuery("DELETE FROM uo_player_stats WHERE player_id=803");
+        self::flushQueryCaches();
+    }
+
+    public function testScoreboardAllTimeLimitCapsResultRows(): void
+    {
+        $this->seedPlayerStats();
+
+        // Positive contrast: all three seeded profiles are visible without the cap.
+        $this->assertCount(3, ScoreboardAllTime(5, '', '', '', 'callahan'));
+        $this->assertSame([902], self::profileOrder(ScoreboardAllTime(1, '', '', '', 'callahan')));
+    }
+
+    public function testScoreboardAllTimeSeasonAndSeriesTypeFiltersMatchSeededRows(): void
+    {
+        $this->seedPlayerStats();
+
+        // Seeded rows are in season HRN2026 (type 'outdoor') / series 100 (type
+        // 'open'), so the matching filter keeps them and a non-matching one drops
+        // them. The empty-result variants above only prove the query runs.
+        $this->assertCount(3, ScoreboardAllTime(10, 'outdoor', 'open'));
+        $this->assertSame([], ScoreboardAllTime(10, 'indoor', 'open'));
+        $this->assertSame([], ScoreboardAllTime(10, 'outdoor', 'women'));
     }
 
     // --- SeasonSpiritTopTeamsBySeriesType ---
