@@ -30,15 +30,19 @@ final class GameplayPageContentTest extends TestCase
     {
         $body = self::fetchGameplayBody();
 
-        // Between-goals branch: label carrying target 9, then the 6.40 stamp.
+        // Caps render their own time, ahead of the point cap they set, so the
+        // 6.40/15.00 stamp precedes the 9/13 target inside the div. Every other
+        // event type still gets its time appended by the page after the label.
+        //
+        // Between-goals branch: the 6.40 stamp, then target 9.
         $this->assertMatchesRegularExpression(
-            '/<div>[^<]*\b9\b[^<]*6\.40[^<]*<\/div>/',
+            '/<div>[^<]*6\.40[^<]*\b9\b[^<]*<\/div>/',
             $body,
             'expected the half cap (target 9) to render at 6.40 between goals',
         );
-        // After-last-goal branch: label carrying target 13, then the 15.00 stamp.
+        // After-last-goal branch: the 15.00 stamp, then target 13.
         $this->assertMatchesRegularExpression(
-            '/<div>[^<]*\b13\b[^<]*15\.00[^<]*<\/div>/',
+            '/<div>[^<]*15\.00[^<]*\b13\b[^<]*<\/div>/',
             $body,
             'expected the time cap (target 13) to render at 15.00 after the last goal',
         );

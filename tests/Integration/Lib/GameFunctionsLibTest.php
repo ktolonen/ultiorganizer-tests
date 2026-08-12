@@ -2182,11 +2182,32 @@ final class GameFunctionsLibTest extends TestCase
     public function testGameCapEventTextRendersTargetInTheLabelOfItsCapType(): void
     {
         $this->assertSame(
-            'Halftime cap target: 17',
-            GameCapEventText(['type' => 'half_cap', 'info' => 17]),
+            'Halftime cap 6.40 - new point cap 17',
+            GameCapEventText(['type' => 'half_cap', 'info' => 17, 'time' => 400]),
         );
         $this->assertSame(
-            'Time cap target: 17',
+            'Time cap 15.00 - new point cap 17',
+            GameCapEventText(['type' => 'time_cap', 'info' => 17, 'time' => 900]),
+        );
+    }
+
+    // Caps are the one event type that renders its own time, so every caller
+    // suppresses its own time output for them. hide_time_on_scoresheet therefore
+    // has to reach this function, or the flag would leak the clock through caps
+    // on pages that hide it everywhere else.
+    public function testGameCapEventTextOmitsTheTimeWhenTimeIsHidden(): void
+    {
+        $this->assertSame(
+            'Time cap - new point cap 17',
+            GameCapEventText(['type' => 'time_cap', 'info' => 17, 'time' => 900], false),
+        );
+    }
+
+    // A missing time key must not warn or render a stray separator.
+    public function testGameCapEventTextTreatsMissingTimeAsZero(): void
+    {
+        $this->assertSame(
+            'Time cap 0.00 - new point cap 17',
             GameCapEventText(['type' => 'time_cap', 'info' => 17]),
         );
     }
@@ -2194,7 +2215,7 @@ final class GameFunctionsLibTest extends TestCase
     public function testGameCapEventTextCastsNonNumericTargetToZero(): void
     {
         $this->assertSame(
-            'Time cap target: 0',
+            'Time cap 0.00 - new point cap 0',
             GameCapEventText(['type' => 'time_cap', 'info' => null]),
         );
     }
@@ -2208,7 +2229,7 @@ final class GameFunctionsLibTest extends TestCase
         $text = GameCapEventText(GameCapEvent($gameId, 'time_cap'));
         $this->assertStringContainsString('13', $text);
         $this->assertSame(
-            GameCapEventText(['type' => 'time_cap', 'info' => 13]),
+            GameCapEventText(['type' => 'time_cap', 'info' => 13, 'time' => 1500]),
             $text,
         );
     }

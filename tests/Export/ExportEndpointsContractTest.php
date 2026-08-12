@@ -84,14 +84,14 @@ final class ExportEndpointsContractTest extends TestCase
         }
         $body = implode("\n", $descriptions);
 
-        $this->assertStringContainsString('Halftime cap target: 9', $body);
-        $this->assertStringContainsString('Time cap target: 13', $body);
+        $this->assertStringContainsString('[6.40] Halftime cap - new point cap 9', $body);
+        $this->assertStringContainsString('[15.00] Time cap - new point cap 13', $body);
 
         // Contrast: the fixture's home turnover at t=500 renders with its team
         // name appended, which is exactly what a cap must not do.
         $this->assertStringContainsString('Turnover Helsinki Heat', $body);
         $this->assertDoesNotMatchRegularExpression(
-            '/cap target: \d+\s*(Helsinki Heat|Tampere Tempest)/',
+            '/new point cap \d+\s*(Helsinki Heat|Tampere Tempest)/',
             $body,
         );
     }
