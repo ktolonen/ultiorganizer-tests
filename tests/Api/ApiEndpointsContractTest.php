@@ -145,22 +145,51 @@ final class ApiEndpointsContractTest extends TestCase
 
     public function testGameplayEndpointReportsCallahansPerPlayer(): void
     {
-        // Fixture goals are all iscallahan=0, so every rostered player reports 0
-        // callahans while still reporting the goals and assists they did record.
-        // The point here is the field's presence and wiring; the counting itself
-        // is pinned by GameFunctionsLibTest against seeded callahan goals.
+        // Fixture goal 3 is a callahan by home player 801, so the two home
+        // players report different callahan counts in one payload. Asserting
+        // both pins the serialization to the scoreboard column: an adapter that
+        // hard-codes the field, or reads the wrong one, cannot produce a 1 and a
+        // 0 for the right players. Each still scored once, so a callahan stays
+        // inside the goal count rather than replacing it.
         $payload = self::authorizedJson('/api/v1/gameplay?game=700');
 
         $home = $payload['data']['scoreboard']['home'];
         $this->assertCount(2, $home);
 
-        $scored = 0;
+        $byPlayer = [];
         foreach ($home as $player) {
             $this->assertArrayHasKey('callahans', $player);
-            $this->assertSame(0, $player['callahans']);
-            $scored += $player['goals'];
+            $byPlayer[(int) $player['player_id']] = $player;
         }
-        $this->assertSame(2, $scored);
+        $playerIds = array_keys($byPlayer);
+        sort($playerIds);
+        $this->assertSame([800, 801], $playerIds);
+
+        $this->assertSame(1, $byPlayer[801]['callahans']);
+        $this->assertSame(1, $byPlayer[801]['goals']);
+        $this->assertSame(0, $byPlayer[800]['callahans']);
+        $this->assertSame(1, $byPlayer[800]['goals']);
+    }
+
+    public function testGameplayEndpointFlagsTheCallahanGoal(): void
+    {
+        // The per-goal `callahan` field is a separate serialization from the
+        // scoreboard counts above, off the goal row rather than the board.
+        $payload = self::authorizedJson('/api/v1/gameplay?game=700');
+
+        $goals = $payload['data']['goals'];
+        $byNum = [];
+        foreach ($goals as $goal) {
+            $byNum[(int) $goal['num']] = $goal;
+        }
+        $this->assertSame([1, 2, 3, 4], array_keys($byNum));
+
+        $this->assertSame(1, $byNum[3]['callahan']);
+        // Contrast in the same payload: the other three goals stay 0, so the 1
+        // above is the row's flag and not a field that is always set.
+        $this->assertSame(0, $byNum[1]['callahan']);
+        $this->assertSame(0, $byNum[2]['callahan']);
+        $this->assertSame(0, $byNum[4]['callahan']);
     }
 
     private static function authorizedJson(string $path): array

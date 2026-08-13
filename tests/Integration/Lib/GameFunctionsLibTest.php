@@ -1934,19 +1934,22 @@ final class GameFunctionsLibTest extends TestCase
         $this->assertEquals(2, $byPlayer[801]['total']);
     }
 
-    public function testGameTeamScoreBoardArrayReportsZeroCallahansForFixtureGame(): void
+    public function testGameTeamScoreBoardArrayReportsFixtureCallahanForScorerOnly(): void
     {
-        // Fixture game 700 has four goals, all iscallahan=0: the column exists and
-        // reads 0 even though the players did score.
+        // Fixture game 700: both team 300 players scored once, but only 801's goal
+        // 3 is iscallahan=1. The board must tell them apart on callahan while
+        // reporting the same done for both.
         $board = GameTeamScoreBoardArray(700, 300);
         $this->assertCount(2, $board);
-        $scored = 0;
+        $byPlayer = [];
         foreach ($board as $row) {
             $this->assertArrayHasKey('callahan', $row);
-            $this->assertEquals(0, $row['callahan']);
-            $scored += (int) $row['done'];
+            $byPlayer[(int) $row['player_id']] = $row;
         }
-        $this->assertSame(2, $scored);
+        $this->assertEquals(1, $byPlayer[801]['callahan']);
+        $this->assertEquals(1, $byPlayer[801]['done']);
+        $this->assertEquals(0, $byPlayer[800]['callahan']);
+        $this->assertEquals(1, $byPlayer[800]['done']);
     }
 
     // --- Cap events (half_cap / time_cap) ---

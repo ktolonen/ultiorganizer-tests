@@ -62,11 +62,21 @@ final class StatisticalFunctionsLibTest extends TestCase
      * gets its own throwaway profile.
      *
      *   profile 900 (player 800): goals 5, passes 1, callahans 2, games 2 → total 6
-     *   profile 901 (player 801): goals 1, passes 4, callahans 1, games 6 → total 5
-     *   profile 902 (player 802): goals 2, passes 2, callahans 3, games 4 → total 4
+     *   profile 901 (player 801): goals 1, passes 4, callahans 1, games 4 → total 5
+     *   profile 902 (player 802): goals 2, passes 2, callahans 3, games 6 → total 4
      *
-     * Every ScoreboardAllTime sorting produces a different permutation of these
-     * three, so an ordering assertion cannot pass under the wrong ORDER BY.
+     * Every ScoreboardAllTime sorting produces a different descending permutation
+     * of these three, so an ordering assertion cannot pass under the wrong
+     * ORDER BY:
+     *
+     *   total     [900, 901, 902]
+     *   goal      [900, 902, 901]
+     *   pass      [901, 902, 900]
+     *   games     [902, 901, 900]
+     *   callahan  [902, 900, 901]
+     *
+     * Keep them distinct when editing: games previously matched pass exactly,
+     * which let the games test pass under a pass ORDER BY.
      */
     private const SEEDED_PROFILE_IDS = [900, 901, 902];
 
@@ -84,8 +94,8 @@ final class StatisticalFunctionsLibTest extends TestCase
         $rows = [
             // player_id, profile_id, team, games, goals, passes, callahans
             [800, 900, 300, 2, 5, 1, 2],
-            [801, 901, 300, 6, 1, 4, 1],
-            [802, 902, 301, 4, 2, 2, 3],
+            [801, 901, 300, 4, 1, 4, 1],
+            [802, 902, 301, 6, 2, 2, 3],
         ];
         foreach ($rows as [$playerId, $profileId, $team, $games, $goals, $passes, $callahans]) {
             DBQuery(sprintf(
@@ -353,9 +363,13 @@ final class StatisticalFunctionsLibTest extends TestCase
     {
         $this->seedPlayerStats();
 
+        // 902 leads on games while trailing on goals+passes, so this order is
+        // reachable only through a games ORDER BY -- notably not through the
+        // pass one, which leads with 901.
         $result = ScoreboardAllTime(5, '', '', '', 'games');
-        $this->assertSame([901, 902, 900], self::profileOrder($result));
+        $this->assertSame([902, 901, 900], self::profileOrder($result));
         $this->assertEquals(6, $result[0]['gamestotal']);
+        $this->assertEquals(2, $result[2]['gamestotal']);
     }
 
     public function testScoreboardAllTimeCallahanSortingOrdersByCallahansTotal(): void

@@ -118,12 +118,21 @@ INSERT INTO uo_played (player, game, num, accredited, acknowledged, captain) VAL
   (802, 700, 7, 1, 1, 1),
   (803, 700, 14, 1, 1, 0);
 
+-- Goal 3 is a callahan by home player 801, so every callahan-counting surface
+-- (scoreboards, /api/v1/gameplay, PlayerSeasonCallahanGoals) has one non-zero
+-- count to assert against with player 800 as the zero contrast in the same
+-- result. It keeps its assist, unlike a real callahan: every player assisting
+-- exactly once is the symmetry the team/pool/series `fedin` assertions rest on,
+-- and no code path reads the column for a callahan -- GoalDisplayText()
+-- short-circuits to "Callahan goal" before touching assist, and every other
+-- reader just counts iscallahan=1 rows. Goal 1 stays a plain goal because the
+-- GoalDisplayText assist/scorer tests render it.
 INSERT INTO uo_goal (
   game, num, assist, scorer, time, homescore, visitorscore, ishomegoal, iscallahan, timestamp
 ) VALUES
   (700, 1, 801, 800, 120, 1, 0, 1, 0, '2026-06-01 10:02:00'),
   (700, 2, 803, 802, 300, 1, 1, 0, 0, '2026-06-01 10:05:00'),
-  (700, 3, 800, 801, 480, 2, 1, 1, 0, '2026-06-01 10:08:00'),
+  (700, 3, 800, 801, 480, 2, 1, 1, 1, '2026-06-01 10:08:00'),
   (700, 4, 802, 803, 660, 2, 2, 0, 0, '2026-06-01 10:11:00');
 
 -- Game events for game 700. Two caps, one between goals 2 and 3 (time 400) and

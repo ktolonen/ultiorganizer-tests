@@ -550,8 +550,9 @@ final class PoolFunctionsLibTest extends TestCase
     }
 
     // Each fixture player scored exactly 1 goal and assisted exactly 1 goal in game 700 (the
-    // only game any player has uo_played rows for), so every stat ties and every sort falls
-    // through to lastname ASC: Ace, Blade, North, Twist. Mirrors the series.functions.php board.
+    // only game any player has uo_played rows for), so every stat ties -- except callahans,
+    // where only Blade's goal 3 counts -- and every sort but 'callahan' falls through to
+    // lastname ASC: Ace, Blade, North, Twist. Mirrors the series.functions.php board.
     private function assertPoolScoreBoardRows(array $arr): void
     {
         $this->assertCount(4, $arr);
@@ -559,7 +560,8 @@ final class PoolFunctionsLibTest extends TestCase
         foreach ($arr as $row) {
             $this->assertEquals(1, $row['done']);
             $this->assertEquals(1, $row['fedin']);
-            $this->assertEquals(0, $row['callahan']);
+            // The callahan is counted inside done, so it changes this column only.
+            $this->assertEquals($row['lastname'] === 'Blade' ? 1 : 0, $row['callahan']);
             $this->assertEquals(2, $row['total']);
             $this->assertEquals(1, $row['games']);
         }

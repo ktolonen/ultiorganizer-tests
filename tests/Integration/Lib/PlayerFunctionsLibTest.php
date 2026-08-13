@@ -369,10 +369,13 @@ final class PlayerFunctionsLibTest extends TestCase
 
     // --- PlayerSeasonCallahanGoals ---
 
-    public function testPlayerSeasonCallahanGoalsReturnsZeroForFixturePlayer(): void
+    public function testPlayerSeasonCallahanGoalsCountsOnlyCallahanGoals(): void
     {
-        $callahans = (int) PlayerSeasonCallahanGoals(800, 'HRN2026');
-        $this->assertSame(0, $callahans);
+        // Both players scored exactly one goal in game 700, but only 801's is a
+        // callahan. Asserting both pins the iscallahan=1 filter: a query that
+        // dropped it would report 1 for each.
+        $this->assertSame(1, (int) PlayerSeasonCallahanGoals(801, 'HRN2026'));
+        $this->assertSame(0, (int) PlayerSeasonCallahanGoals(800, 'HRN2026'));
     }
 
     // --- PlayerSeasonWins ---
@@ -659,11 +662,13 @@ final class PlayerFunctionsLibTest extends TestCase
     {
         // Includes the 4 fixture players plus the 2 disposable players setUp() inserts every
         // test (Pekka Probe num=7, BrandNew Player num=5), ordered by team name then lastname.
+        // Blade is the only "1" in the Callahans column (fixture goal 3), so this pins the
+        // column to the per-player count rather than to a table of zeroes.
         $csv = PlayersToCsv('HRN2026', ',');
         $this->assertSame(
             '"FirstName","LastName","Jersey","TeamName","TeamAbbreviation","Club","Division","Country","Games","Assists","Goals","Callahans","Total"' . "\n" .
             '"Ari","Ace","8","Helsinki Heat","HEAT",,"Open","Finland","1","1","1","0","2"' . "\n" .
-            '"Bea","Blade","12","Helsinki Heat","HEAT",,"Open","Finland","1","1","1","0","2"' . "\n" .
+            '"Bea","Blade","12","Helsinki Heat","HEAT",,"Open","Finland","1","1","1","1","2"' . "\n" .
             '"BrandNew","Player","5","Helsinki Heat","HEAT",,"Open","Finland",,"0","0","0","0"' . "\n" .
             '"Pekka","Probe","7","Helsinki Heat","HEAT",,"Open","Finland",,"0","0","0","0"' . "\n" .
             '"Nia","North","14","Tampere Tempest","TEMP",,"Open","Finland","1","1","1","0","2"' . "\n" .
