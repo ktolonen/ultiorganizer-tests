@@ -1353,9 +1353,9 @@ final class SpiritFunctionsLibTest extends TestCase
 
     public function testHasFullGameSpiritEditRightViaSeriesAdmin(): void
     {
-        // Non-superadmin with seriesadmin:100 covers lines 199-212 in
-        // HasFullGameSpiritEditRight (hasSpiritEditRight=false, isEventReadonly=false,
-        // then GameSeries/GameReservation checks).
+        // Non-superadmin with seriesadmin:100 covers the tail of
+        // HasFullGameSpiritEditRight (hasSpiritEditRight=false,
+        // isEventReadonly=false, then the GameSeries check).
         LegacyApp::requireTopLevelLib('game.functions.php');
         unset($_SESSION['userproperties']['userrole']['superadmin']);
         unset($_SESSION['userproperties']['userrole']['seasonadmin']);
@@ -1370,18 +1370,38 @@ final class SpiritFunctionsLibTest extends TestCase
         }
     }
 
-    public function testHasFullGameSpiritEditRightViaGameAdmin(): void
+    public function testHasFullGameSpiritEditRightDeniedForGameAdmin(): void
     {
-        // gameadmin[700] covers the third isset check in HasFullGameSpiritEditRight.
+        // gameadmin[700] staffs the scoring desk and no longer carries spirit
+        // rights: HasFullGameSpiritEditRight only accepts spirit tools rights
+        // or seriesadmin.
         LegacyApp::requireTopLevelLib('game.functions.php');
         unset($_SESSION['userproperties']['userrole']['superadmin']);
         unset($_SESSION['userproperties']['userrole']['seasonadmin']);
         $_SESSION['userproperties']['userrole']['gameadmin'][700] = 1;
         try {
             $result = HasFullGameSpiritEditRight(700);
-            $this->assertTrue($result);
+            $this->assertFalse($result);
         } finally {
             unset($_SESSION['userproperties']['userrole']['gameadmin']);
+            $_SESSION['userproperties']['userrole']['superadmin'] = true;
+            $_SESSION['userproperties']['userrole']['seasonadmin']['HRN2026'] = 1;
+        }
+    }
+
+    public function testHasFullGameSpiritEditRightDeniedForReservationGameAdmin(): void
+    {
+        // resgameadmin[500] owns game 700's reservation, which likewise no
+        // longer grants spirit rights.
+        LegacyApp::requireTopLevelLib('game.functions.php');
+        unset($_SESSION['userproperties']['userrole']['superadmin']);
+        unset($_SESSION['userproperties']['userrole']['seasonadmin']);
+        $_SESSION['userproperties']['userrole']['resgameadmin'][500] = 1;
+        try {
+            $result = HasFullGameSpiritEditRight(700);
+            $this->assertFalse($result);
+        } finally {
+            unset($_SESSION['userproperties']['userrole']['resgameadmin']);
             $_SESSION['userproperties']['userrole']['superadmin'] = true;
             $_SESSION['userproperties']['userrole']['seasonadmin']['HRN2026'] = 1;
         }
