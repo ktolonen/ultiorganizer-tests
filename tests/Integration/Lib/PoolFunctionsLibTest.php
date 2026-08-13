@@ -573,6 +573,26 @@ final class PoolFunctionsLibTest extends TestCase
         $this->assertPoolScoreBoardRows($result);
     }
 
+    // 'callahan' is the one pool board ordering this fixture can actually exercise.
+    // Every other stat ties across the four players, so those sortings only ever
+    // reach the lastname tiebreak and would pass under any ORDER BY; total ties at
+    // 2 as well, so nothing but Blade's callahan can lift it above Ace.
+    private function assertPoolScoreBoardCallahanOrder(array $arr): void
+    {
+        $this->assertCount(4, $arr);
+        $this->assertSame('Blade', $arr[0]['lastname']);
+        $this->assertEquals(1, $arr[0]['callahan']);
+        $this->assertSame(['Ace', 'North', 'Twist'], array_column(array_slice($arr, 1), 'lastname'));
+        foreach (array_slice($arr, 1) as $row) {
+            $this->assertEquals(0, $row['callahan']);
+        }
+    }
+
+    public function testPoolScoreBoardArrayCallahanSortingOrdersByCallahan(): void
+    {
+        $this->assertPoolScoreBoardCallahanOrder(PoolScoreBoardArray(200, 'callahan', 0));
+    }
+
     // --- PoolsScoreBoard ---
 
     public function testPoolsScoreBoardReturnsResult(): void
@@ -585,6 +605,11 @@ final class PoolFunctionsLibTest extends TestCase
     {
         $result = PoolsScoreBoardArray([200], 'total', 0);
         $this->assertPoolScoreBoardRows($result);
+    }
+
+    public function testPoolsScoreBoardArrayCallahanSortingOrdersByCallahan(): void
+    {
+        $this->assertPoolScoreBoardCallahanOrder(PoolsScoreBoardArray([200], 'callahan', 0));
     }
 
     public function testPoolScoreBoardSortingVariants(): void
@@ -625,6 +650,19 @@ final class PoolFunctionsLibTest extends TestCase
     {
         $result = PoolScoreBoardWithDefensesArray(200, 'total', 0);
         $this->assertPoolDefenseBoardRows($result);
+    }
+
+    // These boards carry the same uo_goal-derived callahan column as the plain
+    // score boards -- only deftotal comes from uo_defense -- so their 'callahan'
+    // branch is orderable too, and is likewise the only one this fixture can pin.
+    public function testPoolScoreBoardWithDefensesArrayCallahanSortingOrdersByCallahan(): void
+    {
+        $this->assertPoolScoreBoardCallahanOrder(PoolScoreBoardWithDefensesArray(200, 'callahan', 0));
+    }
+
+    public function testPoolsScoreBoardWithDefensesArrayCallahanSortingOrdersByCallahan(): void
+    {
+        $this->assertPoolScoreBoardCallahanOrder(PoolsScoreBoardWithDefensesArray([200], 'callahan', 0));
     }
 
     public function testPoolsScoreBoardWithDefensesReturnsResult(): void

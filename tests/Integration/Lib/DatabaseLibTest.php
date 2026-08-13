@@ -53,11 +53,110 @@ final class DatabaseLibTest extends TestCase
             DBQuery(sprintf("DELETE FROM uo_urls WHERE url_id=%d", $this->insertedUrlId));
             $this->insertedUrlId = null;
         }
+        // The admission tests below leave probe rows and warm cache entries behind
+        // even when an assertion fails part-way, so clear both unconditionally.
+        DBQuery("DELETE FROM uo_urls WHERE owner LIKE 'cprobe_%'");
+        global $serverConf;
+        $serverConf['PersistentCacheEnabled'] = 'false';
+        unset($serverConf['PersistentCacheTtlSeconds']);
+        self::flushQueryCaches();
         unset($_SESSION['userproperties'], $_SESSION['uid']);
         // DisablePersistentCacheForRequest() sets a $GLOBALS flag for the rest of
         // the (whole PHPUnit) process; unset it so it doesn't leak into other tests.
         unset($GLOBALS['uo_persistent_cache_bypass']);
         LegacyApp::closeDatabaseConnection();
+    }
+
+    // --- DBQueryTo* empty-result cache admission ---
+    //
+    // DBQueryToValue/Array/Row pass CacheRememberFor a $shouldStore callback so an
+    // empty result is never persisted; without it, a read that finds nothing keeps
+    // serving nothing for the whole TTL after the row it looks for is inserted.
+    // PersistentCacheFunctionsLibTest covers the callback mechanism by calling
+    // CacheRememberFor directly, which cannot notice a wrapper that stops passing
+    // one -- these tests go through the wrappers against a real database instead.
+    //
+    // DBQueryRowCount is deliberately absent: it passes no admission callback,
+    // because 0 is a legitimate count rather than a missing result.
+
+    /**
+     * Turn the query cache on for one test. DBQueryCacheable() also requires a GET
+     * request and an unset bypass flag, and the namespaces are flushed so an entry
+     * cached by an earlier test cannot stand in for the read under test.
+     */
+    private function enableQueryCache(): void
+    {
+        global $serverConf;
+        $serverConf['PersistentCacheEnabled'] = 'true';
+        // GetPersistentCacheTtlSeconds() defaults to 5s, close enough to a slow
+        // test's runtime to make the stale-read anchor flaky. Pin it well above.
+        $serverConf['PersistentCacheTtlSeconds'] = 300;
+        $_SERVER['REQUEST_METHOD'] = 'GET';
+        unset($GLOBALS['uo_persistent_cache_bypass']);
+        self::flushQueryCaches();
+    }
+
+    private function insertCacheProbe(string $owner, string $name): void
+    {
+        DBQuery(sprintf(
+            "INSERT INTO uo_urls (owner, owner_id, type, url, name) VALUES ('%s', 800, 'website', 'https://example.com', '%s')",
+            DBEscapeString($owner),
+            DBEscapeString($name),
+        ));
+    }
+
+    public function testDBQueryToValueReResolvesAnEmptyResultButCachesAFoundOne(): void
+    {
+        $this->enableQueryCache();
+        $query = "SELECT name FROM uo_urls WHERE owner='cprobe_value'";
+
+        $this->assertNull(DBQueryToValue($query));
+
+        $this->insertCacheProbe('cprobe_value', 'probe-one');
+
+        // Same query, no flush: the empty read must not have been stored.
+        $this->assertSame('probe-one', DBQueryToValue($query));
+
+        // Anchor: caching really is active here, so the line above is the admission
+        // callback at work and not the cache being switched off. The query now has
+        // a stored non-empty entry, which keeps being served after the row changes.
+        DBQuery("UPDATE uo_urls SET name='probe-two' WHERE owner='cprobe_value'");
+        $this->assertSame('probe-one', DBQueryToValue($query));
+        // ...and the row really did change, so the stale read above is the cache
+        // rather than an UPDATE that silently failed.
+        $this->assertSame('probe-two', DBQueryToValueUncached($query));
+    }
+
+    public function testDBQueryToArrayReResolvesAnEmptyResultButCachesAFoundOne(): void
+    {
+        $this->enableQueryCache();
+        $query = "SELECT name FROM uo_urls WHERE owner='cprobe_array'";
+
+        $this->assertSame([], DBQueryToArray($query));
+
+        $this->insertCacheProbe('cprobe_array', 'probe-one');
+
+        $this->assertSame([['name' => 'probe-one']], DBQueryToArray($query));
+
+        DBQuery("UPDATE uo_urls SET name='probe-two' WHERE owner='cprobe_array'");
+        $this->assertSame([['name' => 'probe-one']], DBQueryToArray($query));
+        $this->assertSame([['name' => 'probe-two']], DBQueryToArrayUncached($query));
+    }
+
+    public function testDBQueryToRowReResolvesAnEmptyResultButCachesAFoundOne(): void
+    {
+        $this->enableQueryCache();
+        $query = "SELECT name FROM uo_urls WHERE owner='cprobe_row'";
+
+        $this->assertNull(DBQueryToRow($query));
+
+        $this->insertCacheProbe('cprobe_row', 'probe-one');
+
+        $this->assertSame(['name' => 'probe-one'], DBQueryToRow($query));
+
+        DBQuery("UPDATE uo_urls SET name='probe-two' WHERE owner='cprobe_row'");
+        $this->assertSame(['name' => 'probe-one'], DBQueryToRow($query));
+        $this->assertSame(['name' => 'probe-two'], DBQueryToRowUncached($query));
     }
 
     // --- DBEscapeString ---
