@@ -273,6 +273,173 @@ final class PersistentCacheFunctionsLibTest extends TestCase
         $this->assertSame(0, $calls);
     }
 
+    // --- CacheRememberFor $shouldStore admission callback ---
+    //
+    // DBQueryToValue/Array/Row pass an admission callback so an empty query
+    // result is never persisted: an emptily-cached read would keep serving
+    // nothing for the whole TTL after the row it looks for appears.
+
+    public function testCacheRememberForSkipsWriteWhenShouldStoreRejectsValue(): void
+    {
+        $path = $this->registerCachePath('uo_unit_admit_skip', 'k_skip');
+        if ($path === null) {
+            $this->markTestSkipped('PersistentCacheDir not available');
+        }
+        @unlink($path);
+
+        $result = CacheRememberFor(
+            'uo_unit_admit_skip',
+            'k_skip',
+            10,
+            fn() => [],
+            static fn($value) => $value !== [],
+        );
+
+        $this->assertSame([], $result);
+        $this->assertFileDoesNotExist($path);
+    }
+
+    public function testCacheRememberForStoresValueWhenShouldStoreAcceptsIt(): void
+    {
+        // Contrast for the skip test above: the same callback shape must still
+        // persist an accepted value, so the missing file there is the admission
+        // decision and not caching being broken outright.
+        $path = $this->registerCachePath('uo_unit_admit_keep', 'k_keep');
+        if ($path === null) {
+            $this->markTestSkipped('PersistentCacheDir not available');
+        }
+        @unlink($path);
+
+        $result = CacheRememberFor(
+            'uo_unit_admit_keep',
+            'k_keep',
+            10,
+            fn() => ['row'],
+            static fn($value) => $value !== [],
+        );
+
+        $this->assertSame(['row'], $result);
+        $this->assertFileExists($path);
+        $this->assertSame(['row'], PersistentCacheRead($path)['payload']);
+    }
+
+    public function testCacheRememberForReResolvesRejectedValueOnEveryCall(): void
+    {
+        $path = $this->registerCachePath('uo_unit_admit_recall', 'k_recall');
+        if ($path === null) {
+            $this->markTestSkipped('PersistentCacheDir not available');
+        }
+        @unlink($path);
+
+        $calls = 0;
+        $resolver = function () use (&$calls) {
+            $calls++;
+            // Second call finds the row that the first call missed.
+            return $calls === 1 ? [] : ['row'];
+        };
+        $admit = static fn($value) => $value !== [];
+
+        $this->assertSame([], CacheRememberFor('uo_unit_admit_recall', 'k_recall', 10, $resolver, $admit));
+        // A stored empty result would short-circuit this call and keep $calls at 1.
+        $this->assertSame(['row'], CacheRememberFor('uo_unit_admit_recall', 'k_recall', 10, $resolver, $admit));
+        $this->assertSame(2, $calls);
+    }
+
+    public function testCacheRememberForRemovesExpiredEntryWhenShouldStoreRejectsValue(): void
+    {
+        // A previously populated query can become empty. The expired entry must be
+        // unlinked rather than left behind for PersistentCacheStats/CacheWipe to
+        // keep tripping over.
+        $path = $this->registerCachePath('uo_unit_admit_stale', 'k_stale');
+        if ($path === null) {
+            $this->markTestSkipped('PersistentCacheDir not available');
+        }
+        file_put_contents($path, serialize(['expires' => time() - 1, 'payload' => ['old']]));
+        $this->assertFileExists($path);
+
+        $result = CacheRememberFor(
+            'uo_unit_admit_stale',
+            'k_stale',
+            10,
+            fn() => [],
+            static fn($value) => $value !== [],
+        );
+
+        $this->assertSame([], $result);
+        $this->assertFileDoesNotExist($path);
+        $this->assertFileDoesNotExist($path . '.lock');
+    }
+
+    public function testCacheRememberForKeepsFreshEntryWithoutConsultingShouldStore(): void
+    {
+        // A live entry returns before the resolver runs, so the admission callback
+        // never sees it — an unexpired empty entry stays served until it expires.
+        $path = $this->registerCachePath('uo_unit_admit_fresh', 'k_fresh');
+        if ($path === null) {
+            $this->markTestSkipped('PersistentCacheDir not available');
+        }
+        PersistentCacheWrite($path, [], 60);
+
+        $admitCalls = 0;
+        $resolverCalls = 0;
+        $result = CacheRememberFor(
+            'uo_unit_admit_fresh',
+            'k_fresh',
+            10,
+            function () use (&$resolverCalls) {
+                $resolverCalls++;
+                return ['row'];
+            },
+            static function ($value) use (&$admitCalls) {
+                $admitCalls++;
+                return $value !== [];
+            },
+        );
+
+        $this->assertSame([], $result);
+        $this->assertSame(0, $resolverCalls);
+        $this->assertSame(0, $admitCalls);
+        $this->assertFileExists($path);
+    }
+
+    public function testCacheRememberForStoresValueWhenNoShouldStoreCallbackGiven(): void
+    {
+        // Callers that pass no admission callback keep the old unconditional-write
+        // behaviour, including for empty values.
+        $path = $this->registerCachePath('uo_unit_admit_default', 'k_default');
+        if ($path === null) {
+            $this->markTestSkipped('PersistentCacheDir not available');
+        }
+        @unlink($path);
+
+        $this->assertSame([], CacheRememberFor('uo_unit_admit_default', 'k_default', 10, fn() => []));
+        $this->assertFileExists($path);
+        $this->assertSame([], PersistentCacheRead($path)['payload']);
+    }
+
+    public function testCacheRememberForAdmissionCallbackReceivesResolvedValue(): void
+    {
+        $path = $this->registerCachePath('uo_unit_admit_arg', 'k_arg');
+        if ($path === null) {
+            $this->markTestSkipped('PersistentCacheDir not available');
+        }
+        @unlink($path);
+
+        $seen = 'not-called';
+        CacheRememberFor(
+            'uo_unit_admit_arg',
+            'k_arg',
+            10,
+            fn() => 'resolved-value',
+            static function ($value) use (&$seen) {
+                $seen = $value;
+                return true;
+            },
+        );
+
+        $this->assertSame('resolved-value', $seen);
+    }
+
     // --- CacheForgetPersistent ---
 
     public function testCacheForgetPersistentDeletesSpecificEntry(): void

@@ -669,11 +669,23 @@ final class GameFunctionsLibTest extends TestCase
 
     // --- GameEvents / GameMediaEvents ---
 
-    public function testGameEventsReturnsArray(): void
+    public function testGameEventsReturnsFixtureEventsInTimeOrder(): void
     {
-        // Fixture has no uo_timeout, uo_spirit_timeout, or uo_gameevent rows.
+        // Fixture has no uo_timeout or uo_spirit_timeout rows; game 700's
+        // uo_gameevent rows are half_cap at 400, turnover at 500 and time_cap at
+        // 900. GameEvents() unions the three sources and orders by time, so the
+        // turnover has to land between the two caps rather than after them.
         $events = GameEvents(700);
-        $this->assertSame([], $events);
+        $this->assertCount(3, $events);
+        $this->assertSame(['half_cap', 'turnover', 'time_cap'], array_column($events, 'type'));
+        $this->assertSame(['400', '500', '900'], array_map('strval', array_column($events, 'time')));
+        // Caps carry their target in info and no team; the turnover is the other
+        // way round.
+        $this->assertSame('9', (string) $events[0]['info']);
+        $this->assertSame('13', (string) $events[2]['info']);
+        $this->assertNull($events[1]['info']);
+        $this->assertEquals(0, $events[0]['ishome']);
+        $this->assertEquals(1, $events[1]['ishome']);
     }
 
     public function testGameMediaEventsReturnsArray(): void
@@ -699,11 +711,20 @@ final class GameFunctionsLibTest extends TestCase
         $this->assertSame([], $timeouts);
     }
 
-    public function testGameTurnoversArrayReturnsArray(): void
+    public function testGameTurnoversArrayReturnsOnlyTurnoverEvents(): void
     {
-        // Fixture has no uo_gameevent rows of type 'turnover'.
+        // Game 700 has three uo_gameevent rows but only one turnover (t=500,
+        // home), so this pins the type filter rather than the row count.
         $turnovers = GameTurnoversArray(700);
-        $this->assertSame([], $turnovers);
+        $this->assertCount(1, $turnovers);
+        $this->assertEquals(500, $turnovers[0]['time']);
+        $this->assertEquals(1, $turnovers[0]['ishome']);
+    }
+
+    public function testGameTurnoversArrayIsEmptyForGameWithoutTurnovers(): void
+    {
+        // Contrast: game 701 has no uo_gameevent rows at all.
+        $this->assertSame([], GameTurnoversArray(701));
     }
 
     // --- GameInfo ---
@@ -1849,5 +1870,389 @@ final class GameFunctionsLibTest extends TestCase
         ];
         $html = SpiritTable([], [2 => 15], $categories, true, true);
         $this->assertStringContainsString('type=\'text\'', $html);
+    }
+
+    // --- GameTeamScoreBorad callahan column ---
+
+    public function testGameTeamScoreBoardArrayCountsCallahansSeparatelyFromGoals(): void
+    {
+        // Team 300 players 800 and 801 both score, but only 800's second goal is
+        // a callahan. done must stay the full goal count for both while callahan
+        // isolates the iscallahan=1 rows, and total must remain goals+assists
+        // (callahans are already inside done and must not be added again).
+        $gameId = $this->createTempGame(300, 301);
+        foreach ([[800, 8], [801, 12]] as [$playerId, $num]) {
+            DBQuery(sprintf(
+                "INSERT INTO uo_played (player, game, num, accredited, acknowledged, captain)
+                 VALUES (%d, %d, %d, 1, 1, 0)",
+                $playerId,
+                $gameId,
+                $num,
+            ));
+        }
+        $goals = [
+            // num, scorer, assist, iscallahan
+            [1, 800, 801, 0],
+            [2, 800, null, 1],
+            [3, 801, 800, 0],
+        ];
+        foreach ($goals as [$num, $scorer, $assist, $isCallahan]) {
+            DBQuery(sprintf(
+                "INSERT INTO uo_goal
+                    (game, num, assist, scorer, time, homescore, visitorscore, ishomegoal, iscallahan)
+                 VALUES (%d, %d, %s, %d, %d, %d, 0, 1, %d)",
+                $gameId,
+                $num,
+                $assist === null ? 'NULL' : (string) $assist,
+                $scorer,
+                $num * 100,
+                $num,
+                $isCallahan,
+            ));
+        }
+        self::flushQueryCaches();
+
+        $board = GameTeamScoreBoardArray($gameId, 300);
+        $byPlayer = [];
+        foreach ($board as $row) {
+            $byPlayer[(int) $row['player_id']] = $row;
+        }
+        $playerIds = array_keys($byPlayer);
+        sort($playerIds);
+        $this->assertSame([800, 801], $playerIds);
+
+        $this->assertEquals(2, $byPlayer[800]['done']);
+        $this->assertEquals(1, $byPlayer[800]['callahan']);
+        $this->assertEquals(1, $byPlayer[800]['fedin']);
+        $this->assertEquals(3, $byPlayer[800]['total']);
+
+        // Contrast in the same board: a scorer with no callahan reports 0 while
+        // still reporting a non-zero goal count.
+        $this->assertEquals(1, $byPlayer[801]['done']);
+        $this->assertEquals(0, $byPlayer[801]['callahan']);
+        $this->assertEquals(1, $byPlayer[801]['fedin']);
+        $this->assertEquals(2, $byPlayer[801]['total']);
+    }
+
+    public function testGameTeamScoreBoardArrayReportsFixtureCallahanForScorerOnly(): void
+    {
+        // Fixture game 700: both team 300 players scored once, but only 801's goal
+        // 3 is iscallahan=1. The board must tell them apart on callahan while
+        // reporting the same done for both.
+        $board = GameTeamScoreBoardArray(700, 300);
+        $this->assertCount(2, $board);
+        $byPlayer = [];
+        foreach ($board as $row) {
+            $this->assertArrayHasKey('callahan', $row);
+            $byPlayer[(int) $row['player_id']] = $row;
+        }
+        $this->assertEquals(1, $byPlayer[801]['callahan']);
+        $this->assertEquals(1, $byPlayer[801]['done']);
+        $this->assertEquals(0, $byPlayer[800]['callahan']);
+        $this->assertEquals(1, $byPlayer[800]['done']);
+    }
+
+    // --- Cap events (half_cap / time_cap) ---
+    //
+    // Caps live in uo_gameevent with the cap target in `info` and the event time
+    // in `time`. Fixture games carry no uo_gameevent rows (see the GameEvents /
+    // GameTurnoversArray tests above), so every test here writes to a temp game
+    // that tearDown deletes. The setters die() without hasEditGameEventsRight,
+    // which would kill PHPUnit, so only the superadmin path from setUp is used.
+
+    private function capEventRow(int $gameId, string $type): ?array
+    {
+        self::flushQueryCaches();
+        $row = DBQueryToRow(sprintf(
+            "SELECT time, type, info FROM uo_gameevent WHERE game=%d AND type='%s'",
+            $gameId,
+            DBEscapeString($type),
+        ));
+
+        return is_array($row) ? $row : null;
+    }
+
+    private function capEventCount(int $gameId, string $type): int
+    {
+        self::flushQueryCaches();
+
+        return (int) DBQueryToValue(sprintf(
+            "SELECT COUNT(*) FROM uo_gameevent WHERE game=%d AND type='%s'",
+            $gameId,
+            DBEscapeString($type),
+        ));
+    }
+
+    public function testGameCapEventTypesAreHalfCapAndTimeCap(): void
+    {
+        $this->assertSame(['half_cap', 'time_cap'], GameCapEventTypes());
+    }
+
+    public function testGameIsCapEventTypeAcceptsCapTypesAndRejectsOtherEventTypes(): void
+    {
+        // Contrast: the same function must say yes to caps and no to the other
+        // uo_gameevent types it shares the table with.
+        $this->assertTrue(GameIsCapEventType('half_cap'));
+        $this->assertTrue(GameIsCapEventType('time_cap'));
+        $this->assertFalse(GameIsCapEventType('timeout'));
+        $this->assertFalse(GameIsCapEventType('offence'));
+        $this->assertFalse(GameIsCapEventType('media'));
+        $this->assertFalse(GameIsCapEventType(''));
+    }
+
+    public function testGameSetCapEventInsertsRowWithTimeAndTarget(): void
+    {
+        $gameId = $this->createTempGame();
+
+        $this->assertTrue(GameSetCapEvent($gameId, 'half_cap', 900, 9));
+
+        $row = $this->capEventRow($gameId, 'half_cap');
+        $this->assertIsArray($row);
+        $this->assertEquals(900, $row['time']);
+        $this->assertEquals(9, $row['info']);
+        $this->assertSame(1, $this->capEventCount($gameId, 'half_cap'));
+    }
+
+    public function testGameSetCapEventUpdatesExistingCapInsteadOfInsertingSecondRow(): void
+    {
+        $gameId = $this->createTempGame();
+        GameSetCapEvent($gameId, 'time_cap', 900, 9);
+
+        $this->assertTrue(GameSetCapEvent($gameId, 'time_cap', 1500, 13));
+
+        // One row, carrying the new values: an update that wrongly inserted would
+        // still leave the new values findable, so the count is what discriminates.
+        $this->assertSame(1, $this->capEventCount($gameId, 'time_cap'));
+        $row = $this->capEventRow($gameId, 'time_cap');
+        $this->assertEquals(1500, $row['time']);
+        $this->assertEquals(13, $row['info']);
+    }
+
+    public function testGameSetCapEventKeepsHalfCapAndTimeCapAsSeparateRows(): void
+    {
+        $gameId = $this->createTempGame();
+
+        GameSetCapEvent($gameId, 'half_cap', 900, 9);
+        GameSetCapEvent($gameId, 'time_cap', 1500, 13);
+
+        $this->assertSame(1, $this->capEventCount($gameId, 'half_cap'));
+        $this->assertSame(1, $this->capEventCount($gameId, 'time_cap'));
+        $this->assertEquals(9, $this->capEventRow($gameId, 'half_cap')['info']);
+        $this->assertEquals(13, $this->capEventRow($gameId, 'time_cap')['info']);
+    }
+
+    public function testGameSetCapEventClampsNegativeTimeToZero(): void
+    {
+        $gameId = $this->createTempGame();
+
+        $this->assertTrue(GameSetCapEvent($gameId, 'half_cap', -30, 9));
+
+        $this->assertEquals(0, $this->capEventRow($gameId, 'half_cap')['time']);
+    }
+
+    public function testGameSetCapEventRejectsTargetsOutsideOneToTwoFiftyFive(): void
+    {
+        $gameId = $this->createTempGame();
+
+        // Deny below and above the range, then allow inside it through the same
+        // function, so the false results are attributable to the bound check and
+        // not to a setter that never writes at all.
+        $this->assertFalse(GameSetCapEvent($gameId, 'half_cap', 900, 0));
+        $this->assertSame(0, $this->capEventCount($gameId, 'half_cap'));
+
+        $this->assertFalse(GameSetCapEvent($gameId, 'half_cap', 900, 256));
+        $this->assertSame(0, $this->capEventCount($gameId, 'half_cap'));
+
+        $this->assertTrue(GameSetCapEvent($gameId, 'half_cap', 900, 1));
+        $this->assertEquals(1, $this->capEventRow($gameId, 'half_cap')['info']);
+
+        $this->assertTrue(GameSetCapEvent($gameId, 'half_cap', 900, 255));
+        $this->assertEquals(255, $this->capEventRow($gameId, 'half_cap')['info']);
+    }
+
+    public function testGameSetCapEventRejectsNonCapEventType(): void
+    {
+        $gameId = $this->createTempGame();
+
+        $this->assertFalse(GameSetCapEvent($gameId, 'timeout', 900, 9));
+        $this->assertSame(0, $this->capEventCount($gameId, 'timeout'));
+        // Contrast: a cap type with the same arguments does write.
+        $this->assertTrue(GameSetCapEvent($gameId, 'half_cap', 900, 9));
+    }
+
+    public function testGameCapEventReturnsStoredCapAndNullForNonCapType(): void
+    {
+        $gameId = $this->createTempGame();
+        GameSetCapEvent($gameId, 'time_cap', 1500, 13);
+        self::flushQueryCaches();
+
+        $event = GameCapEvent($gameId, 'time_cap');
+        $this->assertIsArray($event);
+        $this->assertSame('time_cap', $event['type']);
+        $this->assertEquals(1500, $event['time']);
+        $this->assertEquals(13, $event['info']);
+
+        $this->assertNull(GameCapEvent($gameId, 'timeout'));
+    }
+
+    public function testGameCapEventReturnsNullWhenGameHasNoCapOfThatType(): void
+    {
+        $gameId = $this->createTempGame();
+        GameSetCapEvent($gameId, 'half_cap', 900, 9);
+        self::flushQueryCaches();
+
+        // Positive precondition: the half cap really is there, so the null below
+        // is a per-type miss and not an empty game.
+        $this->assertIsArray(GameCapEvent($gameId, 'half_cap'));
+        $this->assertNull(GameCapEvent($gameId, 'time_cap'));
+    }
+
+    public function testGameCapEventsReturnsBothCapsKeyedByType(): void
+    {
+        $gameId = $this->createTempGame();
+        GameSetCapEvent($gameId, 'half_cap', 900, 9);
+        GameSetCapEvent($gameId, 'time_cap', 1500, 13);
+        self::flushQueryCaches();
+
+        $events = GameCapEvents($gameId);
+        $keys = array_keys($events);
+        sort($keys); // the query has no ORDER BY; only the key set is contractual
+        $this->assertSame(['half_cap', 'time_cap'], $keys);
+        $this->assertEquals(900, $events['half_cap']['time']);
+        $this->assertEquals(9, $events['half_cap']['info']);
+        $this->assertEquals(1500, $events['time_cap']['time']);
+        $this->assertEquals(13, $events['time_cap']['info']);
+    }
+
+    public function testGameCapEventsExcludesNonCapEventsOfTheSameGame(): void
+    {
+        $gameId = $this->createTempGame();
+        GameSetStartingTeam($gameId, 1); // writes an 'offence' uo_gameevent row
+        GameSetCapEvent($gameId, 'half_cap', 900, 9);
+        self::flushQueryCaches();
+
+        $events = GameCapEvents($gameId);
+        $this->assertSame(['half_cap'], array_keys($events));
+        // Precondition: the offence row exists, so the exclusion above is a filter
+        // and not an empty table.
+        $this->assertSame(1, $this->capEventCount($gameId, 'offence'));
+    }
+
+    public function testGameCapEventsReturnsEmptyArrayForGameWithoutCaps(): void
+    {
+        $gameId = $this->createTempGame();
+        self::flushQueryCaches();
+
+        $this->assertSame([], GameCapEvents($gameId));
+    }
+
+    public function testGameRemoveCapEventDeletesOnlyTheRequestedCapType(): void
+    {
+        $gameId = $this->createTempGame();
+        GameSetCapEvent($gameId, 'half_cap', 900, 9);
+        GameSetCapEvent($gameId, 'time_cap', 1500, 13);
+
+        $this->assertTrue(GameRemoveCapEvent($gameId, 'half_cap'));
+
+        $this->assertSame(0, $this->capEventCount($gameId, 'half_cap'));
+        $this->assertSame(1, $this->capEventCount($gameId, 'time_cap'));
+    }
+
+    public function testGameRemoveCapEventRejectsNonCapEventTypeWithoutDeleting(): void
+    {
+        $gameId = $this->createTempGame();
+        GameSetStartingTeam($gameId, 1); // 'offence' row
+
+        $this->assertFalse(GameRemoveCapEvent($gameId, 'offence'));
+        $this->assertSame(1, $this->capEventCount($gameId, 'offence'));
+    }
+
+    // GameCapEventName/GameCapEventText run their labels through _(). No gettext
+    // domain is bound in the PHPUnit process (the harness bootstrap never calls
+    // bindtextdomain), so _() returns the msgid verbatim regardless of the case's
+    // DefaultLocale -- including the fi_FI config-overrides case. That makes the
+    // English msgids assertable, which is what pins each type to its own label;
+    // a swap of the two branches would otherwise still look "different".
+
+    public function testGameCapEventNameReturnsTheLabelOfEachCapType(): void
+    {
+        $this->assertSame('Halftime cap', GameCapEventName('half_cap'));
+        $this->assertSame('Time cap', GameCapEventName('time_cap'));
+        $this->assertSame('', GameCapEventName('timeout'));
+        $this->assertSame('', GameCapEventName(''));
+    }
+
+    public function testGameCapEventTextRendersTargetInTheLabelOfItsCapType(): void
+    {
+        $this->assertSame(
+            'Halftime cap 6.40 - new point cap 17',
+            GameCapEventText(['type' => 'half_cap', 'info' => 17, 'time' => 400]),
+        );
+        $this->assertSame(
+            'Time cap 15.00 - new point cap 17',
+            GameCapEventText(['type' => 'time_cap', 'info' => 17, 'time' => 900]),
+        );
+    }
+
+    // Caps are the one event type that renders its own time, so every caller
+    // suppresses its own time output for them. hide_time_on_scoresheet therefore
+    // has to reach this function, or the flag would leak the clock through caps
+    // on pages that hide it everywhere else.
+    public function testGameCapEventTextOmitsTheTimeWhenTimeIsHidden(): void
+    {
+        $this->assertSame(
+            'Time cap - new point cap 17',
+            GameCapEventText(['type' => 'time_cap', 'info' => 17, 'time' => 900], false),
+        );
+    }
+
+    // A missing time key must not warn or render a stray separator.
+    public function testGameCapEventTextTreatsMissingTimeAsZero(): void
+    {
+        $this->assertSame(
+            'Time cap 0.00 - new point cap 17',
+            GameCapEventText(['type' => 'time_cap', 'info' => 17]),
+        );
+    }
+
+    public function testGameCapEventTextCastsNonNumericTargetToZero(): void
+    {
+        $this->assertSame(
+            'Time cap 0.00 - new point cap 0',
+            GameCapEventText(['type' => 'time_cap', 'info' => null]),
+        );
+    }
+
+    public function testGameCapEventTextRendersStoredTargetForRealEvent(): void
+    {
+        $gameId = $this->createTempGame();
+        GameSetCapEvent($gameId, 'time_cap', 1500, 13);
+        self::flushQueryCaches();
+
+        $text = GameCapEventText(GameCapEvent($gameId, 'time_cap'));
+        $this->assertStringContainsString('13', $text);
+        $this->assertSame(
+            GameCapEventText(['type' => 'time_cap', 'info' => 13, 'time' => 1500]),
+            $text,
+        );
+    }
+
+    public function testGameCapEventTextIsEmptyForNonCapEvent(): void
+    {
+        $this->assertSame('', GameCapEventText(['type' => 'timeout', 'info' => 17]));
+        // Missing keys must not warn or leak a target.
+        $this->assertSame('', GameCapEventText([]));
+    }
+
+    public function testGameEventsIncludesSavedCapEvent(): void
+    {
+        // GameEvents() feeds the scoresheet/replay renderers, so caps have to come
+        // back through it alongside the other uo_gameevent types.
+        $gameId = $this->createTempGame();
+        GameSetCapEvent($gameId, 'half_cap', 900, 9);
+        self::flushQueryCaches();
+
+        $types = array_column(GameEvents($gameId), 'type');
+        $this->assertContains('half_cap', $types);
     }
 }

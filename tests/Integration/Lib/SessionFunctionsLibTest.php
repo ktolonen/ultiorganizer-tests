@@ -70,7 +70,24 @@ final class SessionFunctionsLibTest extends TestCase
         startSecureSession();
 
         $this->assertSame(PHP_SESSION_ACTIVE, session_status());
-        $this->assertSame('UO_SESSID', session_name());
+        $this->assertSame(sessionCookieName(), session_name());
+    }
+
+    public function testSessionCookieNameIsDerivedWhenUnconfigured(): void
+    {
+        // UO_SESSION_NAME is optional. While it is undefined the name is derived
+        // from the installation directory, so co-hosted installations differ
+        // without anyone configuring them, and it must stay valid for
+        // session_name(): letters, digits, '-' and '_' only, and not all digits.
+        if (defined('UO_SESSION_NAME')) {
+            $this->markTestSkipped('This case configures UO_SESSION_NAME, so no name is derived.');
+        }
+
+        $name = sessionCookieName();
+
+        $this->assertStringStartsWith('UO_SESSID_', $name);
+        $this->assertNotSame('UO_SESSID_', $name);
+        $this->assertDoesNotMatchRegularExpression('/[^A-Za-z0-9_-]/', $name);
     }
 
     public function testRegenerateSessionIdDoesNothingWhenNoActiveSession(): void

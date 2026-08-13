@@ -240,8 +240,9 @@ final class SeriesFunctionsLibTest extends TestCase
     // --- SeriesScoreBoard / SeriesScoreBoardArray (all sorting branches) ---
 
     // Each fixture player scored exactly 1 goal and assisted exactly 1 goal in game 700
-    // (the only game with uo_played rows), so every stat ties across all 4 players and every
-    // sorting branch falls through its tie-breaks to lastname ASC: Ace, Blade, North, Twist.
+    // (the only game with uo_played rows), so every stat ties across all 4 players -- except
+    // callahans, where only Blade's goal 3 counts -- and every sorting branch but 'callahan'
+    // falls through its tie-breaks to lastname ASC: Ace, Blade, North, Twist.
     private function assertSeriesScoreBoardRows(array $arr): void
     {
         $this->assertCount(4, $arr);
@@ -249,7 +250,8 @@ final class SeriesFunctionsLibTest extends TestCase
         foreach ($arr as $row) {
             $this->assertEquals(1, $row['done']);
             $this->assertEquals(1, $row['fedin']);
-            $this->assertEquals(0, $row['callahan']);
+            // The callahan is counted inside done, so it changes this column only.
+            $this->assertEquals($row['lastname'] === 'Blade' ? 1 : 0, $row['callahan']);
             $this->assertEquals(2, $row['total']);
             $this->assertEquals(1, $row['games']);
         }
@@ -304,7 +306,18 @@ final class SeriesFunctionsLibTest extends TestCase
 
     public function testSeriesScoreBoardCallahanSorting(): void
     {
-        $this->assertSeriesScoreBoardRows(SeriesScoreBoardArray(100, 'callahan', null));
+        // Unlike every other sorting here, this one does not fall through to the
+        // lastname tiebreak: Blade's callahan lifts it above Ace. That makes this
+        // the board's one real ordering assertion.
+        $arr = SeriesScoreBoardArray(100, 'callahan', null);
+        $this->assertCount(4, $arr);
+        $this->assertSame('Blade', $arr[0]['lastname']);
+        $this->assertEquals(1, $arr[0]['callahan']);
+        // The remaining three tie at 0 and keep the lastname order among themselves.
+        $this->assertSame(['Ace', 'North', 'Twist'], array_column(array_slice($arr, 1), 'lastname'));
+        foreach (array_slice($arr, 1) as $row) {
+            $this->assertEquals(0, $row['callahan']);
+        }
     }
 
     public function testSeriesScoreBoardTotalAvgSorting(): void

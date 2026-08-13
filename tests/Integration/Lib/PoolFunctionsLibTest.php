@@ -550,8 +550,9 @@ final class PoolFunctionsLibTest extends TestCase
     }
 
     // Each fixture player scored exactly 1 goal and assisted exactly 1 goal in game 700 (the
-    // only game any player has uo_played rows for), so every stat ties and every sort falls
-    // through to lastname ASC: Ace, Blade, North, Twist. Mirrors the series.functions.php board.
+    // only game any player has uo_played rows for), so every stat ties -- except callahans,
+    // where only Blade's goal 3 counts -- and every sort but 'callahan' falls through to
+    // lastname ASC: Ace, Blade, North, Twist. Mirrors the series.functions.php board.
     private function assertPoolScoreBoardRows(array $arr): void
     {
         $this->assertCount(4, $arr);
@@ -559,7 +560,8 @@ final class PoolFunctionsLibTest extends TestCase
         foreach ($arr as $row) {
             $this->assertEquals(1, $row['done']);
             $this->assertEquals(1, $row['fedin']);
-            $this->assertEquals(0, $row['callahan']);
+            // The callahan is counted inside done, so it changes this column only.
+            $this->assertEquals($row['lastname'] === 'Blade' ? 1 : 0, $row['callahan']);
             $this->assertEquals(2, $row['total']);
             $this->assertEquals(1, $row['games']);
         }
@@ -569,6 +571,26 @@ final class PoolFunctionsLibTest extends TestCase
     {
         $result = PoolScoreBoardArray(200, 'total', 0);
         $this->assertPoolScoreBoardRows($result);
+    }
+
+    // 'callahan' is the one pool board ordering this fixture can actually exercise.
+    // Every other stat ties across the four players, so those sortings only ever
+    // reach the lastname tiebreak and would pass under any ORDER BY; total ties at
+    // 2 as well, so nothing but Blade's callahan can lift it above Ace.
+    private function assertPoolScoreBoardCallahanOrder(array $arr): void
+    {
+        $this->assertCount(4, $arr);
+        $this->assertSame('Blade', $arr[0]['lastname']);
+        $this->assertEquals(1, $arr[0]['callahan']);
+        $this->assertSame(['Ace', 'North', 'Twist'], array_column(array_slice($arr, 1), 'lastname'));
+        foreach (array_slice($arr, 1) as $row) {
+            $this->assertEquals(0, $row['callahan']);
+        }
+    }
+
+    public function testPoolScoreBoardArrayCallahanSortingOrdersByCallahan(): void
+    {
+        $this->assertPoolScoreBoardCallahanOrder(PoolScoreBoardArray(200, 'callahan', 0));
     }
 
     // --- PoolsScoreBoard ---
@@ -583,6 +605,11 @@ final class PoolFunctionsLibTest extends TestCase
     {
         $result = PoolsScoreBoardArray([200], 'total', 0);
         $this->assertPoolScoreBoardRows($result);
+    }
+
+    public function testPoolsScoreBoardArrayCallahanSortingOrdersByCallahan(): void
+    {
+        $this->assertPoolScoreBoardCallahanOrder(PoolsScoreBoardArray([200], 'callahan', 0));
     }
 
     public function testPoolScoreBoardSortingVariants(): void
@@ -623,6 +650,19 @@ final class PoolFunctionsLibTest extends TestCase
     {
         $result = PoolScoreBoardWithDefensesArray(200, 'total', 0);
         $this->assertPoolDefenseBoardRows($result);
+    }
+
+    // These boards carry the same uo_goal-derived callahan column as the plain
+    // score boards -- only deftotal comes from uo_defense -- so their 'callahan'
+    // branch is orderable too, and is likewise the only one this fixture can pin.
+    public function testPoolScoreBoardWithDefensesArrayCallahanSortingOrdersByCallahan(): void
+    {
+        $this->assertPoolScoreBoardCallahanOrder(PoolScoreBoardWithDefensesArray(200, 'callahan', 0));
+    }
+
+    public function testPoolsScoreBoardWithDefensesArrayCallahanSortingOrdersByCallahan(): void
+    {
+        $this->assertPoolScoreBoardCallahanOrder(PoolsScoreBoardWithDefensesArray([200], 'callahan', 0));
     }
 
     public function testPoolsScoreBoardWithDefensesReturnsResult(): void

@@ -40,9 +40,11 @@ final class TeamFunctionsLibTest extends TestCase
 
     /**
      * Team 300's two fixture players (800 Ari Ace, 801 Bea Blade) tie on every
-     * ScoreBoard stat from game 700 (each scored once, assisted once, played once),
-     * so sort order always falls back to the lastname/firstname/num tiebreak, which
-     * puts 800 before 801 regardless of $sorting.
+     * ScoreBoard stat from game 700 (each scored once, assisted once, played once)
+     * except callahans, where 801's goal 3 is the only one, so sort order falls
+     * back to the lastname/firstname/num tiebreak — putting 800 before 801 — for
+     * every $sorting but 'callahan'. That one orders 801 first and has its own
+     * test.
      */
     private function assertTeamScoreBoardRows(array $result): void
     {
@@ -54,6 +56,25 @@ final class TeamFunctionsLibTest extends TestCase
         $this->assertEquals(0, $result[0]['callahan']);
         $this->assertEquals(2, $result[0]['total']);
         $this->assertEquals(1, $result[0]['games']);
+        // The callahan goal is inside done, not added to it: 801 scored once and
+        // assisted once like 800, and only the callahan column tells them apart.
+        $this->assertEquals(1, $result[1]['done']);
+        $this->assertEquals(1, $result[1]['callahan']);
+        $this->assertEquals(2, $result[1]['total']);
+    }
+
+    /**
+     * The 'callahan' sorting is the one board ordering the fixture can actually
+     * exercise: every other stat ties, so those tests only reach the lastname
+     * tiebreak. 801 leads here purely on its callahan.
+     */
+    private function assertTeamScoreBoardCallahanOrder(array $result): void
+    {
+        $this->assertCount(2, $result);
+        $this->assertSame('801', $result[0]['player_id']);
+        $this->assertEquals(1, $result[0]['callahan']);
+        $this->assertSame('800', $result[1]['player_id']);
+        $this->assertEquals(0, $result[1]['callahan']);
     }
 
     // Fixture: teams 300 (Helsinki Heat) + 301 (Tampere Tempest), series 100, pool 200,
@@ -1037,7 +1058,7 @@ final class TeamFunctionsLibTest extends TestCase
     public function testTeamScoreBoardArrayWithCallahanSorting(): void
     {
         $result = TeamScoreBoardArray(300, [200], 'callahan', null);
-        $this->assertTeamScoreBoardRows($result);
+        $this->assertTeamScoreBoardCallahanOrder($result);
     }
 
     public function testTeamScoreBoardArrayWithPassSorting(): void
@@ -1118,7 +1139,7 @@ final class TeamFunctionsLibTest extends TestCase
     public function testTeamScoreBoardWithDefensesCallahanSorting(): void
     {
         $result = TeamScoreBoardWithDefenses(300, [200], 'callahan', null);
-        $this->assertTeamScoreBoardRows($result);
+        $this->assertTeamScoreBoardCallahanOrder($result);
     }
 
     public function testTeamScoreBoardWithDefensesPassSorting(): void

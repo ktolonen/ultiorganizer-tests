@@ -111,6 +111,87 @@ final class ApiEndpointsContractTest extends TestCase
         $this->assertNotEmpty($payload['data']['goals']);
     }
 
+    public function testGameplayEndpointReportsCapEventsAsNeutralWithTarget(): void
+    {
+        // Caps belong to neither team, so the gameplay feed reports team=null and
+        // adds the cap target; every other event type keeps a home/away team and
+        // carries no target key.
+        $payload = self::authorizedJson('/api/v1/gameplay?game=700');
+
+        $events = $payload['data']['events'];
+        $this->assertCount(3, $events);
+
+        $byType = [];
+        foreach ($events as $event) {
+            $byType[$event['type']] = $event;
+        }
+        $this->assertSame(['half_cap', 'turnover', 'time_cap'], array_keys($byType));
+
+        $this->assertNull($byType['half_cap']['team']);
+        $this->assertSame(400, $byType['half_cap']['time']);
+        $this->assertSame(9, $byType['half_cap']['target']);
+
+        $this->assertNull($byType['time_cap']['team']);
+        $this->assertSame(900, $byType['time_cap']['time']);
+        $this->assertSame(13, $byType['time_cap']['target']);
+
+        // Contrast in the same payload: a non-cap event keeps its team and gets
+        // no target key at all, so the nulls above are the cap rule and not a
+        // feed that stopped attributing events.
+        $this->assertSame('home', $byType['turnover']['team']);
+        $this->assertSame(500, $byType['turnover']['time']);
+        $this->assertArrayNotHasKey('target', $byType['turnover']);
+    }
+
+    public function testGameplayEndpointReportsCallahansPerPlayer(): void
+    {
+        // Fixture goal 3 is a callahan by home player 801, so the two home
+        // players report different callahan counts in one payload. Asserting
+        // both pins the serialization to the scoreboard column: an adapter that
+        // hard-codes the field, or reads the wrong one, cannot produce a 1 and a
+        // 0 for the right players. Each still scored once, so a callahan stays
+        // inside the goal count rather than replacing it.
+        $payload = self::authorizedJson('/api/v1/gameplay?game=700');
+
+        $home = $payload['data']['scoreboard']['home'];
+        $this->assertCount(2, $home);
+
+        $byPlayer = [];
+        foreach ($home as $player) {
+            $this->assertArrayHasKey('callahans', $player);
+            $byPlayer[(int) $player['player_id']] = $player;
+        }
+        $playerIds = array_keys($byPlayer);
+        sort($playerIds);
+        $this->assertSame([800, 801], $playerIds);
+
+        $this->assertSame(1, $byPlayer[801]['callahans']);
+        $this->assertSame(1, $byPlayer[801]['goals']);
+        $this->assertSame(0, $byPlayer[800]['callahans']);
+        $this->assertSame(1, $byPlayer[800]['goals']);
+    }
+
+    public function testGameplayEndpointFlagsTheCallahanGoal(): void
+    {
+        // The per-goal `callahan` field is a separate serialization from the
+        // scoreboard counts above, off the goal row rather than the board.
+        $payload = self::authorizedJson('/api/v1/gameplay?game=700');
+
+        $goals = $payload['data']['goals'];
+        $byNum = [];
+        foreach ($goals as $goal) {
+            $byNum[(int) $goal['num']] = $goal;
+        }
+        $this->assertSame([1, 2, 3, 4], array_keys($byNum));
+
+        $this->assertSame(1, $byNum[3]['callahan']);
+        // Contrast in the same payload: the other three goals stay 0, so the 1
+        // above is the row's flag and not a field that is always set.
+        $this->assertSame(0, $byNum[1]['callahan']);
+        $this->assertSame(0, $byNum[2]['callahan']);
+        $this->assertSame(0, $byNum[4]['callahan']);
+    }
+
     private static function authorizedJson(string $path): array
     {
         $response = self::apiGet($path, self::TOKEN);

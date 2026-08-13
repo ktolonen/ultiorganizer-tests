@@ -15,7 +15,8 @@
         {"id": "teams-standings", "query": "view=teams&season=HRN2026&list=bystandings"},
         {"id": "games-tournaments", "query": "view=games&season=HRN2026&filter=tournaments&group=all"},
         {"id": "seriesstatus-open", "query": "view=seriesstatus&series=100"},
-        {"id": "poolstatus-pool-a", "query": "view=poolstatus&pool=200"}
+        {"id": "poolstatus-pool-a", "query": "view=poolstatus&pool=200"},
+        {"id": "gameplay-game-700", "query": "view=gameplay&game=700"}
       ],
       "crawl_plans": [
         {
@@ -99,7 +100,8 @@
       "smoke_pages": [
         {"id": "frontpage", "query": "view=frontpage"},
         {"id": "teams-standings", "query": "view=teams&season=HRN2026&list=bystandings"},
-        {"id": "games-tournaments", "query": "view=games&season=HRN2026&filter=tournaments&group=all"}
+        {"id": "games-tournaments", "query": "view=games&season=HRN2026&filter=tournaments&group=all"},
+        {"id": "gameplay-game-700", "query": "view=gameplay&game=700"}
       ],
       "crawl_plans": [
         {
@@ -126,7 +128,8 @@
       "smoke_pages": [
         {"id": "frontpage", "query": "view=frontpage"},
         {"id": "teams-standings", "query": "view=teams&season=HRN2026&list=bystandings"},
-        {"id": "games-tournaments", "query": "view=games&season=HRN2026&filter=tournaments&group=all"}
+        {"id": "games-tournaments", "query": "view=games&season=HRN2026&filter=tournaments&group=all"},
+        {"id": "gameplay-game-700", "query": "view=gameplay&game=700"}
       ],
       "crawl_plans": [
         {
@@ -153,7 +156,8 @@
       "smoke_pages": [
         {"id": "frontpage", "query": "view=frontpage"},
         {"id": "teams-standings", "query": "view=teams&season=HRN2026&list=bystandings"},
-        {"id": "games-tournaments", "query": "view=games&season=HRN2026&filter=tournaments&group=all"}
+        {"id": "games-tournaments", "query": "view=games&season=HRN2026&filter=tournaments&group=all"},
+        {"id": "gameplay-game-700", "query": "view=gameplay&game=700"}
       ],
       "crawl_plans": [
         {
@@ -180,7 +184,8 @@
       "smoke_pages": [
         {"id": "frontpage", "query": "view=frontpage"},
         {"id": "teams-standings", "query": "view=teams&season=HRN2026&list=bystandings"},
-        {"id": "games-tournaments", "query": "view=games&season=HRN2026&filter=tournaments&group=all"}
+        {"id": "games-tournaments", "query": "view=games&season=HRN2026&filter=tournaments&group=all"},
+        {"id": "gameplay-game-700", "query": "view=gameplay&game=700"}
       ],
       "crawl_plans": [
         {
@@ -207,7 +212,8 @@
       "smoke_pages": [
         {"id": "frontpage", "query": "view=frontpage"},
         {"id": "teams-standings", "query": "view=teams&season=HRN2026&list=bystandings"},
-        {"id": "games-tournaments", "query": "view=games&season=HRN2026&filter=tournaments&group=all"}
+        {"id": "games-tournaments", "query": "view=games&season=HRN2026&filter=tournaments&group=all"},
+        {"id": "gameplay-game-700", "query": "view=gameplay&game=700"}
       ],
       "crawl_plans": [
         {
@@ -234,7 +240,8 @@
       "smoke_pages": [
         {"id": "frontpage", "query": "view=frontpage"},
         {"id": "teams-standings", "query": "view=teams&season=HRN2026&list=bystandings"},
-        {"id": "games-tournaments", "query": "view=games&season=HRN2026&filter=tournaments&group=all"}
+        {"id": "games-tournaments", "query": "view=games&season=HRN2026&filter=tournaments&group=all"},
+        {"id": "gameplay-game-700", "query": "view=gameplay&game=700"}
       ],
       "crawl_plans": [
         {
@@ -261,7 +268,8 @@
       "smoke_pages": [
         {"id": "frontpage", "query": "view=frontpage"},
         {"id": "teams-standings", "query": "view=teams&season=HRN2026&list=bystandings"},
-        {"id": "games-tournaments", "query": "view=games&season=HRN2026&filter=tournaments&group=all"}
+        {"id": "games-tournaments", "query": "view=games&season=HRN2026&filter=tournaments&group=all"},
+        {"id": "gameplay-game-700", "query": "view=gameplay&game=700"}
       ],
       "tags": ["config-profile", "overrides"]
     }
