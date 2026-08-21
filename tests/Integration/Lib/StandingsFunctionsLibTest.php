@@ -13,7 +13,7 @@ final class StandingsFunctionsLibTest extends TestCase
         // team_stack loads team+pool+series+season+statistical; add configuration for ordinal()
         LegacyApp::loadLibFilesUsingProfile(
             ['configuration.functions.php', 'standings.functions.php'],
-            'team_stack'
+            'team_stack',
         );
         global $serverConf;
         $serverConf = GetSimpleServerConf();
@@ -373,7 +373,7 @@ final class StandingsFunctionsLibTest extends TestCase
     private function seriesTeamIdSnapshot(): array
     {
         return array_map('intval', array_column(DBQueryToArray(
-            "SELECT team_id FROM uo_team WHERE series=100"
+            "SELECT team_id FROM uo_team WHERE series=100",
         ), 'team_id'));
     }
 
@@ -702,7 +702,8 @@ final class StandingsFunctionsLibTest extends TestCase
     public function testFinalStandingsSeasonPointsOrderTieBrokenByLastRound(): void
     {
         // Equal totals but 301 scores higher in the last round → line 1260 fires.
-        $r1 = 9903; $r2 = 9904;
+        $r1 = 9903;
+        $r2 = 9904;
         DBQuery("INSERT INTO uo_season_round (round_id, season, series, round_no, name)
                  VALUES ($r1, 'HRN2026', 100, 1, 'Rd1'), ($r2, 'HRN2026', 100, 2, 'Rd2')");
         DBQuery("INSERT INTO uo_season_points (round_id, team_id, points)
@@ -1222,7 +1223,10 @@ final class StandingsFunctionsLibTest extends TestCase
     public function testResolvePlayoffPoolStandingsRanksT2WinnerFirst(): void
     {
         // t2 beats t1 → DB UPDATE assigns t2 activerank=1 (lines 72-73).
-        $poolId = 9351; $t1 = 9360; $t2 = 9361; $g = 9800;
+        $poolId = 9351;
+        $t1 = 9360;
+        $t2 = 9361;
+        $g = 9800;
         DBQuery("INSERT INTO uo_pool (pool_id, name, ordering, visible, continuingpool, placementpool, teams, mvgames, played, series, type)
                  VALUES ($poolId, 'PO T2Win', '1', 0, 0, 0, 2, 0, 1, 100, 2)");
         DBQuery("INSERT INTO uo_team (team_id, name, pool, rank, activerank, valid, series, abbreviation)
@@ -1250,7 +1254,10 @@ final class StandingsFunctionsLibTest extends TestCase
     public function testResolvePlayoffPoolStandingsCallsTeamMoveWhenNoGamesLeft(): void
     {
         // Only 1 played game, no open games → gamesleft=0 → TeamMove (lines 81-82).
-        $poolId = 9352; $t1 = 9362; $t2 = 9363; $g = 9801;
+        $poolId = 9352;
+        $t1 = 9362;
+        $t2 = 9363;
+        $g = 9801;
         DBQuery("INSERT INTO uo_pool (pool_id, name, ordering, visible, continuingpool, placementpool, teams, mvgames, played, series, type)
                  VALUES ($poolId, 'PO AllPlayed', '1', 0, 0, 0, 2, 0, 1, 100, 2)");
         DBQuery("INSERT INTO uo_team (team_id, name, pool, rank, activerank, valid, series, abbreviation)
@@ -1276,7 +1283,12 @@ final class StandingsFunctionsLibTest extends TestCase
     public function testResolvePlayoffPoolStandingsHandlesOddTeamCount(): void
     {
         // 3 teams → odd → BYE team gets last rank; TeamMove called for BYE (lines 87, 89, 91).
-        $poolId = 9353; $t1 = 9364; $t2 = 9365; $t3 = 9366; $g1 = 9802; $g2 = 9803;
+        $poolId = 9353;
+        $t1 = 9364;
+        $t2 = 9365;
+        $t3 = 9366;
+        $g1 = 9802;
+        $g2 = 9803;
         DBQuery("INSERT INTO uo_pool (pool_id, name, ordering, visible, continuingpool, placementpool, teams, mvgames, played, series, type)
                  VALUES ($poolId, 'PO 3Teams', '1', 0, 0, 0, 3, 0, 1, 100, 2)");
         DBQuery("INSERT INTO uo_team (team_id, name, pool, rank, activerank, valid, series, abbreviation)
@@ -1323,7 +1335,10 @@ final class StandingsFunctionsLibTest extends TestCase
     public function testResolveCrossMatchPoolStandingsCallsTeamMoveWhenNoGamesLeft(): void
     {
         // t2 beats t1 with no open games → gamesleft=0 → TeamMove (lines 173-174).
-        $poolId = 9355; $t1 = 9367; $t2 = 9368; $g = 9804;
+        $poolId = 9355;
+        $t1 = 9367;
+        $t2 = 9368;
+        $g = 9804;
         DBQuery("INSERT INTO uo_pool (pool_id, name, ordering, visible, continuingpool, placementpool, teams, mvgames, played, series, type)
                  VALUES ($poolId, 'CM NoGamesLeft', '1', 0, 0, 0, 2, 0, 1, 100, 4)");
         DBQuery("INSERT INTO uo_team (team_id, name, pool, rank, activerank, valid, series, abbreviation)
@@ -1359,6 +1374,127 @@ final class StandingsFunctionsLibTest extends TestCase
             ResolveSwissdrawPoolStandings($poolId);
             $this->assertTrue(true);
         } finally {
+            DBQuery("DELETE FROM uo_pool WHERE pool_id=$poolId");
+            self::flushQueryCaches();
+        }
+    }
+
+    // --- LogUnresolvedPoolPairAnomaly (silent "keep current positions" diagnostics) ---
+
+    public function testResolvePlayoffPoolStandingsLogsAnomalyWhenComparedTeamsNeverPlayed(): void
+    {
+        // Two teams paired by seed order with zero recorded games between them
+        // in this pool (e.g. what a duplicate/incorrect uo_team_pool.rank would
+        // produce upstream). The resolver must still keep current positions
+        // (no false result applied) but now logs the anomaly instead of
+        // failing silently.
+        $poolId = 9357;
+        $t1 = 9369;
+        $t2 = 9370;
+        $logFile = tempnam(sys_get_temp_dir(), 'uo_anomaly_');
+        $previousErrorLog = ini_get('error_log');
+        DBQuery("INSERT INTO uo_pool (pool_id, name, ordering, visible, continuingpool, placementpool, teams, mvgames, played, series, type)
+                 VALUES ($poolId, 'PO NeverPlayed', '1', 0, 0, 0, 2, 0, 1, 100, 2)");
+        DBQuery("INSERT INTO uo_team (team_id, name, pool, rank, activerank, valid, series, abbreviation)
+                 VALUES ($t1, 'PO Never1', $poolId, 1, 1, 1, 100, 'N1'), ($t2, 'PO Never2', $poolId, 2, 2, 1, 100, 'N2')");
+        DBQuery("INSERT INTO uo_team_pool (team, pool, rank, activerank) VALUES ($t1, $poolId, 1, 1), ($t2, $poolId, 2, 2)");
+        self::flushQueryCaches();
+        try {
+            ini_set('error_log', $logFile);
+            ResolvePlayoffPoolStandings($poolId);
+            self::flushQueryCaches();
+            $rank1 = DBQueryToValue("SELECT activerank FROM uo_team_pool WHERE pool=$poolId AND team=$t1");
+            $this->assertSame('1', $rank1, 'position must be left unchanged, not guessed');
+            $logged = (string) file_get_contents($logFile);
+            $this->assertStringContainsString("pool $poolId", $logged);
+            $this->assertStringContainsString('found no game between them', $logged);
+        } finally {
+            ini_set('error_log', $previousErrorLog === false ? '' : $previousErrorLog);
+            @unlink($logFile);
+            DBQuery("DELETE FROM uo_team_pool WHERE pool=$poolId");
+            DBQuery("DELETE FROM uo_team WHERE team_id IN ($t1, $t2)");
+            DBQuery("DELETE FROM uo_pool WHERE pool_id=$poolId");
+            self::flushQueryCaches();
+        }
+    }
+
+    public function testResolvePlayoffPoolStandingsLogsAnomalyWhenGameStillOngoing(): void
+    {
+        // A game exists between the compared pair but is still isongoing=1, so
+        // the win-count query excludes it (team1wins == team2wins == 0) and the
+        // resolver keeps current positions. Distinguish this from the
+        // never-played case: the pair has a real game, just not finalized yet.
+        $poolId = 9358;
+        $t1 = 9371;
+        $t2 = 9372;
+        $g = 9805;
+        $logFile = tempnam(sys_get_temp_dir(), 'uo_anomaly_');
+        $previousErrorLog = ini_get('error_log');
+        DBQuery("INSERT INTO uo_pool (pool_id, name, ordering, visible, continuingpool, placementpool, teams, mvgames, played, series, type)
+                 VALUES ($poolId, 'PO StillOngoing', '1', 0, 0, 0, 2, 0, 1, 100, 2)");
+        DBQuery("INSERT INTO uo_team (team_id, name, pool, rank, activerank, valid, series, abbreviation)
+                 VALUES ($t1, 'PO Ongoing1', $poolId, 1, 1, 1, 100, 'O1'), ($t2, 'PO Ongoing2', $poolId, 2, 2, 1, 100, 'O2')");
+        DBQuery("INSERT INTO uo_team_pool (team, pool, rank, activerank) VALUES ($t1, $poolId, 1, 1), ($t2, $poolId, 2, 2)");
+        DBQuery("INSERT INTO uo_game (game_id, hometeam, visitorteam, homescore, visitorscore, valid, isongoing, hasstarted)
+                 VALUES ($g, $t1, $t2, 8, 6, 1, 1, 1)");
+        DBQuery("INSERT INTO uo_game_pool (game, pool, timetable) VALUES ($g, $poolId, 1)");
+        self::flushQueryCaches();
+        try {
+            ini_set('error_log', $logFile);
+            ResolvePlayoffPoolStandings($poolId);
+            self::flushQueryCaches();
+            $rank1 = DBQueryToValue("SELECT activerank FROM uo_team_pool WHERE pool=$poolId AND team=$t1");
+            $this->assertSame('1', $rank1, 'position must be left unchanged while the game is still ongoing');
+            $logged = (string) file_get_contents($logFile);
+            $this->assertStringContainsString("pool $poolId", $logged);
+            $this->assertStringContainsString('still marked ongoing', $logged);
+        } finally {
+            ini_set('error_log', $previousErrorLog === false ? '' : $previousErrorLog);
+            @unlink($logFile);
+            DBQuery("DELETE FROM uo_game_pool WHERE pool=$poolId");
+            DBQuery("DELETE FROM uo_game WHERE game_id=$g");
+            DBQuery("DELETE FROM uo_team_pool WHERE pool=$poolId");
+            DBQuery("DELETE FROM uo_team WHERE team_id IN ($t1, $t2)");
+            DBQuery("DELETE FROM uo_pool WHERE pool_id=$poolId");
+            self::flushQueryCaches();
+        }
+    }
+
+    public function testResolvePlayoffKeepsPositionsSilentlyOnGenuineTieNoAnomalyLogged(): void
+    {
+        // Sanity check for the new diagnostic: a genuine tied *score* between
+        // the correct pair (the case testResolvePlayoffKeepsPositionsOnTie
+        // already covers) must NOT be logged as an anomaly - the pair really
+        // did play, and a tie is a legitimate, if unusual, playoff result.
+        $poolId = 9209;
+        $t1 = 9290;
+        $t2 = 9291;
+        $logFile = tempnam(sys_get_temp_dir(), 'uo_anomaly_');
+        $previousErrorLog = ini_get('error_log');
+        try {
+            DBQuery("INSERT INTO uo_pool (pool_id, name, ordering, visible, continuingpool, placementpool, teams, mvgames, played, series, type)
+                     VALUES ($poolId, 'Tie Playoff', '1', 0, 0, 0, 2, 0, 1, 100, 2)");
+            DBQuery("INSERT INTO uo_team (team_id, name, pool, rank, activerank, valid, series, abbreviation)
+                     VALUES ($t1, 'Tie A', $poolId, 1, 1, 1, 100, 'TA'), ($t2, 'Tie B', $poolId, 2, 2, 1, 100, 'TB')");
+            DBQuery("INSERT INTO uo_team_pool (team, pool, rank, activerank) VALUES ($t1, $poolId, 1, 1), ($t2, $poolId, 2, 2)");
+            DBQuery("INSERT INTO uo_game (game_id, hometeam, visitorteam, homescore, visitorscore, valid, isongoing, hasstarted)
+                     VALUES (9790, $t1, $t2, 12, 12, 1, 0, 1), (9791, $t2, $t1, NULL, NULL, 1, 0, 0)");
+            DBQuery("INSERT INTO uo_game_pool (game, pool, timetable) VALUES (9790, $poolId, 1), (9791, $poolId, 1)");
+            self::flushQueryCaches();
+
+            ini_set('error_log', $logFile);
+            ResolvePlayoffPoolStandings($poolId);
+            self::flushQueryCaches();
+            $rank = DBQueryToValue("SELECT activerank FROM uo_team_pool WHERE pool=$poolId AND team=$t1");
+            $this->assertSame('1', $rank);
+            $this->assertSame('', (string) file_get_contents($logFile), 'a genuine tied game must not be logged as an anomaly');
+        } finally {
+            ini_set('error_log', $previousErrorLog === false ? '' : $previousErrorLog);
+            @unlink($logFile);
+            DBQuery("DELETE FROM uo_game_pool WHERE pool=$poolId");
+            DBQuery("DELETE FROM uo_game WHERE game_id IN (9790, 9791)");
+            DBQuery("DELETE FROM uo_team_pool WHERE pool=$poolId");
+            DBQuery("DELETE FROM uo_team WHERE team_id IN ($t1, $t2)");
             DBQuery("DELETE FROM uo_pool WHERE pool_id=$poolId");
             self::flushQueryCaches();
         }
