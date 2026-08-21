@@ -1379,7 +1379,7 @@ final class StandingsFunctionsLibTest extends TestCase
         }
     }
 
-    // --- LogUnresolvedPoolPairAnomaly (silent "keep current positions" diagnostics) ---
+    // --- "keep current positions" anomaly diagnostics ---
 
     public function testResolvePlayoffPoolStandingsLogsAnomalyWhenComparedTeamsNeverPlayed(): void
     {
