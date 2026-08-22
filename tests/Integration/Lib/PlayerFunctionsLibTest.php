@@ -387,6 +387,57 @@ final class PlayerFunctionsLibTest extends TestCase
         $this->assertSame(1, $wins);
     }
 
+    // --- SeasonPlayerStatRows ---
+
+    public function testSeasonPlayerStatRowsAgreesWithPerPlayerHelpers(): void
+    {
+        // The grouped season aggregates must report exactly what the per-player
+        // helpers report; this is the contract CalcPlayerStats() relies on.
+        $rows = SeasonPlayerStatRows('HRN2026');
+
+        $this->assertArrayHasKey(800, $rows);
+        $this->assertSame((int) PlayerSeasonPlayedGames(800, 'HRN2026'), $rows[800]['games']);
+        $this->assertSame((int) PlayerSeasonGoals(800, 'HRN2026'), $rows[800]['goals']);
+        $this->assertSame((int) PlayerSeasonPasses(800, 'HRN2026'), $rows[800]['passes']);
+        $this->assertSame((int) PlayerSeasonCallahanGoals(800, 'HRN2026'), $rows[800]['callahans']);
+        $this->assertSame((int) PlayerSeasonWins(800, 300, 'HRN2026'), $rows[800]['wins']);
+    }
+
+    public function testSeasonPlayerStatRowsSeparatesCallahanGoalsFromGoals(): void
+    {
+        // Both players scored exactly one goal in game 700, but only 801's is a
+        // callahan. A single pass that lost the iscallahan filter would report
+        // a callahan for 800 as well.
+        $rows = SeasonPlayerStatRows('HRN2026');
+
+        $this->assertSame(1, $rows[800]['goals']);
+        $this->assertSame(0, $rows[800]['callahans']);
+        $this->assertSame(1, $rows[801]['goals']);
+        $this->assertSame(1, $rows[801]['callahans']);
+    }
+
+    public function testSeasonPlayerStatRowsReadsDefensesOnlyWhenRequested(): void
+    {
+        $rows = SeasonPlayerStatRows('HRN2026');
+        $this->assertSame(0, $rows[800]['defenses']);
+
+        $withDefenses = SeasonPlayerStatRows('HRN2026', true);
+        $this->assertSame((int) PlayerSeasonDefenses(800, 'HRN2026'), $withDefenses[800]['defenses']);
+    }
+
+    public function testSeasonPlayerStatRowsKeepsSeasonPlayersWithoutGames(): void
+    {
+        // The player added in setUp() belongs to team 300 but has no played
+        // rows, so it must still appear with zero counts and its team details.
+        $rows = SeasonPlayerStatRows('HRN2026');
+
+        $this->assertArrayHasKey($this->testPlayerId, $rows);
+        $this->assertSame(0, $rows[$this->testPlayerId]['games']);
+        $this->assertSame(0, $rows[$this->testPlayerId]['wins']);
+        $this->assertSame(300, (int) $rows[$this->testPlayerId]['team']);
+        $this->assertSame($this->testProfileId, (int) $rows[$this->testPlayerId]['profile_id']);
+    }
+
     // --- PlayerGameEvents ---
 
     public function testPlayerGameEventsReturnsScoringEventsForFixturePlayer(): void

@@ -155,6 +155,33 @@ final class TimetableFunctionsLibTest extends TestCase
         $this->assertContains('701', $ids);
     }
 
+    public function testTimetableGamesSelectsAnExplicitDay(): void
+    {
+        // Game 700's own day must select it, and the day before must not: this
+        // pins the half-open range boundaries.
+        $day = (string) DBQueryToValue("SELECT DATE_FORMAT(time, '%Y-%m-%d') FROM uo_game WHERE game_id=700");
+        $ids = array_column(TimetableGames('HRN2026', 'season', $day, 'time'), 'game_id');
+        $this->assertContains('700', $ids);
+
+        $dayBefore = (string) DBQueryToValue(
+            "SELECT DATE_FORMAT(DATE_SUB(time, INTERVAL 1 DAY), '%Y-%m-%d') FROM uo_game WHERE game_id=700"
+        );
+        $this->assertNotContains('700', array_column(TimetableGames('HRN2026', 'season', $dayBefore, 'time'), 'game_id'));
+    }
+
+    public function testTimetableGamesReturnsNoGamesForAnInvalidDay(): void
+    {
+        // A day that no game time could ever format to must select nothing
+        // rather than become an invalid range boundary.
+        foreach (['2026-02-31', 'not-a-date', '2026-7-11', ''] as $invalid) {
+            $this->assertSame(
+                [],
+                TimetableGames('HRN2026', 'season', $invalid, 'time'),
+                sprintf('expected no games for %s', var_export($invalid, true))
+            );
+        }
+    }
+
     public function testTimetableGamesReturnsGamesForPoolFilter(): void
     {
         $games = TimetableGames(200, 'pool', 'all', 'time');
