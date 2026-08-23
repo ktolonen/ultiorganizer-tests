@@ -1040,4 +1040,123 @@ final class SeasonFunctionsLibTest extends TestCase
             $_SESSION['userproperties']['locale'] = 'en_GB.utf8';
         }
     }
+
+    // ---- SeasonBannerHTML ----
+
+    public function testSeasonBannerHTMLReturnsEmptyForEmptySeasonId(): void
+    {
+        $this->assertSame('', SeasonBannerHTML(''));
+    }
+
+    public function testSeasonBannerHTMLReturnsEmptyWhenNoBannerImageSet(): void
+    {
+        // Fixture's HRN2026 has banner_image NULL.
+        $this->assertSame('', SeasonBannerHTML('HRN2026'));
+    }
+
+    public function testSeasonBannerHTMLReturnsEmptyWhenFileMissingFromDisk(): void
+    {
+        DBQuery("UPDATE uo_season SET banner_image='missing.jpg' WHERE season_id='HRN2026'");
+        ClearSeasonRuntimeCache();
+        try {
+            $this->assertSame('', SeasonBannerHTML('HRN2026'));
+        } finally {
+            DBQuery("UPDATE uo_season SET banner_image=NULL WHERE season_id='HRN2026'");
+            ClearSeasonRuntimeCache();
+        }
+    }
+
+    public function testSeasonBannerHTMLRendersImgTagWhenFileExists(): void
+    {
+        $bannerDir = LegacyApp::sutRoot() . '/images/uploads/banners';
+        if (!is_dir($bannerDir)) {
+            mkdir($bannerDir, 0775, true);
+        }
+        $filename = 'test-banner-' . uniqid() . '.jpg';
+        file_put_contents("$bannerDir/$filename", 'fake image bytes');
+
+        DBQuery("UPDATE uo_season SET banner_image='" . DBEscapeString($filename) . "' WHERE season_id='HRN2026'");
+        ClearSeasonRuntimeCache();
+        try {
+            $html = SeasonBannerHTML('HRN2026');
+            $this->assertStringStartsWith("<img class='eventbanner'", $html);
+            $this->assertStringContainsString("images/uploads/banners/$filename", $html);
+            $this->assertStringContainsString("alt='Harness Invitational 2026'", $html);
+        } finally {
+            @unlink("$bannerDir/$filename");
+            DBQuery("UPDATE uo_season SET banner_image=NULL WHERE season_id='HRN2026'");
+            ClearSeasonRuntimeCache();
+        }
+    }
+
+    // ---- UploadSeasonBanner ----
+    //
+    // is_uploaded_file() only returns true for a file the SAPI itself recorded as part
+    // of a genuine multipart upload; a CLI PHPUnit process never populates that list, so
+    // every branch past this check (size/type validation, ImageSizeError, ConvertToJpeg,
+    // the success path) is structurally unreachable in-process. Only the guard-rejection
+    // branch below is coverable; see the catalog triage notes for this file.
+
+    public function testUploadSeasonBannerRejectsWhenNoUploadedFilePresent(): void
+    {
+        LegacyApp::loadUserFunctions();
+        LegacyApp::loginAsAdmin();
+        try {
+            $result = UploadSeasonBanner('HRN2026', ['tmp_name' => '', 'type' => '', 'size' => 0]);
+            $this->assertStringContainsString('No image selected', $result);
+        } finally {
+            $_SESSION = [];
+        }
+    }
+
+    // ---- RemoveSeasonBanner ----
+    //
+    // The early return for a season with no banner_image is already exercised via
+    // DeleteSeason()'s call to RemoveSeasonBanner(); these deepen the admin-rights-granted
+    // path with an actual stored file present.
+
+    public function testRemoveSeasonBannerDeletesFileAndClearsColumn(): void
+    {
+        LegacyApp::loadUserFunctions();
+        LegacyApp::loginAsAdmin();
+
+        $bannerDir = LegacyApp::sutRoot() . '/images/uploads/banners';
+        if (!is_dir($bannerDir)) {
+            mkdir($bannerDir, 0775, true);
+        }
+        $filename = 'test-remove-' . uniqid() . '.jpg';
+        $filePath = "$bannerDir/$filename";
+        file_put_contents($filePath, 'fake image bytes');
+        DBQuery("UPDATE uo_season SET banner_image='" . DBEscapeString($filename) . "' WHERE season_id='HRN2026'");
+        ClearSeasonRuntimeCache();
+
+        try {
+            $this->assertSame($filename, SeasonInfo('HRN2026')['banner_image']);
+            RemoveSeasonBanner('HRN2026');
+            $this->assertFileDoesNotExist($filePath);
+            $this->assertNull(SeasonInfo('HRN2026')['banner_image']);
+        } finally {
+            @unlink($filePath);
+            DBQuery("UPDATE uo_season SET banner_image=NULL WHERE season_id='HRN2026'");
+            ClearSeasonRuntimeCache();
+            $_SESSION = [];
+        }
+    }
+
+    public function testRemoveSeasonBannerSkipsUnlinkWhenFileAlreadyMissingFromDisk(): void
+    {
+        LegacyApp::loadUserFunctions();
+        LegacyApp::loginAsAdmin();
+        DBQuery("UPDATE uo_season SET banner_image='already-gone.jpg' WHERE season_id='HRN2026'");
+        ClearSeasonRuntimeCache();
+        try {
+            $this->assertSame('already-gone.jpg', SeasonInfo('HRN2026')['banner_image']);
+            RemoveSeasonBanner('HRN2026');
+            $this->assertNull(SeasonInfo('HRN2026')['banner_image']);
+        } finally {
+            DBQuery("UPDATE uo_season SET banner_image=NULL WHERE season_id='HRN2026'");
+            ClearSeasonRuntimeCache();
+            $_SESSION = [];
+        }
+    }
 }

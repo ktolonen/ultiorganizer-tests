@@ -455,7 +455,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "80.4% line / 100% fn achieved (updated from earlier 82.7% measurement; divergence due to SUT changes). Remaining ~20%: EnforceSoftMaintenanceForView/EnforcePrivateEventAccessForView exit() paths not testable in-process; MaintenanceSeasonFromView GET-param branches unreachable via filter_input in CLI. All functions now covered.",
+      "triage_notes": "80.9% line / 100% fn achieved (updated after the per-event banner feature added SeasonBannerHTML/UploadSeasonBanner/RemoveSeasonBanner). Remaining line gap: EnforceSoftMaintenanceForView/EnforcePrivateEventAccessForView exit() paths not testable in-process; MaintenanceSeasonFromView GET-param branches unreachable via filter_input in CLI; and UploadSeasonBanner (12.1% covered) is now the largest single gap because it calls is_uploaded_file() before any other branch, which only ever returns true for a genuine SAPI multipart upload and cannot be simulated in a CLI PHPUnit process -- only its 'No image selected' rejection branch is reachable. RemoveSeasonBanner and SeasonBannerHTML are fully covered aside from the isSeasonAdmin() die() guard. All functions now covered.",
       "notes": "Feasible read-only target; keep first-pass coverage on deterministic season, pool, and reservation reads.",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/season.functions.php"
     },
