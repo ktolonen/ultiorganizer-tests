@@ -418,7 +418,9 @@ final class GamehistoryFunctionsLibTest extends TestCase
     public function testFormatDetailRendersEachTargetCompactly(): void
     {
         $this->assertSame(
-            'Result 15-11 (final)',
+            // "final" is a fix-round-1 change: the raw state token is now
+            // mapped to a localized word (was the bare token 'final').
+            'Result 15-11 (Final)',
             GameHistoryFormatDetail([
                 'target' => 'result',
                 'action' => 'update',
@@ -443,5 +445,91 @@ final class GamehistoryFunctionsLibTest extends TestCase
                 'detail' => json_encode(['removed' => 24]),
             ]),
         );
+    }
+
+    public function testFormatDetailLocalizesPreviouslyUnformattedTargetsAndInternalTokens(): void
+    {
+        $timeout = GameHistoryFormatDetail([
+            'target' => 'timeout',
+            'action' => 'add',
+            'detail' => json_encode(['num' => 2, 'time' => 400, 'home' => 1]),
+        ]);
+        $this->assertNotSame('timeout', $timeout);
+        $this->assertSame('Timeout 2', $timeout);
+
+        $defense = GameHistoryFormatDetail([
+            'target' => 'defense',
+            'action' => 'clear',
+            'detail' => json_encode(['removed' => 3]),
+        ]);
+        $this->assertNotSame('defense', $defense);
+        $this->assertSame('Defences removed: 3', $defense);
+
+        $comment = GameHistoryFormatDetail([
+            'target' => 'comment',
+            'action' => 'remove',
+            'detail' => json_encode(['length' => 0]),
+        ]);
+        $this->assertNotSame('comment', $comment);
+        $this->assertSame('Game note removed', $comment);
+
+        $forfeit = GameHistoryFormatDetail([
+            'target' => 'forfeit',
+            'action' => 'update',
+            'detail' => json_encode(['forfeit' => 'home']),
+        ]);
+        $this->assertNotSame('forfeit', $forfeit);
+        // Not just localized: the raw stored token ("home") must not leak
+        // through either, only the full translated forfeit sentence.
+        $this->assertSame('Forfeit: Home team forfeited', $forfeit);
+
+        $spiritTimeout = GameHistoryFormatDetail([
+            'target' => 'spirit_timeout',
+            'action' => 'add',
+            'detail' => json_encode(['num' => 1, 'time' => 120, 'home' => 0]),
+        ]);
+        $this->assertNotSame('spirit_timeout', $spiritTimeout);
+
+        $mediaevent = GameHistoryFormatDetail([
+            'target' => 'mediaevent',
+            'action' => 'add',
+            'detail' => json_encode(['url' => 5]),
+        ]);
+        $this->assertNotSame('mediaevent', $mediaevent);
+
+        $gameeventStart = GameHistoryFormatDetail([
+            'target' => 'gameevent',
+            'action' => 'update',
+            'detail' => json_encode(['type' => 'start', 'home' => 1]),
+        ]);
+        $this->assertSame('Starting offence: Home team', $gameeventStart);
+
+        $gameeventCap = GameHistoryFormatDetail([
+            'target' => 'gameevent',
+            'action' => 'update',
+            'detail' => json_encode(['type' => 'half_cap', 'time' => 900]),
+        ]);
+        $this->assertSame('Halftime cap', $gameeventCap);
+    }
+
+    public function testFormatDetailNeverEmitsTheRawResultStateToken(): void
+    {
+        $ongoing = GameHistoryFormatDetail([
+            'target' => 'result',
+            'action' => 'update',
+            'detail' => json_encode(['home' => 1, 'away' => 0, 'state' => 'ongoing']),
+        ]);
+        $this->assertStringNotContainsString('ongoing', $ongoing);
+        // "Ongoing" (capitalized, translated) is expected; only the raw
+        // lowercase internal token is forbidden.
+        $this->assertSame('Result 1-0 (Ongoing)', $ongoing);
+
+        $fromGoals = GameHistoryFormatDetail([
+            'target' => 'result',
+            'action' => 'update',
+            'detail' => json_encode(['home' => 5, 'away' => 4, 'state' => 'from_goals']),
+        ]);
+        $this->assertStringNotContainsString('from_goals', $fromGoals);
+        $this->assertSame('Result 5-4 (Recalculated)', $fromGoals);
     }
 }
