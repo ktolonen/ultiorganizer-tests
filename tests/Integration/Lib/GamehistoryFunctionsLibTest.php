@@ -41,6 +41,12 @@ final class GamehistoryFunctionsLibTest extends TestCase
         DBQuery("DELETE FROM uo_goal WHERE game=701");
         DBQuery("UPDATE uo_game SET homescore=NULL, visitorscore=NULL, isongoing=0, hasstarted=0 WHERE game_id=701");
 
+        DBQuery("DELETE FROM uo_played WHERE game=701");
+        DBQuery("DELETE FROM uo_timeout WHERE game=701");
+        DBQuery("DELETE FROM uo_spirit_timeout WHERE game=701");
+        DBQuery("DELETE FROM uo_gameevent WHERE game=701");
+        DBQuery("UPDATE uo_game SET halftime=35, official=NULL WHERE game_id=701");
+
         DBQuery("DELETE FROM uo_game_history WHERE game IN (700, 701)");
         unset($_SESSION['uid']);
         LegacyApp::closeDatabaseConnection();
@@ -235,5 +241,70 @@ final class GamehistoryFunctionsLibTest extends TestCase
             "SELECT COUNT(*) FROM uo_game_history WHERE game=701 AND has_snapshot=1",
         );
         $this->assertSame(1, $count);
+    }
+
+    public function testGameAddPlayerRecordsThePlayerAndJerseyNumber(): void
+    {
+        GameAddPlayer(701, 800, 8);
+
+        $row = DBQueryToRow(
+            "SELECT action, detail FROM uo_game_history
+             WHERE game=701 AND target='played' ORDER BY history_id DESC LIMIT 1",
+        );
+        $this->assertSame('add', $row['action']);
+        $detail = json_decode($row['detail'], true);
+        $this->assertSame(800, $detail['player']);
+        $this->assertSame(8, $detail['num']);
+    }
+
+    public function testGameSetPlayerNumberRecordsTheNewNumber(): void
+    {
+        GameAddPlayer(701, 800, 8);
+        GameSetPlayerNumber(701, 800, 21);
+
+        $row = DBQueryToRow(
+            "SELECT action, detail FROM uo_game_history
+             WHERE game=701 AND target='played' AND action='update' ORDER BY history_id DESC LIMIT 1",
+        );
+        $detail = json_decode($row['detail'], true);
+        $this->assertSame(800, $detail['player']);
+        $this->assertSame(21, $detail['num']);
+    }
+
+    public function testGameSetHalftimeRecordsTheHalftimeValue(): void
+    {
+        GameSetHalftime(701, 1800);
+
+        $row = DBQueryToRow(
+            "SELECT target, action, detail FROM uo_game_history
+             WHERE game=701 AND target='halftime' ORDER BY history_id DESC LIMIT 1",
+        );
+        $this->assertSame('update', $row['action']);
+        $this->assertSame(1800, json_decode($row['detail'], true)['time']);
+    }
+
+    public function testGameSetScoreSheetKeeperRecordsTheOfficialName(): void
+    {
+        GameSetScoreSheetKeeper(701, 'Official 1');
+
+        $row = DBQueryToRow(
+            "SELECT target, detail FROM uo_game_history
+             WHERE game=701 AND target='official' ORDER BY history_id DESC LIMIT 1",
+        );
+        $this->assertSame('Official 1', json_decode($row['detail'], true)['name']);
+    }
+
+    public function testGameAddTimeoutRecordsTheTimeoutSide(): void
+    {
+        GameAddTimeout(701, 1, 300, true);
+
+        $row = DBQueryToRow(
+            "SELECT target, action, detail FROM uo_game_history
+             WHERE game=701 AND target='timeout' ORDER BY history_id DESC LIMIT 1",
+        );
+        $this->assertSame('add', $row['action']);
+        $detail = json_decode($row['detail'], true);
+        $this->assertSame(300, $detail['time']);
+        $this->assertSame(1, $detail['home']);
     }
 }
