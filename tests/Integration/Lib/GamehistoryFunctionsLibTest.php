@@ -90,12 +90,28 @@ final class GamehistoryFunctionsLibTest extends TestCase
         DBQuery("UPDATE uo_player SET num=8 WHERE player_id=800");
         DBQuery("UPDATE uo_player SET num=12 WHERE player_id=801");
         DBQuery("UPDATE uo_player SET num=7 WHERE player_id=802");
+        DBQuery("UPDATE uo_player SET num=14 WHERE player_id=803");
 
         // A restored acknowledged=1 player goes through AcknowledgeUnaccredited(),
         // which logs to uo_accreditationlog; a restore test must not leak rows
         // there either.
         DBQuery("DELETE FROM uo_accreditationlog WHERE game=700");
-        DBQuery("UPDATE uo_player SET num=14 WHERE player_id=803");
+
+        // The baseline fixture has no defenses for game 700; a defense
+        // round-trip test inserts its own and this clears them, rather than
+        // reseeding rows that were never part of the shared fixture.
+        DBQuery("DELETE FROM uo_defense WHERE game=700");
+
+        DBQuery("UPDATE uo_game SET forfeit=0 WHERE game_id=700");
+
+        // GameHistoryRestore() ends by calling GameSetForfeit(), which always
+        // recomputes PoolResolvePlayed(200) from the live uo_game rows. Game
+        // 701 in this same pool is permanently unplayed (reset above), so
+        // that recompute leaves uo_pool.played=0 -- flipping the baseline
+        // seed of 1 for every test that runs afterwards in this process,
+        // regardless of whether that later test touches game 700 at all.
+        // Reseed it so IsPoolLocked()'s warning is deterministic per test.
+        DBQuery("UPDATE uo_pool SET played=1 WHERE pool_id=200");
 
         unset($_SESSION['uid']);
         LegacyApp::closeDatabaseConnection();
@@ -609,7 +625,10 @@ final class GamehistoryFunctionsLibTest extends TestCase
         $result = GameHistoryRestore($snapshotId);
 
         $this->assertTrue($result['restored']);
-        $this->assertSame([], $result['warnings']);
+        // Fixture pool 200 is played=1 and season HRN2026 has uo_season_stats
+        // seeded, so these are non-blocking warnings the operator sees on
+        // every restore of this fixture -- see GameHistoryRestore().
+        $this->assertSame(['Pool is locked.', 'Event played.'], $result['warnings']);
         $this->assertSame(4, (int) DBQueryToValue("SELECT COUNT(*) FROM uo_goal WHERE game=700"));
 
         $game = DBQueryToRow(
@@ -683,6 +702,130 @@ final class GamehistoryFunctionsLibTest extends TestCase
         } finally {
             $_SESSION['uid'] = 'testuser';
             $_SESSION['userproperties']['userrole']['superadmin'] = true;
+        }
+    }
+
+    public function testRestoreDeniesATeamAdminMissingTheAccreditationRightAndLeavesGameUntouched(): void
+    {
+        // hasEditGameEventsRight() and hasEditGamePlayersRight() check the
+        // exact same role set (see lib/user.functions.php) -- no session can
+        // pass one and fail the other, so a differential test between those
+        // two is not constructible. hasAccredidationRight() is genuinely
+        // distinct: a teamadmin passes both rights above, but that right also
+        // requires hasEditTeamsRight() (season/series admin) or an explicit
+        // accradmin grant, neither implied by teamadmin. Game 700's fixture
+        // has acknowledged=1 players on team 300, so this reaches -- and is
+        // refused by -- the guard block's accreditation check specifically,
+        // not GameHistoryEntry()'s single hasEditGameEventsRight() check.
+        $snapshotId = (int) GameHistorySnapshotIfNeeded(700);
+
+        $goalsBefore = (int) DBQueryToValue("SELECT COUNT(*) FROM uo_goal WHERE game=700");
+        $gameBefore = DBQueryToRow(
+            "SELECT homescore, visitorscore, hasstarted, isongoing FROM uo_game WHERE game_id=700"
+        );
+
+        $_SESSION['userproperties']['userrole'] = ['teamadmin' => [300 => true]];
+        $_SESSION['uid'] = 'teamadmin300';
+        try {
+            $result = GameHistoryRestore($snapshotId);
+            $this->assertFalse($result['restored']);
+        } finally {
+            $_SESSION['uid'] = 'testuser';
+            $_SESSION['userproperties']['userrole'] = ['superadmin' => true];
+        }
+
+        $goalsAfter = (int) DBQueryToValue("SELECT COUNT(*) FROM uo_goal WHERE game=700");
+        $gameAfter = DBQueryToRow(
+            "SELECT homescore, visitorscore, hasstarted, isongoing FROM uo_game WHERE game_id=700"
+        );
+        $this->assertSame($goalsBefore, $goalsAfter);
+        $this->assertSame($gameBefore, $gameAfter);
+    }
+
+    public function testRestoreRestoresTheAcknowledgedFlag(): void
+    {
+        $snapshotId = (int) GameHistorySnapshotIfNeeded(700);
+
+        // Simulate an admin having unacknowledged the player after the
+        // snapshot was taken; GameAddPlayer() would otherwise leave this at
+        // its schema default (0) once the roster is rebuilt.
+        DBQuery("UPDATE uo_played SET acknowledged=0 WHERE game=700 AND player=800");
+
+        $result = GameHistoryRestore($snapshotId);
+
+        $this->assertTrue($result['restored']);
+        $acknowledged = (int) DBQueryToValue(
+            "SELECT acknowledged FROM uo_played WHERE game=700 AND player=800"
+        );
+        $this->assertSame(1, $acknowledged);
+    }
+
+    public function testRestoreRoundTripsDefenses(): void
+    {
+        DBQuery("INSERT INTO uo_defense (game, num, author, time, iscallahan, iscaught, ishomedefense) VALUES
+            (700, 1, 800, 200, 0, 1, 1),
+            (700, 2, 802, 400, 1, 0, 0)");
+
+        $snapshotId = (int) GameHistorySnapshotIfNeeded(700);
+
+        DBQuery("DELETE FROM uo_defense WHERE game=700");
+        $this->assertSame(0, (int) DBQueryToValue("SELECT COUNT(*) FROM uo_defense WHERE game=700"));
+
+        $result = GameHistoryRestore($snapshotId);
+
+        $this->assertTrue($result['restored']);
+        $this->assertSame(2, (int) DBQueryToValue("SELECT COUNT(*) FROM uo_defense WHERE game=700"));
+
+        $row = DBQueryToRow(
+            "SELECT author, iscallahan, iscaught, ishomedefense FROM uo_defense WHERE game=700 AND num=2"
+        );
+        $this->assertSame('802', (string) $row['author']);
+        $this->assertSame('1', (string) $row['iscallahan']);
+        $this->assertSame('0', (string) $row['iscaught']);
+        $this->assertSame('0', (string) $row['ishomedefense']);
+    }
+
+    public function testRestoreRematchesADeletedPlayerByTeamAndJerseyNumber(): void
+    {
+        DBQuery("INSERT INTO uo_player (firstname, lastname, team, num, accreditation_id, accredited, reg_id, profile_id)
+                 VALUES ('Temp', 'Rematch', 300, 21, NULL, 1, NULL, NULL)");
+        $tempPlayerId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+        DBQuery(sprintf(
+            "INSERT INTO uo_played (player, game, num, accredited, acknowledged, captain) VALUES (%d, 700, 21, 1, 0, 0)",
+            $tempPlayerId
+        ));
+
+        $snapshotId = (int) GameHistorySnapshotIfNeeded(700);
+
+        // The snapshotted player id is gone by the time restore runs, but a
+        // replacement wearing the same number for the same team has taken
+        // their place -- the team+num fallback in GameHistoryRestorePlayers()
+        // must find them, since uo_goal's ON DELETE SET NULL on player keys
+        // means the id itself cannot always be resolved.
+        DBQuery(sprintf("DELETE FROM uo_played WHERE player=%d AND game=700", $tempPlayerId));
+        DBQuery(sprintf("DELETE FROM uo_player WHERE player_id=%d", $tempPlayerId));
+        DBQuery("INSERT INTO uo_player (firstname, lastname, team, num, accreditation_id, accredited, reg_id, profile_id)
+                 VALUES ('Replacement', 'Rematch', 300, 21, NULL, 1, NULL, NULL)");
+        $replacementId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+
+        try {
+            $result = GameHistoryRestore($snapshotId);
+
+            $this->assertTrue($result['restored']);
+            // Same non-blocking pool/season warnings as every other restore
+            // of this fixture; no player-restore warning, since the rematch
+            // by team+num succeeded.
+            $this->assertSame(['Pool is locked.', 'Event played.'], $result['warnings']);
+
+            $row = DBQueryToRow(sprintf(
+                "SELECT player, num FROM uo_played WHERE game=700 AND player=%d",
+                $replacementId
+            ));
+            $this->assertSame((string) $replacementId, (string) $row['player']);
+            $this->assertSame('21', (string) $row['num']);
+        } finally {
+            DBQuery(sprintf("DELETE FROM uo_played WHERE player=%d AND game=700", $replacementId));
+            DBQuery(sprintf("DELETE FROM uo_player WHERE player_id=%d", $replacementId));
         }
     }
 }
