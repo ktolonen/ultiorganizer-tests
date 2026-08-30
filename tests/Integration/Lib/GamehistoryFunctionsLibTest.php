@@ -10,7 +10,14 @@ final class GamehistoryFunctionsLibTest extends TestCase
     protected function setUp(): void
     {
         LegacyApp::resetRequestState();
-        LegacyApp::loadLibFileUsingProfile('gamehistory.functions.php', 'database_only');
+        // pool_stack brings pool/series/season/statistical, which the restore
+        // guards in Task 6 (IsPoolLocked, IsSeasonStatsCalculated,
+        // isEventReadonly) need. Loading it here keeps Tasks 3-6 on one setUp.
+        LegacyApp::loadLibFilesUsingProfile(
+            ['user.functions.php', 'gamehistory.functions.php', 'game.functions.php'],
+            'pool_stack',
+        );
+        $_SESSION['userproperties']['userrole']['superadmin'] = true;
 
         // IsGameHistoryDisabled() caches in a static, so the setting must be
         // written before the first call in this process.
@@ -30,6 +37,10 @@ final class GamehistoryFunctionsLibTest extends TestCase
 
     protected function tearDown(): void
     {
+        // Task 3 tests mutate game 701, which the baseline fixture leaves unplayed.
+        DBQuery("DELETE FROM uo_goal WHERE game=701");
+        DBQuery("UPDATE uo_game SET homescore=NULL, visitorscore=NULL, isongoing=0, hasstarted=0 WHERE game_id=701");
+
         DBQuery("DELETE FROM uo_game_history WHERE game IN (700, 701)");
         unset($_SESSION['uid']);
         LegacyApp::closeDatabaseConnection();
@@ -137,5 +148,92 @@ final class GamehistoryFunctionsLibTest extends TestCase
         // recording-off path is exercised through GameHistorySuppressed()
         // above; this pins the setting parsing itself.
         $this->assertFalse(IsGameHistoryDisabled());
+    }
+
+    public function testGameSetResultRecordsTheFinalScore(): void
+    {
+        GameSetResult(701, 13, 9, false);
+
+        $row = DBQueryToRow(
+            "SELECT target, action, detail FROM uo_game_history
+             WHERE game=701 AND target='result' ORDER BY history_id DESC LIMIT 1",
+        );
+
+        $this->assertSame('result', $row['target']);
+        $this->assertSame('update', $row['action']);
+        $detail = json_decode($row['detail'], true);
+        $this->assertSame(13, $detail['home']);
+        $this->assertSame(9, $detail['away']);
+        $this->assertSame('final', $detail['state']);
+    }
+
+    public function testGameSetResultAlsoWritesARestorableSnapshot(): void
+    {
+        GameSetResult(701, 13, 9, false);
+
+        $count = (int) DBQueryToValue(
+            "SELECT COUNT(*) FROM uo_game_history WHERE game=701 AND has_snapshot=1",
+        );
+        $this->assertSame(1, $count);
+    }
+
+    public function testGameAddScoreEntryRecordsOneGoalRowPerPoint(): void
+    {
+        GameAddScoreEntry([
+            'game' => 701, 'num' => 1, 'assist' => 802, 'scorer' => 803,
+            'time' => 60, 'homescore' => 0, 'visitorscore' => 1,
+            'ishomegoal' => 0, 'iscallahan' => 0,
+        ]);
+
+        $rows = DBQueryToArray(
+            "SELECT action, detail FROM uo_game_history WHERE game=701 AND target='goal'",
+        );
+        $this->assertCount(1, $rows);
+        $this->assertSame('add', $rows[0]['action']);
+
+        $detail = json_decode($rows[0]['detail'], true);
+        $this->assertSame(1, $detail['num']);
+        $this->assertSame(803, $detail['scorer']);
+        $this->assertSame(802, $detail['assist']);
+        $this->assertSame('0-1', $detail['score']);
+    }
+
+    public function testGameRemoveAllScoresSnapshotsBeforeClearingAndRecordsTheCount(): void
+    {
+        GameAddScoreEntry([
+            'game' => 701, 'num' => 1, 'assist' => 802, 'scorer' => 803,
+            'time' => 60, 'homescore' => 0, 'visitorscore' => 1,
+            'ishomegoal' => 0, 'iscallahan' => 0,
+        ]);
+
+        GameRemoveAllScores(701);
+
+        $snapshot = DBQueryToRow(
+            "SELECT snapshot FROM uo_game_history
+             WHERE game=701 AND has_snapshot=1 ORDER BY history_id DESC LIMIT 1",
+        );
+        // The snapshot holds the pre-clear state, so the goal is still in it.
+        $stored = json_decode($snapshot['snapshot'], true);
+        $this->assertCount(1, $stored['goals']);
+
+        $clear = DBQueryToRow(
+            "SELECT action, detail FROM uo_game_history
+             WHERE game=701 AND target='goal' AND action='clear' ORDER BY history_id DESC LIMIT 1",
+        );
+        $this->assertSame(1, json_decode($clear['detail'], true)['removed']);
+    }
+
+    public function testBulkRewriteWritesExactlyOneSnapshotPerRequest(): void
+    {
+        // A desktop save calls three destructive helpers in sequence. The
+        // per-request memo must collapse them to a single restore point.
+        GameRemoveAllScores(701);
+        GameRemoveAllTimeouts(701);
+        GameRemoveAllSpiritTimeouts(701);
+
+        $count = (int) DBQueryToValue(
+            "SELECT COUNT(*) FROM uo_game_history WHERE game=701 AND has_snapshot=1",
+        );
+        $this->assertSame(1, $count);
     }
 }
