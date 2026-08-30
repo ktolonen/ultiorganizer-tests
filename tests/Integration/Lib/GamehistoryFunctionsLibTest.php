@@ -225,11 +225,11 @@ final class GamehistoryFunctionsLibTest extends TestCase
 
     public function testBulkRewriteWritesExactlyOneSnapshotPerRequest(): void
     {
-        // A desktop save calls three destructive helpers in sequence. The
-        // per-request memo must collapse them to a single restore point.
+        // A desktop save can call more than one destructive helper in the
+        // same request. The per-request memo must collapse them to a single
+        // restore point: without it, this would find two rows, not one.
         GameRemoveAllScores(701);
-        GameRemoveAllTimeouts(701);
-        GameRemoveAllSpiritTimeouts(701);
+        GameRemoveAllDefenses(701);
 
         $count = (int) DBQueryToValue(
             "SELECT COUNT(*) FROM uo_game_history WHERE game=701 AND has_snapshot=1",
