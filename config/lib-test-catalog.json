@@ -236,6 +236,22 @@
       "sut_path": "/home/kari/dev/ultiorganizer/lib/game.functions.php"
     },
     {
+      "lib_file": "gamehistory.functions.php",
+      "lib_path": "lib/gamehistory.functions.php",
+      "subject_id": "gamehistory.functions",
+      "test_suite": "integration",
+      "test_path": "tests/Integration/Lib/GamehistoryFunctionsLibTest.php",
+      "test_class": "GamehistoryFunctionsLibTest",
+      "strategy": "direct_helper",
+      "load_profile": "bootstrap_only",
+      "test_path_exists": true,
+      "status": "covered",
+      "triage_status": "untriaged",
+      "triage_notes": "",
+      "notes": "",
+      "sut_path": "/home/kari/dev/ultiorganizer/lib/gamehistory.functions.php"
+    },
+    {
       "lib_file": "image.functions.php",
       "lib_path": "lib/image.functions.php",
       "subject_id": "image.functions",

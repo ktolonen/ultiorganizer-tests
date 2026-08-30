@@ -42,6 +42,7 @@ LIB_TEST_DB_BACKED_FILES = {
     "database.maintenance.php",
     "database.php",
     "game.functions.php",
+    "gamehistory.functions.php",
     "location.functions.php",
     "logging.functions.php",
     "player.functions.php",
