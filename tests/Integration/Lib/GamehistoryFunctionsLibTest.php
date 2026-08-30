@@ -719,11 +719,20 @@ final class GamehistoryFunctionsLibTest extends TestCase
         // not GameHistoryEntry()'s single hasEditGameEventsRight() check.
         $snapshotId = (int) GameHistorySnapshotIfNeeded(700);
 
-        $goalsBefore = (int) DBQueryToValue("SELECT COUNT(*) FROM uo_goal WHERE game=700");
-        $gameBefore = DBQueryToRow(
-            "SELECT homescore, visitorscore, hasstarted, isongoing FROM uo_game WHERE game_id=700"
-        );
+        // Damage the game between snapshot and restore attempt, the same way
+        // testRestorePutsBackTheGoalSequenceAndResult() does. Without this, a
+        // fully successful restore would reproduce byte-identical goals and
+        // score, and the "untouched" assertions below would pass under BOTH
+        // a refusal and a full rebuild -- proving nothing about a partial one.
+        GameRemoveAllScores(700);
+        GameSetResult(700, 3, 2, false);
+        $this->assertSame(0, (int) DBQueryToValue("SELECT COUNT(*) FROM uo_goal WHERE game=700"));
 
+        // If the accreditation guard is ever removed, this session still
+        // clears the earlier two rights checks and reaches
+        // AcknowledgeUnaccredited(), which die()s on its own
+        // hasAccredidationRight() check -- so a regression here surfaces as a
+        // fatal error failing this test, not a clean assertion failure.
         $_SESSION['userproperties']['userrole'] = ['teamadmin' => [300 => true]];
         $_SESSION['uid'] = 'teamadmin300';
         try {
@@ -734,12 +743,12 @@ final class GamehistoryFunctionsLibTest extends TestCase
             $_SESSION['userproperties']['userrole'] = ['superadmin' => true];
         }
 
-        $goalsAfter = (int) DBQueryToValue("SELECT COUNT(*) FROM uo_goal WHERE game=700");
-        $gameAfter = DBQueryToRow(
-            "SELECT homescore, visitorscore, hasstarted, isongoing FROM uo_game WHERE game_id=700"
-        );
-        $this->assertSame($goalsBefore, $goalsAfter);
-        $this->assertSame($gameBefore, $gameAfter);
+        // The damaged state must still stand: no goal was put back and the
+        // score is still the damaged 3-2, not the snapshot's 15-11.
+        $this->assertSame(0, (int) DBQueryToValue("SELECT COUNT(*) FROM uo_goal WHERE game=700"));
+        $game = DBQueryToRow("SELECT homescore, visitorscore FROM uo_game WHERE game_id=700");
+        $this->assertSame('3', (string) $game['homescore']);
+        $this->assertSame('2', (string) $game['visitorscore']);
     }
 
     public function testRestoreRestoresTheAcknowledgedFlag(): void
