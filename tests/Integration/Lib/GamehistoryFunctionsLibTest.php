@@ -33,6 +33,21 @@ final class GamehistoryFunctionsLibTest extends TestCase
         // The snapshot memo lives in the request-local cache, which PHPUnit
         // does not reset between tests in the same process.
         CacheForgetNamespace('game_history_snapshot');
+
+        // DBQueryToValue/Array/Row persistently cache by literal query string
+        // (see GameFunctionsLibTest). GameHistoryCount()/List()/All() build the
+        // same literal SQL across tests sharing games 700/701, so an earlier
+        // test's cached result otherwise leaks into a later one within the TTL.
+        global $serverConf;
+        if (!isset($serverConf)) {
+            $serverConf = [];
+        }
+        $serverConf['PersistentCacheEnabled'] = 'false';
+        foreach (['db_query_value', 'db_query_array', 'db_query_row', 'db_query_rowcount'] as $ns) {
+            if (function_exists('CacheForgetPersistent')) {
+                CacheForgetPersistent($ns);
+            }
+        }
     }
 
     protected function tearDown(): void
@@ -330,5 +345,103 @@ final class GamehistoryFunctionsLibTest extends TestCase
         );
         $detail = json_decode($row['detail'], true);
         $this->assertSame(1, $detail['created']);
+    }
+
+    public function testListReturnsNewestFirstAndOmitsTheSnapshotPayload(): void
+    {
+        GameHistoryRecord(700, 'result', 'update', ['home' => 1, 'away' => 0, 'state' => 'ongoing']);
+        GameHistoryRecord(700, 'goal', 'add', ['num' => 2, 'score' => '1-1']);
+
+        $rows = GameHistoryList(700);
+
+        $this->assertCount(2, $rows);
+        $this->assertSame('goal', $rows[0]['target']);
+        $this->assertSame('result', $rows[1]['target']);
+        $this->assertArrayNotHasKey('snapshot', $rows[0]);
+        $this->assertSame('0', (string) $rows[0]['has_snapshot']);
+    }
+
+    public function testCountMatchesTheNumberOfRecordedRows(): void
+    {
+        GameHistoryRecord(700, 'goal', 'add', ['num' => 1]);
+        GameHistoryRecord(700, 'goal', 'add', ['num' => 2]);
+        $this->assertSame(2, GameHistoryCount(700));
+    }
+
+    public function testListDeniesAUserWithoutGameEditRights(): void
+    {
+        GameHistoryRecord(700, 'goal', 'add', ['num' => 1]);
+        $_SESSION['userproperties']['userrole'] = [];
+        $_SESSION['uid'] = 'anonymous';
+        try {
+            $this->assertSame([], GameHistoryList(700));
+            $this->assertSame(0, GameHistoryCount(700));
+        } finally {
+            $_SESSION['uid'] = 'testuser';
+            $_SESSION['userproperties']['userrole']['superadmin'] = true;
+        }
+    }
+
+    public function testEntryReturnsTheDecodedSnapshot(): void
+    {
+        $id = (int) GameHistorySnapshotIfNeeded(700);
+        $entry = GameHistoryEntry($id);
+
+        $this->assertSame('snapshot', $entry['target']);
+        $this->assertSame(15, $entry['snapshot']['game']['homescore']);
+        $this->assertCount(4, $entry['snapshot']['goals']);
+    }
+
+    public function testAllDeniesNonSuperAdmins(): void
+    {
+        GameHistoryRecord(700, 'goal', 'add', ['num' => 1]);
+        $_SESSION['userproperties']['userrole'] = [];
+        try {
+            $this->assertSame([], GameHistoryAll(['game' => 700]));
+            $this->assertSame(0, GameHistoryAllCount(['game' => 700]));
+        } finally {
+            $_SESSION['userproperties']['userrole']['superadmin'] = true;
+        }
+    }
+
+    public function testAllFiltersByGame(): void
+    {
+        GameHistoryRecord(700, 'goal', 'add', ['num' => 1]);
+        GameHistoryRecord(701, 'goal', 'add', ['num' => 1]);
+
+        $rows = GameHistoryAll(['game' => 700]);
+        $this->assertCount(1, $rows);
+        $this->assertSame('700', (string) $rows[0]['game']);
+        $this->assertSame(1, GameHistoryAllCount(['game' => 700]));
+    }
+
+    public function testFormatDetailRendersEachTargetCompactly(): void
+    {
+        $this->assertSame(
+            'Result 15-11 (final)',
+            GameHistoryFormatDetail([
+                'target' => 'result',
+                'action' => 'update',
+                'detail' => json_encode(['home' => 15, 'away' => 11, 'state' => 'final']),
+            ]),
+        );
+
+        $this->assertSame(
+            'Point 3: 2-1',
+            GameHistoryFormatDetail([
+                'target' => 'goal',
+                'action' => 'add',
+                'detail' => json_encode(['num' => 3, 'score' => '2-1']),
+            ]),
+        );
+
+        $this->assertSame(
+            'Points removed: 24',
+            GameHistoryFormatDetail([
+                'target' => 'goal',
+                'action' => 'clear',
+                'detail' => json_encode(['removed' => 24]),
+            ]),
+        );
     }
 }
