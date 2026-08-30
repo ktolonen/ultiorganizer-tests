@@ -67,6 +67,31 @@ final class GamehistoryFunctionsLibTest extends TestCase
         DBQuery("DELETE FROM uo_player WHERE firstname='New' AND lastname='Player'");
 
         DBQuery("DELETE FROM uo_game_history WHERE game IN (700, 701)");
+
+        // Restore tests mutate the shared fixture game 700.
+        DBQuery("DELETE FROM uo_goal WHERE game=700");
+        DBQuery("INSERT INTO uo_goal (game, num, assist, scorer, time, homescore, visitorscore, ishomegoal, iscallahan, timestamp) VALUES
+            (700, 1, 801, 800, 120, 1, 0, 1, 0, '2026-06-01 10:02:00'),
+            (700, 2, 803, 802, 300, 1, 1, 0, 0, '2026-06-01 10:05:00'),
+            (700, 3, 800, 801, 480, 2, 1, 1, 1, '2026-06-01 10:08:00'),
+            (700, 4, 802, 803, 660, 2, 2, 0, 0, '2026-06-01 10:11:00')");
+        DBQuery("UPDATE uo_game SET homescore=15, visitorscore=11, isongoing=0, hasstarted=1 WHERE game_id=700");
+
+        // GameHistoryRestore() rebuilds uo_played via GameRemoveAllPlayers()/
+        // GameAddPlayer(), which also rewrites uo_player.num for the restored
+        // roster number -- reseed both so a restore test can't leak a changed
+        // roster number or a dropped acknowledged flag into a later test.
+        DBQuery("DELETE FROM uo_played WHERE game=700");
+        DBQuery("INSERT INTO uo_played (player, game, num, accredited, acknowledged, captain) VALUES
+            (800, 700, 8, 1, 1, 1),
+            (801, 700, 12, 1, 1, 0),
+            (802, 700, 7, 1, 1, 1),
+            (803, 700, 14, 1, 1, 0)");
+        DBQuery("UPDATE uo_player SET num=8 WHERE player_id=800");
+        DBQuery("UPDATE uo_player SET num=12 WHERE player_id=801");
+        DBQuery("UPDATE uo_player SET num=7 WHERE player_id=802");
+        DBQuery("UPDATE uo_player SET num=14 WHERE player_id=803");
+
         unset($_SESSION['uid']);
         LegacyApp::closeDatabaseConnection();
     }
@@ -565,5 +590,94 @@ final class GamehistoryFunctionsLibTest extends TestCase
         $this->assertNotSame($awayText, $clearedText);
         $this->assertSame('Starting offence: Away team', $awayText);
         $this->assertSame('Starting offence removed', $clearedText);
+    }
+
+    public function testRestorePutsBackTheGoalSequenceAndResult(): void
+    {
+        // Capture game 700 as the fixture leaves it, then damage it.
+        $snapshotId = (int) GameHistorySnapshotIfNeeded(700);
+
+        GameRemoveAllScores(700);
+        GameSetResult(700, 3, 2, false);
+        $this->assertSame(0, (int) DBQueryToValue("SELECT COUNT(*) FROM uo_goal WHERE game=700"));
+
+        $result = GameHistoryRestore($snapshotId);
+
+        $this->assertTrue($result['restored']);
+        $this->assertSame([], $result['warnings']);
+        $this->assertSame(4, (int) DBQueryToValue("SELECT COUNT(*) FROM uo_goal WHERE game=700"));
+
+        $game = DBQueryToRow(
+            "SELECT homescore, visitorscore, hasstarted, isongoing FROM uo_game WHERE game_id=700",
+        );
+        $this->assertSame('15', (string) $game['homescore']);
+        $this->assertSame('11', (string) $game['visitorscore']);
+        // The fixture is hasstarted=1. GameSetResult() forces 2, so this pins
+        // that the snapshot's own flags win.
+        $this->assertSame('1', (string) $game['hasstarted']);
+        $this->assertSame('0', (string) $game['isongoing']);
+
+        $goal = DBQueryToRow("SELECT assist, scorer, iscallahan FROM uo_goal WHERE game=700 AND num=3");
+        $this->assertSame('800', (string) $goal['assist']);
+        $this->assertSame('801', (string) $goal['scorer']);
+        $this->assertSame('1', (string) $goal['iscallahan']);
+    }
+
+    public function testRestoreWritesOneRestoreRowAndOneSnapshotNotAPerGoalTrail(): void
+    {
+        $snapshotId = (int) GameHistorySnapshotIfNeeded(700);
+        GameRemoveAllScores(700);
+
+        // Delete only the change rows -- the snapshot row is what we restore from.
+        DBQuery("DELETE FROM uo_game_history WHERE game=700 AND has_snapshot=0");
+        GameHistoryRestore($snapshotId);
+
+        // The replay goes through GameAddScoreEntry() four times; suppression
+        // must keep those out of the trail.
+        $goalRows = (int) DBQueryToValue(
+            "SELECT COUNT(*) FROM uo_game_history WHERE game=700 AND target='goal'",
+        );
+        $this->assertSame(0, $goalRows);
+
+        $restoreRows = (int) DBQueryToValue(
+            "SELECT COUNT(*) FROM uo_game_history WHERE game=700 AND target='restore'",
+        );
+        $this->assertSame(1, $restoreRows);
+    }
+
+    public function testRestoreIsItselfUndoableBecauseItSnapshotsFirst(): void
+    {
+        $snapshotId = (int) GameHistorySnapshotIfNeeded(700);
+        GameRemoveAllScores(700);
+        DBQuery("DELETE FROM uo_game_history WHERE game=700 AND has_snapshot=0");
+
+        GameHistoryRestore($snapshotId);
+
+        $snapshots = (int) DBQueryToValue(
+            "SELECT COUNT(*) FROM uo_game_history WHERE game=700 AND has_snapshot=1",
+        );
+        // The original plus the pre-restore capture.
+        $this->assertSame(2, $snapshots);
+    }
+
+    public function testRestoreRefusesARowWithoutASnapshot(): void
+    {
+        $id = (int) GameHistoryRecord(700, 'goal', 'add', ['num' => 1]);
+        $result = GameHistoryRestore($id);
+        $this->assertFalse($result['restored']);
+    }
+
+    public function testRestoreDeniesAUserWithoutGameEditRights(): void
+    {
+        $snapshotId = (int) GameHistorySnapshotIfNeeded(700);
+        $_SESSION['userproperties']['userrole'] = [];
+        $_SESSION['uid'] = 'anonymous';
+        try {
+            $result = GameHistoryRestore($snapshotId);
+            $this->assertFalse($result['restored']);
+        } finally {
+            $_SESSION['uid'] = 'testuser';
+            $_SESSION['userproperties']['userrole']['superadmin'] = true;
+        }
     }
 }
