@@ -47,6 +47,10 @@ final class GamehistoryFunctionsLibTest extends TestCase
         DBQuery("DELETE FROM uo_gameevent WHERE game=701");
         DBQuery("UPDATE uo_game SET halftime=35, official=NULL WHERE game_id=701");
 
+        // testGameAddNewPlayerRecordsExactlyOnePlayedAddRow() creates this
+        // player; other suites assert exact roster sizes for its team.
+        DBQuery("DELETE FROM uo_player WHERE firstname='New' AND lastname='Player'");
+
         DBQuery("DELETE FROM uo_game_history WHERE game IN (700, 701)");
         unset($_SESSION['uid']);
         LegacyApp::closeDatabaseConnection();
@@ -306,5 +310,25 @@ final class GamehistoryFunctionsLibTest extends TestCase
         $detail = json_decode($row['detail'], true);
         $this->assertSame(300, $detail['time']);
         $this->assertSame(1, $detail['home']);
+    }
+
+    public function testGameAddNewPlayerRecordsExactlyOnePlayedAddRow(): void
+    {
+        // GameAddNewPlayer() delegates to GameAddPlayer() to add the newly
+        // created player to the roster. Without suppressing the delegate's
+        // own recording, this would write two rows instead of one.
+        GameAddNewPlayer(701, 'New', 'Player', 0, 300, 9);
+
+        $count = (int) DBQueryToValue(
+            "SELECT COUNT(*) FROM uo_game_history WHERE game=701 AND target='played' AND action='add'",
+        );
+        $this->assertSame(1, $count);
+
+        $row = DBQueryToRow(
+            "SELECT detail FROM uo_game_history
+             WHERE game=701 AND target='played' AND action='add' ORDER BY history_id DESC LIMIT 1",
+        );
+        $detail = json_decode($row['detail'], true);
+        $this->assertSame(1, $detail['created']);
     }
 }
