@@ -532,4 +532,38 @@ final class GamehistoryFunctionsLibTest extends TestCase
         $this->assertStringNotContainsString('from_goals', $fromGoals);
         $this->assertSame('Result 5-4 (Recalculated)', $fromGoals);
     }
+
+    public function testGameSetStartingTeamDistinguishesClearedFromAwayStarts(): void
+    {
+        // Fix round 2 regression: the $home===null (clear) branch used to
+        // record the exact same detail as $home===false (away team starts),
+        // so the audit trail could not tell the two apart.
+        GameSetStartingTeam(701, false);
+        $awayRow = DBQueryToRow(
+            "SELECT action, detail FROM uo_game_history
+             WHERE game=701 AND target='gameevent' ORDER BY history_id DESC LIMIT 1",
+        );
+        $this->assertSame('update', $awayRow['action']);
+        $awayText = GameHistoryFormatDetail([
+            'target' => 'gameevent',
+            'action' => $awayRow['action'],
+            'detail' => $awayRow['detail'],
+        ]);
+
+        GameSetStartingTeam(701, null);
+        $clearedRow = DBQueryToRow(
+            "SELECT action, detail FROM uo_game_history
+             WHERE game=701 AND target='gameevent' ORDER BY history_id DESC LIMIT 1",
+        );
+        $this->assertSame('remove', $clearedRow['action']);
+        $clearedText = GameHistoryFormatDetail([
+            'target' => 'gameevent',
+            'action' => $clearedRow['action'],
+            'detail' => $clearedRow['detail'],
+        ]);
+
+        $this->assertNotSame($awayText, $clearedText);
+        $this->assertSame('Starting offence: Away team', $awayText);
+        $this->assertSame('Starting offence removed', $clearedText);
+    }
 }
