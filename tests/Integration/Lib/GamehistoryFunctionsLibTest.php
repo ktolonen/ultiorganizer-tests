@@ -90,6 +90,11 @@ final class GamehistoryFunctionsLibTest extends TestCase
         DBQuery("UPDATE uo_player SET num=8 WHERE player_id=800");
         DBQuery("UPDATE uo_player SET num=12 WHERE player_id=801");
         DBQuery("UPDATE uo_player SET num=7 WHERE player_id=802");
+
+        // A restored acknowledged=1 player goes through AcknowledgeUnaccredited(),
+        // which logs to uo_accreditationlog; a restore test must not leak rows
+        // there either.
+        DBQuery("DELETE FROM uo_accreditationlog WHERE game=700");
         DBQuery("UPDATE uo_player SET num=14 WHERE player_id=803");
 
         unset($_SESSION['uid']);
