@@ -108,6 +108,18 @@ final class GamehistoryFunctionsLibTest extends TestCase
 
         DBQuery("UPDATE uo_game SET forfeit=0 WHERE game_id=700");
 
+        // GameHistoryRestore() now calls GameRemoveAllGameEvents() before
+        // replay (see Finding 4 of the whole-branch review), which can clear
+        // and replay the offence/cap rows for game 700. Reseed the fixture's
+        // exact original rows so GameFunctionsLibTest's turnover and cap
+        // tests don't inherit a polluted game 700.
+        DBQuery("DELETE FROM uo_gameevent WHERE game=700");
+        DBQuery("INSERT INTO uo_gameevent (game, num, time, type, ishome, info) VALUES
+            (700, 1, 400, 'half_cap', 0, '9'),
+            (700, 2, 900, 'time_cap', 0, '13'),
+            (700, 3, 500, 'turnover', 1, NULL)");
+        DBQuery("UPDATE uo_game SET halftime=35, official=NULL WHERE game_id=700");
+
         // GameHistoryRestore() ends by calling GameSetForfeit(), which always
         // recomputes PoolResolvePlayed(200) from the live uo_game rows. Game
         // 701 in this same pool is permanently unplayed (reset above), so
@@ -923,5 +935,241 @@ final class GamehistoryFunctionsLibTest extends TestCase
         ]);
         $this->assertNotSame('Player 0', $spiritText);
         $this->assertSame('Spirit captain: 1', $spiritText);
+    }
+
+    public function testRestoreReproducesTheStartingOffence(): void
+    {
+        // GameSetStartingTeam() writes the raw uo_gameevent.type column value
+        // 'offence', while GameHistoryFormatDetail() renders the same row's
+        // audit label as "start" -- two different vocabularies. The replay in
+        // GameHistoryRestore() must compare against the real column value,
+        // not the label, or the starting offence can never be restored.
+        GameSetStartingTeam(700, 1);
+        // GameSetStartingTeam() now snapshots itself (Finding 2), which
+        // captures state BEFORE its own write and would otherwise win the
+        // per-request memo -- force a fresh capture so the snapshot actually
+        // includes the offence event just written.
+        $snapshotId = (int) GameHistorySnapshotIfNeeded(700, true);
+
+        GameSetStartingTeam(700, null);
+        $this->assertSame(
+            0,
+            (int) DBQueryToValue("SELECT COUNT(*) FROM uo_gameevent WHERE game=700 AND type='offence'"),
+        );
+
+        $result = GameHistoryRestore($snapshotId);
+
+        $this->assertTrue($result['restored']);
+        $row = DBQueryToRow("SELECT ishome FROM uo_gameevent WHERE game=700 AND type='offence'");
+        $this->assertNotNull($row);
+        $this->assertSame('1', (string) $row['ishome']);
+    }
+
+    public function testKeeperHalftimeAndStartingTeamShareOneSnapshotPerRequest(): void
+    {
+        // user/addscoresheet.php calls these three mutators, in this order,
+        // before the first bulk Remove*() helper. The per-request memo must
+        // still collapse all three to a single restore point.
+        GameSetScoreSheetKeeper(701, 'Keeper 1');
+        GameSetHalftime(701, 1800);
+        GameSetStartingTeam(701, 1);
+
+        $count = (int) DBQueryToValue(
+            "SELECT COUNT(*) FROM uo_game_history WHERE game=701 AND has_snapshot=1",
+        );
+        $this->assertSame(1, $count);
+    }
+
+    public function testKeeperHalftimeAndStartingTeamChangedInOneSaveAreUndoable(): void
+    {
+        // Before the fix, only GameRemoveAllTimeouts() -- called after all
+        // three of these in user/addscoresheet.php -- ever snapshotted, so a
+        // save touching only the scorekeeper name, halftime and starting
+        // offence had no restore point at all. Each of the three now
+        // snapshots itself before its own write, so the FIRST of them
+        // (GameSetScoreSheetKeeper here) is the one that captures the
+        // pre-mutation state.
+        GameSetScoreSheetKeeper(700, 'Keeper 1');
+        GameSetHalftime(700, 1800);
+        GameSetStartingTeam(700, 1);
+
+        $snapshotId = (int) DBQueryToValue(
+            "SELECT history_id FROM uo_game_history
+             WHERE game=700 AND has_snapshot=1 ORDER BY history_id LIMIT 1",
+        );
+        $this->assertGreaterThan(0, $snapshotId);
+
+        $result = GameHistoryRestore($snapshotId);
+
+        $this->assertTrue($result['restored']);
+        $game = DBQueryToRow("SELECT halftime, official FROM uo_game WHERE game_id=700");
+        $this->assertSame('35', (string) $game['halftime']);
+        $this->assertNull($game['official']);
+        $this->assertSame(
+            0,
+            (int) DBQueryToValue("SELECT COUNT(*) FROM uo_gameevent WHERE game=700 AND type='offence'"),
+        );
+    }
+
+    public function testRestoreRoundTripsADefenseWithAnUnresolvableAuthor(): void
+    {
+        // author is nullable, and GameHistoryMapPlayer() returns null for a
+        // player restore could not resolve. GameAddDefense() must emit a real
+        // SQL NULL instead of letting DBEscapeString(null) turn into '' -> 0,
+        // which would violate fk_defense_author and silently drop the row.
+        DBQuery("INSERT INTO uo_defense (game, num, author, time, iscallahan, iscaught, ishomedefense)
+                 VALUES (700, 1, NULL, 200, 0, 1, 1)");
+
+        $snapshotId = (int) GameHistorySnapshotIfNeeded(700);
+
+        DBQuery("DELETE FROM uo_defense WHERE game=700");
+
+        $result = GameHistoryRestore($snapshotId);
+
+        $this->assertTrue($result['restored']);
+        $row = DBQueryToRow(
+            "SELECT author, iscaught, ishomedefense FROM uo_defense WHERE game=700 AND num=1",
+        );
+        $this->assertNotNull($row);
+        $this->assertNull($row['author']);
+    }
+
+    public function testRestoreRemovesAPostSnapshotCapEventButLeavesMediaRowsAlone(): void
+    {
+        // uo_gameevent gets no explicit RemoveAll* before replay like goals,
+        // defences and timeouts do, and GameSetCapEvent() is upsert-only, so
+        // a cap set after the snapshot must be actively removed on restore --
+        // not just left unmatched by the replay loop. Media rows must survive
+        // untouched: they are guarded by hasAddMediaRight(), not
+        // hasEditGameEventsRight(), and are excluded from snapshots.
+        DBQuery("INSERT INTO uo_gameevent (game, num, time, type, ishome, info)
+                 VALUES (701, 99, 600, 'media', 0, 12345)");
+
+        $snapshotId = (int) GameHistorySnapshotIfNeeded(701);
+
+        GameSetCapEvent(701, 'time_cap', 900, 13);
+        $this->assertSame(
+            1,
+            (int) DBQueryToValue("SELECT COUNT(*) FROM uo_gameevent WHERE game=701 AND type='time_cap'"),
+        );
+
+        $result = GameHistoryRestore($snapshotId);
+
+        $this->assertTrue($result['restored']);
+        $this->assertSame(
+            0,
+            (int) DBQueryToValue("SELECT COUNT(*) FROM uo_gameevent WHERE game=701 AND type='time_cap'"),
+        );
+        $this->assertSame(
+            1,
+            (int) DBQueryToValue("SELECT COUNT(*) FROM uo_gameevent WHERE game=701 AND type='media'"),
+        );
+    }
+
+    public function testRestoreLeavesAnEventTypeItCannotReplayUntouched(): void
+    {
+        // Game 700's fixture carries a 'turnover' uo_gameevent row (see
+        // baseline.sql), a type the replay loop has no branch for. The
+        // removal-before-replay pass in GameRemoveAllGameEvents() must be
+        // scoped to only the types the replay CAN reinstate (offence and cap
+        // events) -- a wider delete would silently destroy this row, which
+        // the snapshot faithfully captured but restore could never put back.
+        $snapshotId = (int) GameHistorySnapshotIfNeeded(700);
+
+        $result = GameHistoryRestore($snapshotId);
+
+        $this->assertTrue($result['restored']);
+        $this->assertSame(
+            1,
+            (int) DBQueryToValue("SELECT COUNT(*) FROM uo_gameevent WHERE game=700 AND type='turnover'"),
+        );
+    }
+
+    public function testRestorePreservesANullHalftimeInsteadOfZero(): void
+    {
+        // (int) ($snapshot['game']['halftime'] ?? 0) would turn a faithfully
+        // preserved null into a spurious 0, producing a phantom halftime
+        // marker -- see GameHalftimeSeconds()'s documented hazard.
+        DBQuery("UPDATE uo_game SET halftime=NULL WHERE game_id=701");
+        $snapshotId = (int) GameHistorySnapshotIfNeeded(701);
+
+        GameSetHalftime(701, 1800);
+
+        $result = GameHistoryRestore($snapshotId);
+
+        $this->assertTrue($result['restored']);
+        $halftime = DBQueryToValue("SELECT halftime FROM uo_game WHERE game_id=701");
+        $this->assertNull($halftime);
+    }
+
+    public function testToFilterIncludesRowsRecordedOnTheChosenEndDate(): void
+    {
+        // admin/gamehistory.php feeds a bare YYYY-MM-DD from <input
+        // type='date'>, which MySQL widens to 00:00:00 -- a plain `<=` would
+        // exclude every row recorded later on the chosen end date.
+        $id = (int) GameHistoryRecord(700, 'goal', 'add', ['num' => 1]);
+        DBQuery(sprintf(
+            "UPDATE uo_game_history SET time='%s 23:00:00' WHERE history_id=%d",
+            date('Y-m-d'),
+            $id,
+        ));
+
+        $rows = GameHistoryAll(['game' => 700, 'to' => date('Y-m-d')]);
+        $this->assertCount(1, $rows);
+        $this->assertSame(1, GameHistoryAllCount(['game' => 700, 'to' => date('Y-m-d')]));
+    }
+
+    public function testRestoreWarnsInsteadOfDyingWhenAnAcknowledgedPlayerHasChangedTeamsSinceTheSnapshot(): void
+    {
+        // The up-front guard in GameHistoryRestore() checks
+        // hasAccredidationRight() against the SNAPSHOT's team, but
+        // AcknowledgeUnaccredited() re-reads the player's CURRENT team via
+        // PlayerInfo() and die()s on mismatch. A player moved between teams
+        // since the snapshot must not abort the replay partway through --
+        // this must degrade to a warning instead.
+        DBQuery("INSERT INTO uo_player (firstname, lastname, team, num, accreditation_id, accredited, reg_id, profile_id)
+                 VALUES ('Mover', 'Player', 300, 50, NULL, 1, NULL, NULL)");
+        $playerId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+        DBQuery(sprintf(
+            "INSERT INTO uo_played (player, game, num, accredited, acknowledged, captain) VALUES (%d, 701, 50, 1, 1, 0)",
+            $playerId,
+        ));
+
+        $snapshotId = (int) GameHistorySnapshotIfNeeded(701);
+
+        // Move the player to a different team after the snapshot was taken.
+        DBQuery(sprintf("UPDATE uo_player SET team=301 WHERE player_id=%d", $playerId));
+
+        // Grants hasEditGameEventsRight()/hasEditGamePlayersRight() (game
+        // 701's respteam=301) and hasAccredidationRight() for the SNAPSHOT's
+        // team (300) -- satisfying the up-front guard -- but deliberately NOT
+        // for the player's now-current team (301), so only the per-player
+        // re-check inside the replay can catch the mismatch.
+        $_SESSION['userproperties']['userrole'] = [
+            'teamadmin' => [301 => true],
+            'accradmin' => [300 => true],
+        ];
+        $_SESSION['uid'] = 'teamadmin301';
+
+        try {
+            $result = GameHistoryRestore($snapshotId);
+
+            $this->assertTrue($result['restored']);
+            $this->assertContains(
+                "Player Mover Player's accreditation could not be restored.",
+                $result['warnings'],
+            );
+
+            $acknowledged = (int) DBQueryToValue(sprintf(
+                "SELECT acknowledged FROM uo_played WHERE game=701 AND player=%d",
+                $playerId,
+            ));
+            $this->assertSame(0, $acknowledged);
+        } finally {
+            $_SESSION['uid'] = 'testuser';
+            $_SESSION['userproperties']['userrole'] = ['superadmin' => true];
+            DBQuery(sprintf("DELETE FROM uo_played WHERE player=%d AND game=701", $playerId));
+            DBQuery(sprintf("DELETE FROM uo_player WHERE player_id=%d", $playerId));
+        }
     }
 }

@@ -1220,6 +1220,23 @@ final class GameFunctionsLibTest extends TestCase
         $this->assertCount(0, $defenses);
     }
 
+    public function testGameAddDefenseAcceptsANullAuthorWithoutViolatingTheForeignKey(): void
+    {
+        // author is nullable, and a GameHistoryRestore() replay can pass null
+        // for an unresolvable player. DBEscapeString(null) would otherwise
+        // interpolate '' -> 0, violating fk_defense_author and silently
+        // dropping the row -- GameAddDefense() must emit a real SQL NULL
+        // instead, the same way GameAddScoreEntry() already does.
+        $gameId = $this->createTempGame();
+
+        $result = GameAddDefense($gameId, null, 1, 0, 120, 0, 1);
+        $this->assertNotFalse($result);
+
+        $defenses = GameDefenses($gameId);
+        $this->assertCount(1, $defenses);
+        $this->assertNull($defenses[0]['author']);
+    }
+
     // --- GameAddTimeout / GameRemoveAllTimeouts ---
 
     public function testGameAddTimeoutInsertsRow(): void
