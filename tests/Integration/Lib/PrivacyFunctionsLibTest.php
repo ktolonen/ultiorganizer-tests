@@ -396,7 +396,7 @@ final class PrivacyFunctionsLibTest extends TestCase
     {
         // Create a standalone player (no profile, no games) on fixture team 300
         $playerId = (int) DBQueryInsert(
-            "INSERT INTO uo_player (firstname, lastname, team, num, accredited) VALUES ('Zoe', 'Zephyr', 300, 99, 1)"
+            "INSERT INTO uo_player (firstname, lastname, team, num, accredited) VALUES ('Zoe', 'Zephyr', 300, 99, 1)",
         );
         try {
             self::flushQueryCaches();
@@ -422,11 +422,11 @@ final class PrivacyFunctionsLibTest extends TestCase
     {
         $profileId = (int) DBQueryInsert(
             "INSERT INTO uo_player_profile (firstname, lastname, email, accreditation_id)
-             VALUES ('$firstName', '$lastName', 'proftest@harness.invalid', 'HARN-ACCR-TEST')"
+             VALUES ('$firstName', '$lastName', 'proftest@harness.invalid', 'HARN-ACCR-TEST')",
         );
         $playerId = (int) DBQueryInsert(
             "INSERT INTO uo_player (firstname, lastname, team, profile_id, accreditation_id, accredited)
-             VALUES ('$firstName', '$lastName', 300, $profileId, 'HARN-ACCR-TEST', 1)"
+             VALUES ('$firstName', '$lastName', 300, $profileId, 'HARN-ACCR-TEST', 1)",
         );
         self::flushQueryCaches();
         return [$profileId, $playerId];
@@ -456,11 +456,11 @@ final class PrivacyFunctionsLibTest extends TestCase
     {
         // Profile with null names → displayName falls back to player name (line 65)
         $profileId = (int) DBQueryInsert(
-            "INSERT INTO uo_player_profile (firstname, lastname) VALUES (NULL, NULL)"
+            "INSERT INTO uo_player_profile (firstname, lastname) VALUES (NULL, NULL)",
         );
         $playerId = (int) DBQueryInsert(
             "INSERT INTO uo_player (firstname, lastname, team, profile_id, accredited)
-             VALUES ('AnonFirst', 'AnonLast', 300, $profileId, 0)"
+             VALUES ('AnonFirst', 'AnonLast', 300, $profileId, 0)",
         );
         self::flushQueryCaches();
         try {
@@ -588,6 +588,328 @@ final class PrivacyFunctionsLibTest extends TestCase
             if (is_dir($dir)) {
                 rmdir($dir);
             }
+        }
+    }
+
+    // ===== uo_game_history coverage =====
+    //
+    // Fixture game 700 (baseline.sql) is reused as the FK target for every
+    // uo_game_history row inserted below; each test deletes exactly the
+    // history_id(s) and player_id(s) it created, never a blanket delete by
+    // game, to avoid colliding with GamehistoryFunctionsLibTest's own use of
+    // game 700/701.
+
+    private function insertThrowawayPlayer(string $firstname, string $lastname): int
+    {
+        return (int) DBQueryInsert(sprintf(
+            "INSERT INTO uo_player (firstname, lastname, team, num, accredited) VALUES ('%s', '%s', 300, 90, 1)",
+            DBEscapeString($firstname),
+            DBEscapeString($lastname),
+        ));
+    }
+
+    private function insertGameHistorySnapshotRow(?array $snapshot, string $userId = 'admin', string $ip = '203.0.113.9'): int
+    {
+        $json = $snapshot === null ? null : json_encode($snapshot, JSON_UNESCAPED_UNICODE);
+        if ($snapshot === null) {
+            return (int) DBQueryInsert(sprintf(
+                "INSERT INTO uo_game_history (game, user_id, ip, source, target, action, has_snapshot, snapshot, detail)
+                 VALUES (700, '%s', '%s', 'harness', 'played', 'add', 0, NULL, '%s')",
+                DBEscapeString($userId),
+                DBEscapeString($ip),
+                DBEscapeString(json_encode(['note' => 'no snapshot'])),
+            ));
+        }
+        return (int) DBQueryInsert(sprintf(
+            "INSERT INTO uo_game_history (game, user_id, ip, source, target, action, has_snapshot, snapshot)
+             VALUES (700, '%s', '%s', 'harness', 'snapshot', 'capture', 1, '%s')",
+            DBEscapeString($userId),
+            DBEscapeString($ip),
+            DBEscapeString((string) $json),
+        ));
+    }
+
+    /**
+     * Minimal snapshot matching GameHistoryBuildSnapshot()'s shape, with only
+     * the fields these tests need populated.
+     */
+    private function buildSnapshot(array $played, array $goals, string $official, string $comment, array $events): array
+    {
+        return [
+            'v' => 1,
+            'game' => [
+                'homescore' => 1, 'visitorscore' => 0, 'isongoing' => 0,
+                'hasstarted' => 1, 'forfeit' => 0, 'official' => $official, 'halftime' => null,
+            ],
+            'goals' => $goals,
+            'played' => $played,
+            'defenses' => [],
+            'timeouts' => [],
+            'spirit_timeouts' => [],
+            'events' => $events,
+            'comment' => $comment,
+        ];
+    }
+
+    private function cleanupGameHistoryRows(array $historyIds): void
+    {
+        if (empty($historyIds)) {
+            return;
+        }
+        $idList = implode(',', array_map('intval', $historyIds));
+        DBQuery("DELETE FROM uo_game_history WHERE history_id IN ($idList)");
+    }
+
+    public function testPrivacyAnonymizePlayerRewritesSnapshotNameFieldsAndLeavesOtherFreeTextAlone(): void
+    {
+        $playerId = $this->insertThrowawayPlayer('Rewrite', 'Target');
+        $snapshot = $this->buildSnapshot(
+            played: [[
+                'player' => $playerId, 'team' => 300, 'num' => 90, 'name' => 'Rewrite Target',
+                'captain' => 0, 'spirit_captain' => 0, 'accredited' => 1, 'acknowledged' => 1,
+            ]],
+            goals: [[
+                'num' => 1, 'assist' => $playerId, 'scorer' => $playerId, 'time' => 10,
+                'homescore' => 1, 'visitorscore' => 0, 'ishomegoal' => 1, 'iscallahan' => 0,
+                'assist_num' => 90, 'assist_name' => 'Rewrite Target',
+                'scorer_num' => 90, 'scorer_name' => 'Rewrite Target',
+            ]],
+            official: 'Rewrite Target',
+            comment: 'Great game by Rewrite Target',
+            events: [['num' => 0, 'time' => 10, 'type' => 'offence', 'ishome' => 1, 'info' => 'Rewrite Target signalled a foul']],
+        );
+        $historyId = $this->insertGameHistorySnapshotRow($snapshot);
+        try {
+            self::flushQueryCaches();
+            $result = PrivacyAnonymizePlayer($playerId, 'admin');
+            $this->assertTrue($result);
+            self::flushQueryCaches();
+
+            $row = DBQueryToRow("SELECT snapshot FROM uo_game_history WHERE history_id=$historyId");
+            $decoded = json_decode($row['snapshot'], true);
+            $this->assertNotNull($decoded);
+
+            $this->assertSame('- -', $decoded['played'][0]['name']);
+            $this->assertSame('- -', $decoded['goals'][0]['scorer_name']);
+            $this->assertSame('- -', $decoded['goals'][0]['assist_name']);
+
+            // Free text elsewhere in the same snapshot is not player-id-keyed
+            // and must be left untouched, even though it repeats the same
+            // name text.
+            $this->assertSame('Rewrite Target', $decoded['game']['official']);
+            $this->assertSame('Great game by Rewrite Target', $decoded['comment']);
+            $this->assertSame('Rewrite Target signalled a foul', $decoded['events'][0]['info']);
+        } finally {
+            $this->cleanupGameHistoryRows([$historyId]);
+            DBQuery("DELETE FROM uo_player WHERE player_id=$playerId");
+            DBQuery("DELETE FROM uo_event_log WHERE source='privacy'");
+            self::flushQueryCaches();
+        }
+    }
+
+    public function testPrivacyAnonymizePlayerDoesNotRewriteAnotherPlayerWhoseNameIsAPrefix(): void
+    {
+        $playerA = $this->insertThrowawayPlayer('Jan', 'Ek');
+        $playerB = $this->insertThrowawayPlayer('Jan', 'Ekstrom');
+        $snapshot = $this->buildSnapshot(
+            played: [
+                ['player' => $playerA, 'team' => 300, 'num' => 90, 'name' => 'Jan Ek',
+                    'captain' => 0, 'spirit_captain' => 0, 'accredited' => 1, 'acknowledged' => 1],
+                ['player' => $playerB, 'team' => 300, 'num' => 91, 'name' => 'Jan Ekstrom',
+                    'captain' => 0, 'spirit_captain' => 0, 'accredited' => 1, 'acknowledged' => 1],
+            ],
+            goals: [],
+            official: 'Ref',
+            comment: '',
+            events: [],
+        );
+        $historyId = $this->insertGameHistorySnapshotRow($snapshot);
+        try {
+            self::flushQueryCaches();
+            $this->assertTrue(PrivacyAnonymizePlayer($playerA, 'admin'));
+            self::flushQueryCaches();
+
+            $row = DBQueryToRow("SELECT snapshot FROM uo_game_history WHERE history_id=$historyId");
+            $decoded = json_decode($row['snapshot'], true);
+            $this->assertNotNull($decoded);
+            $this->assertSame('- -', $decoded['played'][0]['name']);
+            $this->assertSame('Jan Ekstrom', $decoded['played'][1]['name']);
+        } finally {
+            $this->cleanupGameHistoryRows([$historyId]);
+            DBQuery("DELETE FROM uo_player WHERE player_id IN ($playerA, $playerB)");
+            DBQuery("DELETE FROM uo_event_log WHERE source='privacy'");
+            self::flushQueryCaches();
+        }
+    }
+
+    public function testPrivacyAnonymizePlayerRewritesNamesWithJsonSpecialAndUnicodeCharacters(): void
+    {
+        $cases = ['O"Hare', 'Back\\Slash', 'For/Ward', "O'Brien", 'Hakkinen-a with umlaut ä'];
+        foreach ($cases as $lastname) {
+            $playerId = $this->insertThrowawayPlayer('Case', $lastname);
+            $snapshot = $this->buildSnapshot(
+                played: [[
+                    'player' => $playerId, 'team' => 300, 'num' => 90, 'name' => 'Case ' . $lastname,
+                    'captain' => 0, 'spirit_captain' => 0, 'accredited' => 1, 'acknowledged' => 1,
+                ]],
+                goals: [],
+                official: 'Ref',
+                comment: '',
+                events: [],
+            );
+            $historyId = $this->insertGameHistorySnapshotRow($snapshot);
+            try {
+                self::flushQueryCaches();
+                $this->assertTrue(PrivacyAnonymizePlayer($playerId, 'admin'), "failed for lastname: $lastname");
+                self::flushQueryCaches();
+
+                $row = DBQueryToRow("SELECT snapshot FROM uo_game_history WHERE history_id=$historyId");
+                $decoded = json_decode($row['snapshot'], true);
+                $this->assertNotNull($decoded, "invalid JSON after rewrite for lastname: $lastname");
+                $this->assertSame('- -', $decoded['played'][0]['name'], "not rewritten for lastname: $lastname");
+            } finally {
+                $this->cleanupGameHistoryRows([$historyId]);
+                DBQuery("DELETE FROM uo_player WHERE player_id=$playerId");
+                DBQuery("DELETE FROM uo_event_log WHERE source='privacy'");
+                self::flushQueryCaches();
+            }
+        }
+    }
+
+    public function testPrivacyAnonymizePlayerRewritesPlayerWithEmptyLastname(): void
+    {
+        // uo_player.firstname/lastname default to '', not NULL, so a
+        // single-name player's stored snapshot name carries a CONCAT_WS
+        // trailing space ("Solo "). Matching is by player id, not by
+        // reconstructing that text, so this must still be rewritten.
+        $playerId = $this->insertThrowawayPlayer('Solo', '');
+        $snapshot = $this->buildSnapshot(
+            played: [[
+                'player' => $playerId, 'team' => 300, 'num' => 90, 'name' => 'Solo ',
+                'captain' => 0, 'spirit_captain' => 0, 'accredited' => 1, 'acknowledged' => 1,
+            ]],
+            goals: [],
+            official: 'Ref',
+            comment: '',
+            events: [],
+        );
+        $historyId = $this->insertGameHistorySnapshotRow($snapshot);
+        try {
+            self::flushQueryCaches();
+            $this->assertTrue(PrivacyAnonymizePlayer($playerId, 'admin'));
+            self::flushQueryCaches();
+
+            $row = DBQueryToRow("SELECT snapshot FROM uo_game_history WHERE history_id=$historyId");
+            $decoded = json_decode($row['snapshot'], true);
+            $this->assertNotNull($decoded);
+            $this->assertSame('- -', $decoded['played'][0]['name']);
+        } finally {
+            $this->cleanupGameHistoryRows([$historyId]);
+            DBQuery("DELETE FROM uo_player WHERE player_id=$playerId");
+            DBQuery("DELETE FROM uo_event_log WHERE source='privacy'");
+            self::flushQueryCaches();
+        }
+    }
+
+    public function testPrivacyAnonymizePlayerLeavesNonSnapshotRowsAlone(): void
+    {
+        $playerId = $this->insertThrowawayPlayer('NoSnap', 'Shot');
+        $historyId = $this->insertGameHistorySnapshotRow(null);
+        try {
+            self::flushQueryCaches();
+            $this->assertTrue(PrivacyAnonymizePlayer($playerId, 'admin'));
+            self::flushQueryCaches();
+
+            $row = DBQueryToRow("SELECT has_snapshot, snapshot FROM uo_game_history WHERE history_id=$historyId");
+            $this->assertSame(0, (int) $row['has_snapshot']);
+            $this->assertNull($row['snapshot']);
+        } finally {
+            $this->cleanupGameHistoryRows([$historyId]);
+            DBQuery("DELETE FROM uo_player WHERE player_id=$playerId");
+            DBQuery("DELETE FROM uo_event_log WHERE source='privacy'");
+            self::flushQueryCaches();
+        }
+    }
+
+    public function testPrivacyDeleteUserDataAnonymizesGameHistoryRowsInPlaceInsteadOfDeletingThem(): void
+    {
+        DBQuery("INSERT INTO uo_users (userid, name, email) VALUES ('privacy_gh_del_test', 'GH Delete Me', 'ghdel@test.invalid')");
+        $snapshotJson = json_encode(['v' => 1, 'game' => ['homescore' => 3, 'visitorscore' => 2], 'note' => 'unchanged']);
+        $snapshotId = (int) DBQueryInsert(sprintf(
+            "INSERT INTO uo_game_history (game, user_id, ip, source, target, action, has_snapshot, snapshot)
+             VALUES (700, 'privacy_gh_del_test', '198.51.100.5', 'harness', 'snapshot', 'capture', 1, '%s')",
+            DBEscapeString($snapshotJson),
+        ));
+        $detailJson = json_encode(['player' => 900, 'num' => 5]);
+        $detailId = (int) DBQueryInsert(sprintf(
+            "INSERT INTO uo_game_history (game, user_id, ip, source, target, action, has_snapshot, detail)
+             VALUES (700, 'privacy_gh_del_test', '198.51.100.5', 'harness', 'played', 'add', 0, '%s')",
+            DBEscapeString($detailJson),
+        ));
+        try {
+            self::flushQueryCaches();
+            $before = DBQueryToArray(
+                "SELECT history_id, game, snapshot, detail FROM uo_game_history WHERE history_id IN ($snapshotId, $detailId) ORDER BY history_id",
+            );
+            $this->assertCount(2, $before);
+
+            $result = PrivacyDeleteUserData('privacy_gh_del_test', 'admin');
+            $this->assertTrue($result);
+            self::flushQueryCaches();
+
+            $after = DBQueryToArray(
+                "SELECT history_id, game, user_id, ip, snapshot, detail FROM uo_game_history WHERE history_id IN ($snapshotId, $detailId) ORDER BY history_id",
+            );
+            $this->assertCount(2, $after, 'rows must be anonymized in place, not deleted');
+            foreach ($after as $i => $row) {
+                $this->assertSame('-', $row['user_id']);
+                $this->assertNull($row['ip']);
+                $this->assertSame($before[$i]['game'], $row['game']);
+                $this->assertSame($before[$i]['snapshot'], $row['snapshot']);
+                $this->assertSame($before[$i]['detail'], $row['detail']);
+            }
+        } finally {
+            $this->cleanupGameHistoryRows([$snapshotId, $detailId]);
+            DBQuery("DELETE FROM uo_users WHERE userid='privacy_gh_del_test'");
+            DBQuery("DELETE FROM uo_event_log WHERE source='privacy'");
+            self::flushQueryCaches();
+        }
+    }
+
+    public function testPrivacyCollectUserReportDataExcludesSnapshotColumnButIncludesTheUsersOwnRow(): void
+    {
+        // 'target' legitimately equals the literal string "snapshot" for
+        // real capture rows, so the leak this checks for is the embedded
+        // snapshot *content*, not the bare word: a marker planted only in
+        // `snapshot` must not surface, while a marker planted in `detail`
+        // (a column the export does include) must.
+        $snapshotJson = json_encode(['marker' => 'PRIVACY_SNAPSHOT_MARKER_SHOULD_NOT_LEAK']);
+        $historyId = (int) DBQueryInsert(sprintf(
+            "INSERT INTO uo_game_history (game, user_id, ip, source, target, action, has_snapshot, snapshot, detail)
+             VALUES (700, 'admin', '203.0.113.9', 'harness', 'played', 'update', 1, '%s', '%s')",
+            DBEscapeString($snapshotJson),
+            DBEscapeString(json_encode(['marker' => 'PRIVACY_DETAIL_MARKER_SHOULD_APPEAR'])),
+        ));
+        try {
+            self::flushQueryCaches();
+            $data = PrivacyCollectUserReportData('admin');
+            $this->assertArrayHasKey('game_history_rows', $data);
+            $found = null;
+            foreach ($data['game_history_rows'] as $row) {
+                if ((int) $row['history_id'] === $historyId) {
+                    $found = $row;
+                }
+            }
+            $this->assertNotNull($found, 'the row for this user must be present in the export');
+            $this->assertArrayNotHasKey('snapshot', $found);
+
+            $report = PrivacyRenderUserReportText('admin', 'admin');
+            $this->assertNotNull($report);
+            $this->assertStringContainsString('PRIVACY_DETAIL_MARKER_SHOULD_APPEAR', $report);
+            $this->assertStringNotContainsString('PRIVACY_SNAPSHOT_MARKER_SHOULD_NOT_LEAK', $report);
+        } finally {
+            $this->cleanupGameHistoryRows([$historyId]);
+            self::flushQueryCaches();
         }
     }
 }
