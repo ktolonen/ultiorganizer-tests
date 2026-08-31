@@ -102,6 +102,10 @@ final class GamehistoryFunctionsLibTest extends TestCase
         // reseeding rows that were never part of the shared fixture.
         DBQuery("DELETE FROM uo_defense WHERE game=700");
 
+        // Same for timeouts: the baseline fixture has none for game 700, and
+        // ReservationGroupTimeoutStats() elsewhere asserts that count is 0.
+        DBQuery("DELETE FROM uo_timeout WHERE game=700");
+
         DBQuery("UPDATE uo_game SET forfeit=0 WHERE game_id=700");
 
         // GameHistoryRestore() ends by calling GameSetForfeit(), which always
@@ -764,7 +768,7 @@ final class GamehistoryFunctionsLibTest extends TestCase
 
         $this->assertTrue($result['restored']);
         $acknowledged = (int) DBQueryToValue(
-            "SELECT acknowledged FROM uo_played WHERE game=700 AND player=800"
+            "SELECT acknowledged FROM uo_played WHERE game=700 AND player=800",
         );
         $this->assertSame(1, $acknowledged);
     }
@@ -786,7 +790,7 @@ final class GamehistoryFunctionsLibTest extends TestCase
         $this->assertSame(2, (int) DBQueryToValue("SELECT COUNT(*) FROM uo_defense WHERE game=700"));
 
         $row = DBQueryToRow(
-            "SELECT author, iscallahan, iscaught, ishomedefense FROM uo_defense WHERE game=700 AND num=2"
+            "SELECT author, iscallahan, iscaught, ishomedefense FROM uo_defense WHERE game=700 AND num=2",
         );
         $this->assertSame('802', (string) $row['author']);
         $this->assertSame('1', (string) $row['iscallahan']);
@@ -801,7 +805,7 @@ final class GamehistoryFunctionsLibTest extends TestCase
         $tempPlayerId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
         DBQuery(sprintf(
             "INSERT INTO uo_played (player, game, num, accredited, acknowledged, captain) VALUES (%d, 700, 21, 1, 0, 0)",
-            $tempPlayerId
+            $tempPlayerId,
         ));
 
         $snapshotId = (int) GameHistorySnapshotIfNeeded(700);
@@ -828,7 +832,7 @@ final class GamehistoryFunctionsLibTest extends TestCase
 
             $row = DBQueryToRow(sprintf(
                 "SELECT player, num FROM uo_played WHERE game=700 AND player=%d",
-                $replacementId
+                $replacementId,
             ));
             $this->assertSame((string) $replacementId, (string) $row['player']);
             $this->assertSame('21', (string) $row['num']);
@@ -836,5 +840,88 @@ final class GamehistoryFunctionsLibTest extends TestCase
             DBQuery(sprintf("DELETE FROM uo_played WHERE player=%d AND game=700", $replacementId));
             DBQuery(sprintf("DELETE FROM uo_player WHERE player_id=%d", $replacementId));
         }
+    }
+
+    public function testRestoreCompletesTheFullReplayWhenAScorerCannotBeRematched(): void
+    {
+        // Unlike testRestoreRematchesADeletedPlayerByTeamAndJerseyNumber(),
+        // nobody takes over jersey 77 on team 300 -- this player is
+        // genuinely unresolvable, the way CanDeletePlayer() allows once a
+        // roster edit has already dropped them from the game's current
+        // uo_played row.
+        DBQuery("INSERT INTO uo_player (firstname, lastname, team, num, accreditation_id, accredited, reg_id, profile_id)
+                 VALUES ('Ghost', 'Scorer', 300, 77, NULL, 1, NULL, NULL)");
+        $ghostPlayerId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+        DBQuery(sprintf(
+            "INSERT INTO uo_played (player, game, num, accredited, acknowledged, captain) VALUES (%d, 700, 77, 1, 0, 0)",
+            $ghostPlayerId,
+        ));
+        DBQuery(sprintf(
+            "INSERT INTO uo_goal (game, num, assist, scorer, time, homescore, visitorscore, ishomegoal, iscallahan)
+             VALUES (700, 5, NULL, %d, 700, 3, 2, 1, 0)",
+            $ghostPlayerId,
+        ));
+        DBQuery("INSERT INTO uo_timeout (game, num, time, ishome) VALUES (700, 1, 90, 1)");
+
+        $snapshotId = (int) GameHistorySnapshotIfNeeded(700);
+
+        DBQuery(sprintf("DELETE FROM uo_played WHERE player=%d AND game=700", $ghostPlayerId));
+        DBQuery(sprintf("DELETE FROM uo_player WHERE player_id=%d", $ghostPlayerId));
+
+        // Damage the state a half-rebuild would leave behind, so a crashed
+        // replay and a completed one are distinguishable below.
+        DBQuery("DELETE FROM uo_timeout WHERE game=700");
+        DBQuery("UPDATE uo_game SET forfeit=1 WHERE game_id=700");
+
+        $result = GameHistoryRestore($snapshotId);
+
+        $this->assertTrue($result['restored']);
+        $this->assertSame(
+            ['Pool is locked.', 'Event played.', 'Player Ghost Scorer could not be restored.'],
+            $result['warnings'],
+        );
+
+        $goal = DBQueryToRow("SELECT scorer, assist FROM uo_goal WHERE game=700 AND num=5");
+        $this->assertNull($goal['scorer']);
+        $this->assertNull($goal['assist']);
+
+        // This is what actually pins the bug: an unresolved scorer id that
+        // falls through to GameAddScoreEntry() instead of NULL violates
+        // uo_goal's FK and aborts the replay before any of this runs, so
+        // without these two checks a test could pass on the buggy code path
+        // too as long as the crash happened to leave a NULL-looking goal.
+        $timeoutCount = (int) DBQueryToValue("SELECT COUNT(*) FROM uo_timeout WHERE game=700");
+        $this->assertSame(1, $timeoutCount);
+        $forfeit = (int) DBQueryToValue("SELECT forfeit FROM uo_game WHERE game_id=700");
+        $this->assertSame(0, $forfeit);
+    }
+
+    public function testFormatDetailRendersRoleAssignmentsNotPlayerZero(): void
+    {
+        GameSetCaptains(700, 300, [800]);
+        $captainRow = DBQueryToRow(
+            "SELECT action, detail FROM uo_game_history
+             WHERE game=700 AND target='played' AND action='update' ORDER BY history_id DESC LIMIT 1",
+        );
+        $captainText = GameHistoryFormatDetail([
+            'target' => 'played',
+            'action' => $captainRow['action'],
+            'detail' => $captainRow['detail'],
+        ]);
+        $this->assertNotSame('Player 0', $captainText);
+        $this->assertSame('Captain: 1', $captainText);
+
+        GameSetSpiritCaptains(700, 300, [800]);
+        $spiritRow = DBQueryToRow(
+            "SELECT action, detail FROM uo_game_history
+             WHERE game=700 AND target='played' AND action='update' ORDER BY history_id DESC LIMIT 1",
+        );
+        $spiritText = GameHistoryFormatDetail([
+            'target' => 'played',
+            'action' => $spiritRow['action'],
+            'detail' => $spiritRow['detail'],
+        ]);
+        $this->assertNotSame('Player 0', $spiritText);
+        $this->assertSame('Spirit captain: 1', $spiritText);
     }
 }
