@@ -742,6 +742,54 @@ final class PrivacyFunctionsLibTest extends TestCase
         }
     }
 
+    public function testPrivacyAnonymizePlayerDoesNotRewriteADifferentPlayerWithTheSameName(): void
+    {
+        // Finding 2's actual case: two distinct players sharing a
+        // byte-identical display name in the same snapshot. Under name-text
+        // matching this was impossible to get right (either both are
+        // rewritten, or neither); id-keyed matching disambiguates them
+        // because the two players never share a player_id.
+        $playerA = $this->insertThrowawayPlayer('Sam', 'Rivera');
+        $playerB = $this->insertThrowawayPlayer('Sam', 'Rivera');
+        $snapshot = $this->buildSnapshot(
+            played: [
+                ['player' => $playerA, 'team' => 300, 'num' => 90, 'name' => 'Sam Rivera',
+                    'captain' => 0, 'spirit_captain' => 0, 'accredited' => 1, 'acknowledged' => 1],
+                ['player' => $playerB, 'team' => 300, 'num' => 91, 'name' => 'Sam Rivera',
+                    'captain' => 0, 'spirit_captain' => 0, 'accredited' => 1, 'acknowledged' => 1],
+            ],
+            goals: [[
+                'num' => 1, 'assist' => $playerB, 'scorer' => $playerA, 'time' => 10,
+                'homescore' => 1, 'visitorscore' => 0, 'ishomegoal' => 1, 'iscallahan' => 0,
+                'assist_num' => 91, 'assist_name' => 'Sam Rivera',
+                'scorer_num' => 90, 'scorer_name' => 'Sam Rivera',
+            ]],
+            official: 'Ref',
+            comment: '',
+            events: [],
+        );
+        $historyId = $this->insertGameHistorySnapshotRow($snapshot);
+        try {
+            self::flushQueryCaches();
+            $this->assertTrue(PrivacyAnonymizePlayer($playerA, 'admin'));
+            self::flushQueryCaches();
+
+            $row = DBQueryToRow("SELECT snapshot FROM uo_game_history WHERE history_id=$historyId");
+            $decoded = json_decode($row['snapshot'], true);
+            $this->assertNotNull($decoded);
+
+            $this->assertSame('- -', $decoded['played'][0]['name'], 'the anonymized player (playerA) must be rewritten');
+            $this->assertSame('Sam Rivera', $decoded['played'][1]['name'], 'the other player (playerB) sharing the same name must be untouched');
+            $this->assertSame('- -', $decoded['goals'][0]['scorer_name'], 'playerA is the scorer and must be rewritten');
+            $this->assertSame('Sam Rivera', $decoded['goals'][0]['assist_name'], 'playerB is the assist and must be untouched');
+        } finally {
+            $this->cleanupGameHistoryRows([$historyId]);
+            DBQuery("DELETE FROM uo_player WHERE player_id IN ($playerA, $playerB)");
+            DBQuery("DELETE FROM uo_event_log WHERE source='privacy'");
+            self::flushQueryCaches();
+        }
+    }
+
     public function testPrivacyAnonymizePlayerRewritesNamesWithJsonSpecialAndUnicodeCharacters(): void
     {
         $cases = ['O"Hare', 'Back\\Slash', 'For/Ward', "O'Brien", 'Hakkinen-a with umlaut ä'];
@@ -786,6 +834,42 @@ final class PrivacyFunctionsLibTest extends TestCase
         $snapshot = $this->buildSnapshot(
             played: [[
                 'player' => $playerId, 'team' => 300, 'num' => 90, 'name' => 'Solo ',
+                'captain' => 0, 'spirit_captain' => 0, 'accredited' => 1, 'acknowledged' => 1,
+            ]],
+            goals: [],
+            official: 'Ref',
+            comment: '',
+            events: [],
+        );
+        $historyId = $this->insertGameHistorySnapshotRow($snapshot);
+        try {
+            self::flushQueryCaches();
+            $this->assertTrue(PrivacyAnonymizePlayer($playerId, 'admin'));
+            self::flushQueryCaches();
+
+            $row = DBQueryToRow("SELECT snapshot FROM uo_game_history WHERE history_id=$historyId");
+            $decoded = json_decode($row['snapshot'], true);
+            $this->assertNotNull($decoded);
+            $this->assertSame('- -', $decoded['played'][0]['name']);
+        } finally {
+            $this->cleanupGameHistoryRows([$historyId]);
+            DBQuery("DELETE FROM uo_player WHERE player_id=$playerId");
+            DBQuery("DELETE FROM uo_event_log WHERE source='privacy'");
+            self::flushQueryCaches();
+        }
+    }
+
+    public function testPrivacyAnonymizePlayerRewritesPlayerWithEmptyFirstname(): void
+    {
+        // Mirror of the empty-lastname case above, but with the empty field
+        // first: CONCAT_WS(' ', '', 'Anders') stores a LEADING space
+        // ("Anders" preceded by a space), not a trailing one. The old
+        // name-capture logic trimmed this to "Anders" either way, so both
+        // the leading- and trailing-space forms need their own case.
+        $playerId = $this->insertThrowawayPlayer('', 'Anders');
+        $snapshot = $this->buildSnapshot(
+            played: [[
+                'player' => $playerId, 'team' => 300, 'num' => 90, 'name' => ' Anders',
                 'captain' => 0, 'spirit_captain' => 0, 'accredited' => 1, 'acknowledged' => 1,
             ]],
             goals: [],
