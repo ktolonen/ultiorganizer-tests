@@ -915,6 +915,54 @@ final class PrivacyFunctionsLibTest extends TestCase
         }
     }
 
+    public function testPrivacyCollectPlayerReportDataIncludesOwnGameHistorySnapshotNamesButNotOtherPlayers(): void
+    {
+        // C1: the player export previously projected no uo_game_history data
+        // at all, so a prior spelling retained only in a snapshot (the live
+        // uo_player row has since been corrected) never reached the export.
+        // Matching is by player id, not name text -- see
+        // PrivacyPlayerGameHistoryNameRows() -- so the snapshot's OLD text is
+        // what must surface here, not the player's current name.
+        $playerId = $this->insertThrowawayPlayer('Corrected', 'Name');
+        $otherPlayerId = $this->insertThrowawayPlayer('Zzz', 'Otherplayer');
+        $snapshot = $this->buildSnapshot(
+            played: [
+                ['player' => $playerId, 'team' => 300, 'num' => 90, 'name' => 'Old Spelling',
+                    'captain' => 0, 'spirit_captain' => 0, 'accredited' => 1, 'acknowledged' => 1],
+                ['player' => $otherPlayerId, 'team' => 300, 'num' => 91, 'name' => 'Zzz Otherplayer',
+                    'captain' => 0, 'spirit_captain' => 0, 'accredited' => 1, 'acknowledged' => 1],
+            ],
+            goals: [[
+                'num' => 1, 'assist' => $otherPlayerId, 'scorer' => $playerId, 'time' => 10,
+                'homescore' => 1, 'visitorscore' => 0, 'ishomegoal' => 1, 'iscallahan' => 0,
+                'assist_num' => 91, 'assist_name' => 'Zzz Otherplayer',
+                'scorer_num' => 90, 'scorer_name' => 'Old Spelling',
+            ]],
+            official: 'Ref',
+            comment: '',
+            events: [],
+        );
+        $historyId = $this->insertGameHistorySnapshotRow($snapshot);
+        try {
+            self::flushQueryCaches();
+            $data = PrivacyCollectPlayerReportData($playerId);
+            $this->assertArrayHasKey('game_history_name_rows', $data);
+
+            $names = array_column($data['game_history_name_rows'], 'name');
+            $this->assertContains('Old Spelling', $names, "the player's own snapshot-held name must be exported");
+            $this->assertNotContains('Zzz Otherplayer', $names, "another player's name from the same snapshot must not leak");
+
+            $report = PrivacyRenderPlayerReportText($playerId, 'admin');
+            $this->assertNotNull($report);
+            $this->assertStringContainsString('Old Spelling', $report);
+            $this->assertStringNotContainsString('Zzz Otherplayer', $report);
+        } finally {
+            $this->cleanupGameHistoryRows([$historyId]);
+            DBQuery("DELETE FROM uo_player WHERE player_id IN ($playerId, $otherPlayerId)");
+            self::flushQueryCaches();
+        }
+    }
+
     public function testPrivacyDeleteUserDataAnonymizesGameHistoryRowsInPlaceInsteadOfDeletingThem(): void
     {
         DBQuery("INSERT INTO uo_users (userid, name, email) VALUES ('privacy_gh_del_test', 'GH Delete Me', 'ghdel@test.invalid')");

@@ -199,7 +199,7 @@ final class GamehistoryFunctionsLibTest extends TestCase
     {
         $snapshot = GameHistoryBuildSnapshot(700);
 
-        $this->assertSame(2, $snapshot['v']);
+        $this->assertSame(3, $snapshot['v']);
         $this->assertSame(15, $snapshot['game']['homescore']);
         $this->assertSame(11, $snapshot['game']['visitorscore']);
         $this->assertSame(35, $snapshot['game']['halftime']);
@@ -1179,6 +1179,57 @@ final class GamehistoryFunctionsLibTest extends TestCase
         }
     }
 
+    public function testRestoreDowngradesAcknowledgedFlagWhenAdminLacksAccreditationRightOnPlayersCurrentTeam(): void
+    {
+        // C2: the up-front guard in GameHistoryRestore() only rechecks
+        // hasAccredidationRight() for the teams recorded in the SNAPSHOT
+        // (team 301 here). GameHistoryRestorePlayerRow() must separately
+        // recheck the player's CURRENT team before writing acknowledged=1,
+        // or an admin holding the right only on the old team could grant an
+        // acknowledgment on a team they have no accreditation right over.
+        // Game 701 (respteam=301) is used, not 700, so the up-front guard's
+        // acknowledged-team set contains only the one team this test
+        // controls.
+        DBQuery("INSERT INTO uo_player (firstname, lastname, team, num, accreditation_id, accredited, reg_id, profile_id)
+                 VALUES ('Downgrade', 'Target', 301, 60, NULL, 1, NULL, NULL)");
+        $playerId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+        DBQuery(sprintf(
+            "INSERT INTO uo_played (player, game, num, accredited, acknowledged, captain) VALUES (%d, 701, 60, 1, 1, 0)",
+            $playerId,
+        ));
+
+        $snapshotId = (int) GameHistorySnapshotIfNeeded(701);
+
+        // Move the player to a team this admin has no accreditation right on.
+        DBQuery(sprintf("UPDATE uo_player SET team=300 WHERE player_id=%d", $playerId));
+
+        // teamadmin[301] clears hasEditGameEventsRight()/hasEditGamePlayersRight()
+        // for game 701 (respteam=301) and accradmin[301] clears the up-front
+        // guard for the snapshot's team -- but neither grants
+        // hasAccredidationRight(300), the player's CURRENT team.
+        $_SESSION['userproperties']['userrole'] = ['teamadmin' => [301 => true], 'accradmin' => [301 => true]];
+        $_SESSION['uid'] = 'teamadmin301';
+        try {
+            $result = GameHistoryRestore($snapshotId);
+
+            $this->assertTrue($result['restored'], 'the restore must still complete, not abort');
+
+            $warningsText = implode(' | ', $result['warnings']);
+            $this->assertStringContainsString('Downgrade Target', $warningsText);
+
+            $acknowledged = (int) DBQueryToValue(sprintf(
+                "SELECT acknowledged FROM uo_played WHERE game=701 AND player=%d",
+                $playerId,
+            ));
+            $this->assertSame(0, $acknowledged);
+        } finally {
+            $_SESSION['uid'] = 'testuser';
+            $_SESSION['userproperties']['userrole'] = ['superadmin' => true];
+            DBQuery(sprintf("DELETE FROM uo_played WHERE player=%d AND game=701", $playerId));
+            DBQuery(sprintf("DELETE FROM uo_player WHERE player_id=%d", $playerId));
+        }
+    }
+
     public function testBuildSnapshotCapturesDefensesAndTimerFields(): void
     {
         DBQuery("UPDATE uo_game SET homedefenses=3, visitordefenses=2,
@@ -1187,17 +1238,34 @@ final class GamehistoryFunctionsLibTest extends TestCase
 
         $snapshot = GameHistoryBuildSnapshot(700);
 
-        $this->assertSame(2, $snapshot['v']);
+        $this->assertSame(3, $snapshot['v']);
         $this->assertSame(3, $snapshot['game']['homedefenses']);
         $this->assertSame(2, $snapshot['game']['visitordefenses']);
         $this->assertSame(1000, $snapshot['game']['timer_start']);
         $this->assertNull($snapshot['game']['timer_pause_start']);
         $this->assertSame(45, $snapshot['game']['timer_paused_duration']);
+
+        // v3: timer_elapsed is GameTimerState()'s own elapsed figure at
+        // capture time -- not asserted against a literal, since it depends
+        // on time() at the moment GameHistoryBuildSnapshot() ran, only that
+        // it was captured and matches that formula within a tight window.
+        $expectedElapsed = time() - 1000 - 45;
+        $this->assertIsInt($snapshot['game']['timer_elapsed']);
+        $this->assertEqualsWithDelta($expectedElapsed, $snapshot['game']['timer_elapsed'], 2);
     }
 
     public function testRestoreRoundTripsDefenseCountsAndTimerColumns(): void
     {
-        DBQuery("UPDATE uo_game SET homedefenses=4, visitordefenses=1,
+        // Paused fixture: 2100-2000-30=70 is the elapsed game time
+        // GameTimerState() reports, and that figure is what a v3 restore
+        // must reproduce -- not the literal 2000/2100 epoch, which
+        // GameHistoryRestoreResult() now derives fresh from the captured
+        // elapsed time instead of replaying verbatim (see C3 in
+        // docs/game-history.md). isongoing=1 is needed too: GameTimerState()
+        // only reports paused/elapsed for an ongoing game, and the fixture's
+        // default isongoing=0 (final result) would mask this regardless of
+        // the timer columns.
+        DBQuery("UPDATE uo_game SET homedefenses=4, visitordefenses=1, isongoing=1,
             timer_start=2000, timer_pause_start=2100, timer_paused_duration=30
             WHERE game_id=700");
 
@@ -1218,9 +1286,11 @@ final class GamehistoryFunctionsLibTest extends TestCase
         );
         $this->assertSame('4', (string) $game['homedefenses']);
         $this->assertSame('1', (string) $game['visitordefenses']);
-        $this->assertSame('2000', (string) $game['timer_start']);
-        $this->assertSame('2100', (string) $game['timer_pause_start']);
-        $this->assertSame('30', (string) $game['timer_paused_duration']);
+
+        $state = GameTimerState(700);
+        $this->assertTrue($state['paused'], 'the restored snapshot was captured while paused');
+        $this->assertSame(70, $state['elapsed'], 'paused elapsed is frozen at capture time: 2100-2000-30');
+        $this->assertSame('0', (string) $game['timer_paused_duration']);
     }
 
     public function testRestorePreservesNullTimerColumnsInsteadOfZero(): void
@@ -1269,6 +1339,7 @@ final class GamehistoryFunctionsLibTest extends TestCase
             $snapshot['game']['timer_start'],
             $snapshot['game']['timer_pause_start'],
             $snapshot['game']['timer_paused_duration'],
+            $snapshot['game']['timer_elapsed'],
         );
         $historyId = (int) DBQueryInsert(sprintf(
             "INSERT INTO uo_game_history (game, user_id, ip, source, target, action, has_snapshot, snapshot)
@@ -1292,6 +1363,77 @@ final class GamehistoryFunctionsLibTest extends TestCase
         $this->assertNull($game['timer_start']);
         $this->assertNull($game['timer_pause_start']);
         $this->assertSame('0', (string) $game['timer_paused_duration']);
+    }
+
+    public function testRestoreOfAnOlderSnapshotWithoutTimerElapsedStillReplaysTheEpochVerbatim(): void
+    {
+        // v1/v2 fallback: a snapshot that predates the C3 fix (or a v2
+        // snapshot restored before this branch existed) has no
+        // timer_elapsed key, so GameHistoryRestoreResult() must fall back to
+        // writing the captured timer_start/timer_pause_start/
+        // timer_paused_duration back verbatim -- the same behavior a v2
+        // snapshot always had, without a warning or a fatal.
+        DBQuery("UPDATE uo_game SET timer_start=2000, timer_pause_start=2100,
+            timer_paused_duration=30 WHERE game_id=700");
+        $snapshot = GameHistoryBuildSnapshot(700);
+        $snapshot['v'] = 2;
+        unset($snapshot['game']['timer_elapsed']);
+        $historyId = (int) DBQueryInsert(sprintf(
+            "INSERT INTO uo_game_history (game, user_id, ip, source, target, action, has_snapshot, snapshot)
+             VALUES (700, 'testuser', '203.0.113.7', 'user', 'snapshot', 'capture', 1, '%s')",
+            DBEscapeString(json_encode($snapshot)),
+        ));
+
+        DBQuery("UPDATE uo_game SET timer_start=NULL, timer_pause_start=NULL,
+            timer_paused_duration=0 WHERE game_id=700");
+
+        $result = GameHistoryRestore($historyId);
+
+        $this->assertTrue($result['restored']);
+        $game = DBQueryToRow(
+            "SELECT timer_start, timer_pause_start, timer_paused_duration FROM uo_game WHERE game_id=700",
+        );
+        $this->assertSame('2000', (string) $game['timer_start']);
+        $this->assertSame('2100', (string) $game['timer_pause_start']);
+        $this->assertSame('30', (string) $game['timer_paused_duration']);
+    }
+
+    public function testRestoreOfARunningClockReproducesTheElapsedTimeAtCaptureNotTheWallClockDelayUntilRestore(): void
+    {
+        // C3: timer_start is an absolute Unix epoch (see GameTimerState()),
+        // so replaying it verbatim after a delay between capture and
+        // restore counts that delay as game time. This simulates the delay
+        // without sleeping: capture a REAL snapshot via
+        // GameHistorySnapshotIfNeeded() (so GameHistoryBuildSnapshot()
+        // actually computes and stores timer_elapsed), then push the STORED
+        // snapshot's timer_start back by an hour before restoring -- if the
+        // restore replayed that epoch verbatim, the extra hour would show up
+        // as elapsed game time.
+        DBQuery("UPDATE uo_game SET timer_start=" . (time() - 300) . ",
+            timer_pause_start=NULL, timer_paused_duration=0 WHERE game_id=700");
+        $snapshotId = (int) GameHistorySnapshotIfNeeded(700);
+
+        $row = DBQueryToRow("SELECT snapshot FROM uo_game_history WHERE history_id=$snapshotId");
+        $snapshot = json_decode($row['snapshot'], true);
+        $this->assertEqualsWithDelta(300, $snapshot['game']['timer_elapsed'], 2);
+
+        // Simulate an hour passing between capture and restore.
+        $snapshot['game']['timer_start'] -= 3600;
+        DBQuery(sprintf(
+            "UPDATE uo_game_history SET snapshot='%s' WHERE history_id=%d",
+            DBEscapeString(json_encode($snapshot)),
+            $snapshotId,
+        ));
+
+        DBQuery("UPDATE uo_game SET timer_start=NULL, timer_pause_start=NULL,
+            timer_paused_duration=0 WHERE game_id=700");
+
+        $result = GameHistoryRestore($snapshotId);
+
+        $this->assertTrue($result['restored']);
+        $state = GameTimerState(700);
+        $this->assertFalse($state['paused']);
+        $this->assertEqualsWithDelta(300, $state['elapsed'], 5, 'a stale hour-old epoch must not be replayed as extra elapsed game time');
     }
 
     public function testSetGameCommentSnapshotsBeforeOverwritingSoABulkSaveCommentChangeIsUndoable(): void
