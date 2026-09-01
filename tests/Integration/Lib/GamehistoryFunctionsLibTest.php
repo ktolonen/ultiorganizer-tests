@@ -1359,36 +1359,45 @@ final class GamehistoryFunctionsLibTest extends TestCase
         DBQuery("INSERT INTO uo_setting (name, value) VALUES ('DisableGameHistory', 'true')");
         $this->assertTrue(IsGameHistoryDisabled());
 
-        // An ordinary (non-forced) snapshot must not be written while disabled.
-        $this->assertFalse(GameHistorySnapshotIfNeeded(700));
-        $this->assertSame(
-            0,
-            (int) DBQueryToValue("SELECT COUNT(*) FROM uo_game_history WHERE game=700"),
-        );
+        try {
+            // An ordinary (non-forced) snapshot must not be written while disabled.
+            $this->assertFalse(GameHistorySnapshotIfNeeded(700));
+            $this->assertSame(
+                0,
+                (int) DBQueryToValue("SELECT COUNT(*) FROM uo_game_history WHERE game=700"),
+            );
 
-        // Seed a restorable snapshot by force-capturing, the same as
-        // GameHistoryRestore()'s own pre-restore capture.
-        $snapshotId = (int) GameHistorySnapshotIfNeeded(700, true);
-        $this->assertGreaterThan(0, $snapshotId);
+            // Seed a restorable snapshot by force-capturing, the same as
+            // GameHistoryRestore()'s own pre-restore capture.
+            $snapshotId = (int) GameHistorySnapshotIfNeeded(700, true);
+            $this->assertGreaterThan(0, $snapshotId);
 
-        GameRemoveAllScores(700);
-        DBQuery("DELETE FROM uo_game_history WHERE game=700 AND has_snapshot=0");
+            GameRemoveAllScores(700);
+            DBQuery("DELETE FROM uo_game_history WHERE game=700 AND has_snapshot=0");
 
-        $result = GameHistoryRestore($snapshotId);
+            $result = GameHistoryRestore($snapshotId);
 
-        $this->assertTrue($result['restored']);
-        $this->assertSame(4, (int) DBQueryToValue("SELECT COUNT(*) FROM uo_goal WHERE game=700"));
+            $this->assertTrue($result['restored']);
+            $this->assertSame(4, (int) DBQueryToValue("SELECT COUNT(*) FROM uo_goal WHERE game=700"));
 
-        // The restore's own pre-restore force-capture (of the damaged state)
-        // and its restore audit row must both survive DisableGameHistory=true.
-        $snapshots = (int) DBQueryToValue(
-            "SELECT COUNT(*) FROM uo_game_history WHERE game=700 AND has_snapshot=1",
-        );
-        $this->assertSame(2, $snapshots);
-        $restoreRows = (int) DBQueryToValue(
-            "SELECT COUNT(*) FROM uo_game_history WHERE game=700 AND target='restore'",
-        );
-        $this->assertSame(1, $restoreRows);
+            // The restore's own pre-restore force-capture (of the damaged state)
+            // and its restore audit row must both survive DisableGameHistory=true.
+            $snapshots = (int) DBQueryToValue(
+                "SELECT COUNT(*) FROM uo_game_history WHERE game=700 AND has_snapshot=1",
+            );
+            $this->assertSame(2, $snapshots);
+            $restoreRows = (int) DBQueryToValue(
+                "SELECT COUNT(*) FROM uo_game_history WHERE game=700 AND target='restore'",
+            );
+            $this->assertSame(1, $restoreRows);
+        } finally {
+            // This test runs in its own process (see the RunInSeparateProcess
+            // attribute above), but the setting row it flips to 'true' is real,
+            // shared DB state that outlives the process -- reset it so a test
+            // running in a later process doesn't inherit recording disabled.
+            DBQuery("DELETE FROM uo_setting WHERE name='DisableGameHistory'");
+            DBQuery("INSERT INTO uo_setting (name, value) VALUES ('DisableGameHistory', 'false')");
+        }
     }
 
     public function testRestoreKeepsAnAcknowledgedUnaccreditedPlayerInAnAccreditationRequiredEvent(): void
