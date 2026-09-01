@@ -968,9 +968,11 @@ final class PrivacyFunctionsLibTest extends TestCase
         // `snapshot` must not surface, while a marker planted in `detail`
         // (a column the export does include) must.
         $snapshotJson = json_encode(['marker' => 'PRIVACY_SNAPSHOT_MARKER_SHOULD_NOT_LEAK']);
+        $ip = '203.0.113.77';
         $historyId = (int) DBQueryInsert(sprintf(
             "INSERT INTO uo_game_history (game, user_id, ip, source, target, action, has_snapshot, snapshot, detail)
-             VALUES (700, 'admin', '203.0.113.9', 'harness', 'played', 'update', 1, '%s', '%s')",
+             VALUES (700, 'admin', '%s', 'harness', 'played', 'update', 1, '%s', '%s')",
+            DBEscapeString($ip),
             DBEscapeString($snapshotJson),
             DBEscapeString(json_encode(['marker' => 'PRIVACY_DETAIL_MARKER_SHOULD_APPEAR'])),
         ));
@@ -986,11 +988,14 @@ final class PrivacyFunctionsLibTest extends TestCase
             }
             $this->assertNotNull($found, 'the row for this user must be present in the export');
             $this->assertArrayNotHasKey('snapshot', $found);
+            $this->assertSame($ip, $found['ip'], 'the stored ip must be part of the exported row');
+            $this->assertSame('admin', $found['user_id']);
 
             $report = PrivacyRenderUserReportText('admin', 'admin');
             $this->assertNotNull($report);
             $this->assertStringContainsString('PRIVACY_DETAIL_MARKER_SHOULD_APPEAR', $report);
             $this->assertStringNotContainsString('PRIVACY_SNAPSHOT_MARKER_SHOULD_NOT_LEAK', $report);
+            $this->assertStringContainsString($ip, $report, 'the exported report text must include the stored ip address');
         } finally {
             $this->cleanupGameHistoryRows([$historyId]);
             self::flushQueryCaches();
