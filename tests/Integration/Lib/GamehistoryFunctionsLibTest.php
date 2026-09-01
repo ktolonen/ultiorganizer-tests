@@ -591,6 +591,121 @@ final class GamehistoryFunctionsLibTest extends TestCase
         $this->assertSame('Halftime cap', $gameeventCap);
     }
 
+    public function testFormatDetailRendersTheAcknowledgedPlayedChange(): void
+    {
+        $acknowledged = GameHistoryFormatDetail([
+            'target' => 'played',
+            'action' => 'update',
+            'detail' => json_encode(['player' => 800, 'acknowledged' => 1]),
+        ]);
+        $this->assertSame('Player 800: Acknowledged', $acknowledged);
+
+        $unacknowledged = GameHistoryFormatDetail([
+            'target' => 'played',
+            'action' => 'update',
+            'detail' => json_encode(['player' => 800, 'acknowledged' => 0]),
+        ]);
+        $this->assertSame('Player 800: Not acknowledged', $unacknowledged);
+
+        // A plain jersey-number change (no 'acknowledged' key) must still
+        // fall through to the generic "Player N" rendering.
+        $numberChange = GameHistoryFormatDetail([
+            'target' => 'played',
+            'action' => 'update',
+            'detail' => json_encode(['player' => 800, 'num' => 21]),
+        ]);
+        $this->assertSame('Player 800', $numberChange);
+    }
+
+    public function testFormatDetailRendersEachTimerAction(): void
+    {
+        $this->assertSame('Start game clock', GameHistoryFormatDetail([
+            'target' => 'timer', 'action' => 'start', 'detail' => json_encode([]),
+        ]));
+        $this->assertSame('Pause game clock', GameHistoryFormatDetail([
+            'target' => 'timer', 'action' => 'pause', 'detail' => json_encode([]),
+        ]));
+        $this->assertSame('Resume game clock', GameHistoryFormatDetail([
+            'target' => 'timer', 'action' => 'resume', 'detail' => json_encode([]),
+        ]));
+        $this->assertSame('Reset game clock', GameHistoryFormatDetail([
+            'target' => 'timer', 'action' => 'reset', 'detail' => json_encode([]),
+        ]));
+        $this->assertSame('Set game clock: 125', GameHistoryFormatDetail([
+            'target' => 'timer', 'action' => 'update', 'detail' => json_encode(['elapsed' => 125]),
+        ]));
+    }
+
+    // --- R1: AcknowledgeUnaccredited() / UnAcknowledgeUnaccredited() ---
+
+    public function testAcknowledgeUnaccreditedWritesAPlayedUpdateRowAndASnapshot(): void
+    {
+        DBQuery("UPDATE uo_played SET acknowledged=0 WHERE game=700 AND player=800");
+        DBQuery("DELETE FROM uo_game_history WHERE game=700");
+
+        AcknowledgeUnaccredited(800, 700, 'test-acknowledge');
+
+        $row = DBQueryToRow(
+            "SELECT action, detail FROM uo_game_history
+             WHERE game=700 AND target='played' AND action='update' ORDER BY history_id DESC LIMIT 1",
+        );
+        $this->assertNotNull($row, 'AcknowledgeUnaccredited() must write a played/update row');
+        $detail = json_decode($row['detail'], true);
+        $this->assertSame(800, $detail['player']);
+        $this->assertSame(1, $detail['acknowledged']);
+
+        $snapshotCount = (int) DBQueryToValue(
+            "SELECT COUNT(*) FROM uo_game_history WHERE game=700 AND has_snapshot=1",
+        );
+        $this->assertSame(1, $snapshotCount, 'AcknowledgeUnaccredited() must also create a restore point');
+    }
+
+    public function testUnAcknowledgeUnaccreditedWritesAPlayedUpdateRowAndASnapshot(): void
+    {
+        DBQuery("DELETE FROM uo_game_history WHERE game=700");
+
+        UnAcknowledgeUnaccredited(800, 700, 'test-unacknowledge');
+
+        $row = DBQueryToRow(
+            "SELECT action, detail FROM uo_game_history
+             WHERE game=700 AND target='played' AND action='update' ORDER BY history_id DESC LIMIT 1",
+        );
+        $this->assertNotNull($row, 'UnAcknowledgeUnaccredited() must write a played/update row');
+        $detail = json_decode($row['detail'], true);
+        $this->assertSame(800, $detail['player']);
+        $this->assertSame(0, $detail['acknowledged']);
+
+        $snapshotCount = (int) DBQueryToValue(
+            "SELECT COUNT(*) FROM uo_game_history WHERE game=700 AND has_snapshot=1",
+        );
+        $this->assertSame(1, $snapshotCount, 'UnAcknowledgeUnaccredited() must also create a restore point');
+    }
+
+    public function testRestoreReinstatesAcknowledgedValueToggledThroughUnAcknowledgeUnaccredited(): void
+    {
+        DBQuery("DELETE FROM uo_game_history WHERE game=700");
+
+        // No manual GameHistorySnapshotIfNeeded() call: the restore point
+        // must come from UnAcknowledgeUnaccredited() itself, so this pins
+        // both halves of the fix (recording and restorability) together.
+        UnAcknowledgeUnaccredited(800, 700, 'test-unacknowledge');
+        $this->assertSame(0, (int) DBQueryToValue(
+            "SELECT acknowledged FROM uo_played WHERE game=700 AND player=800",
+        ));
+
+        $snapshotId = (int) DBQueryToValue(
+            "SELECT history_id FROM uo_game_history WHERE game=700 AND has_snapshot=1 ORDER BY history_id DESC LIMIT 1",
+        );
+        $this->assertGreaterThan(0, $snapshotId, 'UnAcknowledgeUnaccredited() must create a restore point');
+
+        $result = GameHistoryRestore($snapshotId);
+
+        $this->assertTrue($result['restored']);
+        $this->assertSame(1, (int) DBQueryToValue(
+            "SELECT acknowledged FROM uo_played WHERE game=700 AND player=800",
+        ));
+    }
+
     public function testFormatDetailNeverEmitsTheRawResultStateToken(): void
     {
         $ongoing = GameHistoryFormatDetail([

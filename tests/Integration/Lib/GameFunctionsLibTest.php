@@ -93,7 +93,7 @@ final class GameFunctionsLibTest extends TestCase
         int    $visitorTeam = 301,
         int    $poolId = 200,
         ?int   $reservation = null,
-        ?string $time = null
+        ?string $time = null,
     ): int {
         $reservationSql = $reservation === null ? 'NULL' : (string) $reservation;
         $timeSql = $time === null ? 'NULL' : "'" . DBEscapeString($time) . "'";
@@ -639,8 +639,8 @@ final class GameFunctionsLibTest extends TestCase
     public function testGoalDisplayTextCallahan(): void
     {
         $goal = ['iscallahan' => 1, 'assist' => null, 'scorer' => null,
-                 'assistfirstname' => '', 'assistlastname' => '',
-                 'scorerfirstname' => '', 'scorerlastname' => ''];
+            'assistfirstname' => '', 'assistlastname' => '',
+            'scorerfirstname' => '', 'scorerlastname' => ''];
         $text = GoalDisplayText($goal, 700);
         $this->assertNotSame('', $text);
     }
@@ -1627,6 +1627,47 @@ final class GameFunctionsLibTest extends TestCase
         $this->assertNotFalse($result);
     }
 
+    public function testGameTimeMutatorsRecordAHistoryRowForEachOperation(): void
+    {
+        $gameId = $this->createTempGame();
+
+        GameTimeStart($gameId);
+        GameTimePause($gameId);
+        GameTimeSetElapsed($gameId, 125);
+        GameTimeResume($gameId);
+        GameTimeReset($gameId);
+
+        $rows = DBQueryToArray(
+            "SELECT action, detail FROM uo_game_history WHERE game=$gameId AND target='timer' ORDER BY history_id",
+        );
+        $actions = array_column($rows, 'action');
+        $this->assertSame(['start', 'pause', 'update', 'resume', 'reset'], $actions);
+
+        $setElapsed = json_decode($rows[2]['detail'], true);
+        $this->assertSame(125, $setElapsed['elapsed']);
+    }
+
+    public function testGameTimeMutatorsNeverCreateASnapshot(): void
+    {
+        // R2 ruling: restore is whole-sheet, so a clock-only restore point
+        // would roll back goals/roster/result along with the timer edit. This
+        // pins that none of the five clock mutators calls
+        // GameHistorySnapshotIfNeeded(), even though each records its own
+        // change row (see testGameTimeMutatorsRecordAHistoryRowForEachOperation()).
+        $gameId = $this->createTempGame();
+
+        GameTimeStart($gameId);
+        GameTimePause($gameId);
+        GameTimeSetElapsed($gameId, 125);
+        GameTimeResume($gameId);
+        GameTimeReset($gameId);
+
+        $snapshotCount = (int) DBQueryToValue(
+            "SELECT COUNT(*) FROM uo_game_history WHERE game=$gameId AND has_snapshot=1",
+        );
+        $this->assertSame(0, $snapshotCount);
+    }
+
     // --- GameProcessMassInput ---
 
     public function testGameProcessMassInputClearsResult(): void
@@ -1819,7 +1860,7 @@ final class GameFunctionsLibTest extends TestCase
              VALUES ('TempTestPool', '99', 0, 0, 0, 0, 0,
              70, 35, 15, NULL, NULL, 0, NULL, NULL,
              2, 'half', 1, 'soft', 90, 100, 1,
-             15, 0, 0)"
+             15, 0, 0)",
         );
         $tempPoolId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
         try {
