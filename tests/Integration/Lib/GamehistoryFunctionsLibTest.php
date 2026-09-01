@@ -1447,4 +1447,46 @@ final class GamehistoryFunctionsLibTest extends TestCase
             DBQuery(sprintf("DELETE FROM uo_player WHERE player_id=%d", $playerId));
         }
     }
+
+    public function testRestoreRestoresCaptainAndSpiritCaptainFlags(): void
+    {
+        // GameHistoryRestorePlayers() no longer makes a separate
+        // GameSetRolePlayers() pass after the roster rewrite (see V5) --
+        // captain/spirit_captain correctness now rests entirely on
+        // GameHistoryRestorePlayerRow()'s direct INSERT including those two
+        // columns. Fixture game 700 already flags players 800 and 802
+        // captain=1; add a spirit captain too so both roles are covered.
+        GameSetSpiritCaptains(700, 300, [801]);
+        // GameSetSpiritCaptains() snapshots itself (via GameSetRolePlayers())
+        // BEFORE its own write, which would otherwise win the per-request
+        // memo and capture the state prior to the spirit-captain flag being
+        // set -- force a fresh capture, same as
+        // testRestoreReproducesTheStartingOffence() does for the same reason.
+        $snapshotId = (int) GameHistorySnapshotIfNeeded(700, true);
+
+        // Damage every role flag on the game the way GameRemoveAllPlayers()
+        // (called at the start of GameHistoryRestorePlayers()) effectively
+        // does, and confirm the damage actually took -- otherwise a restore
+        // that silently drops the captain/spirit_captain columns from the
+        // direct write could pass this test by accident.
+        DBQuery("UPDATE uo_played SET captain=0, spirit_captain=0 WHERE game=700");
+        $this->assertSame(
+            0,
+            (int) DBQueryToValue(
+                "SELECT COUNT(*) FROM uo_played WHERE game=700 AND (captain=1 OR spirit_captain=1)",
+            ),
+        );
+
+        $result = GameHistoryRestore($snapshotId);
+
+        $this->assertTrue($result['restored']);
+
+        $captains = DBQueryToArray("SELECT player FROM uo_played WHERE game=700 AND captain=1 ORDER BY player");
+        $this->assertSame([800, 802], array_map('intval', array_column($captains, 'player')));
+
+        $spiritCaptain = (int) DBQueryToValue(
+            "SELECT player FROM uo_played WHERE game=700 AND spirit_captain=1",
+        );
+        $this->assertSame(801, $spiritCaptain);
+    }
 }
