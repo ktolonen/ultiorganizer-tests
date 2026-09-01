@@ -256,6 +256,58 @@ final class GamehistoryFunctionsLibTest extends TestCase
         $this->assertGreaterThan(0, $id);
     }
 
+    public function testRecordDeniesAMediaOnlyRightForANonMediaTarget(): void
+    {
+        // hasAddMediaRight() carries no game or team scope at all -- it is
+        // true for any logged-in session -- so GameHistoryAuthorized() must
+        // accept it only for the 'mediaevent' target. Accepting it
+        // unconditionally would make 'result' recordable by any
+        // authenticated user, which is what this pins.
+        $_SESSION['userproperties']['userrole'] = [];
+        $_SESSION['uid'] = 'mediaonlyuser';
+        try {
+            $this->assertFalse(GameHistoryRecord(700, 'result', 'update', ['home' => 1, 'away' => 0]));
+        } finally {
+            $_SESSION['uid'] = 'testuser';
+            $_SESSION['userproperties']['userrole'] = ['superadmin' => true];
+        }
+        $count = (int) DBQueryToValue("SELECT COUNT(*) FROM uo_game_history WHERE game=700 AND target='result'");
+        $this->assertSame(0, $count);
+    }
+
+    public function testRecordDeniesAMediaOnlyRightForAGoalTarget(): void
+    {
+        $_SESSION['userproperties']['userrole'] = [];
+        $_SESSION['uid'] = 'mediaonlyuser';
+        try {
+            $this->assertFalse(GameHistoryRecord(700, 'goal', 'add', ['num' => 1]));
+        } finally {
+            $_SESSION['uid'] = 'testuser';
+            $_SESSION['userproperties']['userrole'] = ['superadmin' => true];
+        }
+        $count = (int) DBQueryToValue("SELECT COUNT(*) FROM uo_game_history WHERE game=700 AND target='goal'");
+        $this->assertSame(0, $count);
+    }
+
+    public function testSnapshotIfNeededDeniesAMediaOnlyRight(): void
+    {
+        // No mediaevent mutator ever snapshots (media links are excluded
+        // from GameHistoryBuildSnapshot()), so hasAddMediaRight() must not
+        // be accepted here at all -- GameHistorySnapshotIfNeeded() passes no
+        // $target to GameHistoryAuthorized(), so the media branch can never
+        // match regardless of the target a future caller might imagine.
+        $_SESSION['userproperties']['userrole'] = [];
+        $_SESSION['uid'] = 'mediaonlyuser';
+        try {
+            $this->assertFalse(GameHistorySnapshotIfNeeded(700));
+        } finally {
+            $_SESSION['uid'] = 'testuser';
+            $_SESSION['userproperties']['userrole'] = ['superadmin' => true];
+        }
+        $count = (int) DBQueryToValue("SELECT COUNT(*) FROM uo_game_history WHERE game=700");
+        $this->assertSame(0, $count);
+    }
+
     public function testSnapshotIfNeededDeniesASessionWithNoneOfTheFourRights(): void
     {
         $_SESSION['userproperties']['userrole'] = [];
