@@ -68,6 +68,13 @@ final class GamehistoryFunctionsLibTest extends TestCase
         // player; other suites assert exact roster sizes for its team.
         DBQuery("DELETE FROM uo_player WHERE firstname='New' AND lastname='Player'");
 
+        // testRestoreSkipsAnAmbiguousJerseyNumberRematchInsteadOfGuessing()
+        // already cleans up its two ambiguous-candidate players in a
+        // finally, but a fatal mid-test would skip that -- backstop it here
+        // the same way the 'New'/'Player' row above is, so team 300's roster
+        // size stays deterministic for other suites.
+        DBQuery("DELETE FROM uo_player WHERE team=300 AND firstname='Ambiguous' AND lastname IN ('One', 'Two')");
+
         DBQuery("DELETE FROM uo_game_history WHERE game IN (700, 701)");
 
         // Restore tests mutate the shared fixture game 700.
@@ -190,6 +197,74 @@ final class GamehistoryFunctionsLibTest extends TestCase
             $this->assertFalse(GameHistoryRecord(700, 'goal', 'add', ['num' => 1]));
         } finally {
             GameHistorySuppressed(false);
+        }
+        $count = (int) DBQueryToValue("SELECT COUNT(*) FROM uo_game_history WHERE game=700");
+        $this->assertSame(0, $count);
+    }
+
+    public function testRecordDeniesASessionWithNoneOfTheFourRights(): void
+    {
+        // Neither hasEditGameEventsRight()/hasEditGamePlayersRight() (no
+        // role at all), hasAccredidationRight() (no accradmin/season/series
+        // admin), nor hasAddMediaRight() (anonymous uid) can pass here -- the
+        // one combination GameHistoryAuthorized() must refuse.
+        $_SESSION['userproperties']['userrole'] = [];
+        $_SESSION['uid'] = 'anonymous';
+        try {
+            $this->assertFalse(GameHistoryRecord(700, 'goal', 'add', ['num' => 1]));
+        } finally {
+            $_SESSION['uid'] = 'testuser';
+            $_SESSION['userproperties']['userrole'] = ['superadmin' => true];
+        }
+        $count = (int) DBQueryToValue("SELECT COUNT(*) FROM uo_game_history WHERE game=700");
+        $this->assertSame(0, $count);
+    }
+
+    public function testRecordSucceedsForAnAccreditationOnlyRight(): void
+    {
+        // uid stays 'anonymous' so hasAddMediaRight() cannot mask a missing
+        // hasAccredidationRight() check -- otherwise any logged-in session
+        // would pass via the media right regardless of role, and this test
+        // would not actually exercise the accreditation branch of the guard.
+        // Game 700's respteam (home team) is 300 (see fixtures/baseline.sql).
+        $_SESSION['userproperties']['userrole'] = ['accradmin' => [300 => true]];
+        $_SESSION['uid'] = 'anonymous';
+        try {
+            $id = (int) GameHistoryRecord(700, 'played', 'update', ['player' => 800, 'acknowledged' => 1]);
+        } finally {
+            $_SESSION['uid'] = 'testuser';
+            $_SESSION['userproperties']['userrole'] = ['superadmin' => true];
+        }
+        $this->assertGreaterThan(0, $id);
+    }
+
+    public function testRecordSucceedsForAMediaOnlyRight(): void
+    {
+        // No teamadmin/seasonadmin/seriesadmin/gameadmin/resgameadmin/
+        // accradmin grant at all: hasEditGameEventsRight(),
+        // hasEditGamePlayersRight() and hasAccredidationRight() all fail
+        // here, so only hasAddMediaRight() (a logged-in, non-anonymous uid)
+        // can let this through.
+        $_SESSION['userproperties']['userrole'] = [];
+        $_SESSION['uid'] = 'mediaonlyuser';
+        try {
+            $id = (int) GameHistoryRecord(700, 'mediaevent', 'add', ['url' => 1]);
+        } finally {
+            $_SESSION['uid'] = 'testuser';
+            $_SESSION['userproperties']['userrole'] = ['superadmin' => true];
+        }
+        $this->assertGreaterThan(0, $id);
+    }
+
+    public function testSnapshotIfNeededDeniesASessionWithNoneOfTheFourRights(): void
+    {
+        $_SESSION['userproperties']['userrole'] = [];
+        $_SESSION['uid'] = 'anonymous';
+        try {
+            $this->assertFalse(GameHistorySnapshotIfNeeded(700));
+        } finally {
+            $_SESSION['uid'] = 'testuser';
+            $_SESSION['userproperties']['userrole'] = ['superadmin' => true];
         }
         $count = (int) DBQueryToValue("SELECT COUNT(*) FROM uo_game_history WHERE game=700");
         $this->assertSame(0, $count);
@@ -986,6 +1061,58 @@ final class GamehistoryFunctionsLibTest extends TestCase
         }
     }
 
+    public function testRestoreSkipsAnAmbiguousJerseyNumberRematchInsteadOfGuessing(): void
+    {
+        DBQuery("INSERT INTO uo_player (firstname, lastname, team, num, accreditation_id, accredited, reg_id, profile_id)
+                 VALUES ('Temp', 'Ambiguous', 300, 22, NULL, 1, NULL, NULL)");
+        $tempPlayerId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+        DBQuery(sprintf(
+            "INSERT INTO uo_played (player, game, num, accredited, acknowledged, captain) VALUES (%d, 700, 22, 1, 0, 0)",
+            $tempPlayerId,
+        ));
+
+        $snapshotId = (int) GameHistorySnapshotIfNeeded(700);
+
+        // The snapshotted player id is gone, and TWO current players on team
+        // 300 now wear jersey 22 -- uo_player has no unique constraint on
+        // (team, num), so this is a legitimate database state. A LIMIT 1
+        // fallback would silently pick whichever of these two the database
+        // happens to return first and attribute the snapshot's stats to
+        // them; the fix must refuse to guess instead.
+        DBQuery(sprintf("DELETE FROM uo_played WHERE player=%d AND game=700", $tempPlayerId));
+        DBQuery(sprintf("DELETE FROM uo_player WHERE player_id=%d", $tempPlayerId));
+        DBQuery("INSERT INTO uo_player (firstname, lastname, team, num, accreditation_id, accredited, reg_id, profile_id)
+                 VALUES ('Ambiguous', 'One', 300, 22, NULL, 1, NULL, NULL)");
+        $ambiguousOneId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+        DBQuery("INSERT INTO uo_player (firstname, lastname, team, num, accreditation_id, accredited, reg_id, profile_id)
+                 VALUES ('Ambiguous', 'Two', 300, 22, NULL, 1, NULL, NULL)");
+        $ambiguousTwoId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+
+        try {
+            $result = GameHistoryRestore($snapshotId);
+
+            $this->assertTrue($result['restored']);
+            $this->assertSame(
+                [
+                    'Pool is locked.',
+                    'Event played.',
+                    'Player Temp Ambiguous could not be restored: jersey number 22 is not unique on team Helsinki Heat.',
+                ],
+                $result['warnings'],
+            );
+
+            $count = (int) DBQueryToValue(sprintf(
+                "SELECT COUNT(*) FROM uo_played WHERE game=700 AND player IN (%d, %d)",
+                $ambiguousOneId,
+                $ambiguousTwoId,
+            ));
+            $this->assertSame(0, $count, 'Neither ambiguous candidate should have been guessed onto the roster.');
+        } finally {
+            DBQuery(sprintf("DELETE FROM uo_played WHERE player IN (%d, %d) AND game=700", $ambiguousOneId, $ambiguousTwoId));
+            DBQuery(sprintf("DELETE FROM uo_player WHERE player_id IN (%d, %d)", $ambiguousOneId, $ambiguousTwoId));
+        }
+    }
+
     public function testRestoreCompletesTheFullReplayWhenAScorerCannotBeRematched(): void
     {
         // Unlike testRestoreRematchesADeletedPlayerByTeamAndJerseyNumber(),
@@ -1578,6 +1705,25 @@ final class GamehistoryFunctionsLibTest extends TestCase
         $result = GameHistoryRestore($snapshotId);
         $this->assertTrue($result['restored']);
         $this->assertSame('Original comment', CommentRaw(COMMENT_TYPE_GAME, 700));
+    }
+
+    public function testRestorePutsBackACommentOfLiteralZeroInsteadOfDeletingIt(): void
+    {
+        // empty("0") is true in PHP -- restoring via that check instead of
+        // an explicit === "" comparison would treat a snapshot holding the
+        // literal text "0" as a delete request.
+        SetGameComment(COMMENT_TYPE_GAME, 700, '0');
+        DBQuery("DELETE FROM uo_game_history WHERE game=700");
+        CacheForgetNamespace('game_history_snapshot');
+
+        $snapshotId = (int) GameHistorySnapshotIfNeeded(700);
+        $this->assertGreaterThan(0, $snapshotId);
+
+        SetGameComment(COMMENT_TYPE_GAME, 700, 'Something else');
+
+        $result = GameHistoryRestore($snapshotId);
+        $this->assertTrue($result['restored']);
+        $this->assertSame('0', CommentRaw(COMMENT_TYPE_GAME, 700));
     }
 
     public function testGameUpdateResultSnapshotsByDefault(): void
