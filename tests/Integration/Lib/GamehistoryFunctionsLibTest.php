@@ -322,6 +322,19 @@ final class GamehistoryFunctionsLibTest extends TestCase
         $this->assertSame(0, $count);
     }
 
+    public function testWriteSnapshotIsNoLongerAStandaloneUngatedEntryPoint(): void
+    {
+        // GameHistoryWriteSnapshot() used to perform the uo_game_history
+        // insert with none of GameHistorySnapshotIfNeeded()'s own guards
+        // (disabled setting, suppression, $gameId, GameHistoryAuthorized())
+        // applied to it directly -- its only caller was the CacheRemember()
+        // closure inside GameHistorySnapshotIfNeeded() itself. It is now
+        // inlined into that closure and the standalone function removed, so
+        // there is no longer a way to reach the insert without going through
+        // every guard above.
+        $this->assertFalse(function_exists('GameHistoryWriteSnapshot'));
+    }
+
     public function testBuildSnapshotCapturesGameScalarsGoalsAndPlayers(): void
     {
         $snapshot = GameHistoryBuildSnapshot(700);
@@ -406,6 +419,55 @@ final class GamehistoryFunctionsLibTest extends TestCase
             "SELECT COUNT(*) FROM uo_game_history WHERE game=701 AND has_snapshot=1",
         );
         $this->assertSame(1, $count);
+    }
+
+    public function testGameSetResultWithoutRightsRecordsHistoryOnlyWhenAnonymousResultInputIsEnabled(): void
+    {
+        // M1: GameSetResult(..., $checkRights=false) is the
+        // ANONYMOUS_RESULT_INPUT self-report route (result.php,
+        // scorekeeper/result.php). With no session rights at all, none of
+        // GameHistoryAuthorized()'s four ordinary rights can pass, so
+        // recording can only happen through the separately-validated
+        // $allowAnonymousResult signal GameSetResult() now passes through.
+        // The harness runs this same test file against two profiles (see
+        // ConfigurationFunctionsLibTest for the established pattern): the
+        // "config-overrides" case has ANONYMOUS_RESULT_INPUT=true, every
+        // other case (including the default this suite otherwise runs
+        // under) has it false -- so both branches of the fix are exercised
+        // across a full matrix run, and this one test asserts whichever
+        // behavior is correct for the profile actually running.
+        $_SESSION['userproperties']['userrole'] = [];
+        unset($_SESSION['uid']);
+        try {
+            GameSetResult(701, 13, 9, false, false);
+        } finally {
+            $_SESSION['uid'] = 'testuser';
+            $_SESSION['userproperties']['userrole'] = ['superadmin' => true];
+        }
+
+        $snapshotCount = (int) DBQueryToValue(
+            "SELECT COUNT(*) FROM uo_game_history WHERE game=701 AND has_snapshot=1",
+        );
+        $resultRow = DBQueryToRow(
+            "SELECT user_id FROM uo_game_history WHERE game=701 AND target='result' ORDER BY history_id DESC LIMIT 1",
+        );
+
+        if (getenv('UO_CONFIG_PROFILE') === 'config-overrides') {
+            // Enabled: the anonymous self-report route must still produce a
+            // restore point and an attributed history row, not silently
+            // lose both -- the exact regression this fix closes.
+            $this->assertSame(1, $snapshotCount);
+            $this->assertNotNull($resultRow);
+            $this->assertSame('anonymous', $resultRow['user_id']);
+        } else {
+            // Disabled: GameHistoryAuthorized() must still refuse a
+            // $checkRights=false caller with no session rights -- otherwise
+            // a future caller could pass $checkRights=false to bypass the
+            // guard on an installation where anonymous input is off,
+            // reopening the hole the previous round closed.
+            $this->assertSame(0, $snapshotCount);
+            $this->assertNull($resultRow);
+        }
     }
 
     public function testGameAddScoreEntryRecordsOneGoalRowPerPoint(): void
