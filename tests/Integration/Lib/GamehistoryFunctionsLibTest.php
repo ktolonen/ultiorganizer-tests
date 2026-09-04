@@ -1443,6 +1443,47 @@ final class GamehistoryFunctionsLibTest extends TestCase
         }
     }
 
+    public function testRestoreReportsUnnumberedDeletedPlayersAsUnrestorableRatherThanAsAJerseyConflict(): void
+    {
+        // Two deleted snapshot players with NO jersey number. The rematch
+        // query casts a null num to 0 and so can never match them, but the
+        // snapshot-side pre-scan keys on that same cast -- so both rows
+        // would group under jersey "0" and be reported as a conflict over a
+        // number neither player wore. uo_player.num is tinyint unsigned, so
+        // 0 is a jersey someone may genuinely wear; null is the case that
+        // has to be held out of the grouping, not 0.
+        DBQuery("INSERT INTO uo_player (firstname, lastname, team, num, accreditation_id, accredited, reg_id, profile_id)
+                 VALUES ('Unnumbered', 'One', 300, NULL, NULL, 1, NULL, NULL)");
+        $firstId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+        DBQuery("INSERT INTO uo_player (firstname, lastname, team, num, accreditation_id, accredited, reg_id, profile_id)
+                 VALUES ('Unnumbered', 'Two', 300, NULL, NULL, 1, NULL, NULL)");
+        $secondId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+        DBQuery(sprintf(
+            "INSERT INTO uo_played (player, game, num, accredited, acknowledged, captain) VALUES
+             (%d, 700, NULL, 1, 0, 0), (%d, 700, NULL, 1, 0, 0)",
+            $firstId,
+            $secondId,
+        ));
+
+        $snapshotId = (int) GameHistorySnapshotIfNeeded(700, true);
+
+        DBQuery(sprintf("DELETE FROM uo_played WHERE player IN (%d, %d) AND game=700", $firstId, $secondId));
+        DBQuery(sprintf("DELETE FROM uo_player WHERE player_id IN (%d, %d)", $firstId, $secondId));
+
+        $result = GameHistoryRestore($snapshotId);
+
+        $this->assertTrue($result['restored']);
+        $this->assertContains('Player Unnumbered One could not be restored.', $result['warnings']);
+        $this->assertContains('Player Unnumbered Two could not be restored.', $result['warnings']);
+        foreach ($result['warnings'] as $warning) {
+            $this->assertStringNotContainsString(
+                'jersey number 0',
+                $warning,
+                'An absent jersey number must not be reported as a conflict over jersey 0.',
+            );
+        }
+    }
+
     public function testRestoreRefusesARematchThatWouldReuseACandidateAlreadyClaimedByAnUnchangedPlayer(): void
     {
         // X still exists and keeps wearing jersey 26 unchanged; Y wore the
