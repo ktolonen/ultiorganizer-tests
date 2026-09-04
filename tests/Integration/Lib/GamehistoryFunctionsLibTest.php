@@ -2112,6 +2112,133 @@ final class GamehistoryFunctionsLibTest extends TestCase
         $this->assertEqualsWithDelta(300, $state['elapsed'], 5, 'a stale hour-old epoch must not be replayed as extra elapsed game time');
     }
 
+    /**
+     * Create a game note as $author while they still hold the edit right,
+     * then strip the right and leave them logged in as themselves.
+     */
+    private function seedNoteByAuthorWhoThenLosesTheEditRight(string $author): void
+    {
+        $_SESSION['uid'] = $author;
+        $_SESSION['userproperties']['userrole'] = ['superadmin' => true];
+        SetGameComment(COMMENT_TYPE_GAME, 700, 'Note by its author');
+        $this->assertSame('Note by its author', CommentRaw(COMMENT_TYPE_GAME, 700));
+
+        DBQuery("DELETE FROM uo_game_history WHERE game=700");
+        CacheForgetNamespace('game_history_snapshot');
+        $_SESSION['userproperties']['userrole'] = [];
+        $this->assertFalse(hasEditGameEventsRight(700));
+    }
+
+    private function clearCommentEventLog(): void
+    {
+        DBQuery("DELETE FROM uo_event_log WHERE category='game' AND source='comments' AND id1='700'");
+    }
+
+    public function testDeletingOwnNoteAfterLosingTheEditRightStillRecordsAnAuditRow(): void
+    {
+        // CanManageGameComment() permits the original author to delete their
+        // own note without hasEditGameEventsRight(), so this write is
+        // legitimate and must be audited. It is also the case that cannot be
+        // re-derived after the fact: ApplyCommentChange() logs comment_delete,
+        // GameCommentMeta() treats that as a cutoff, and created_by then comes
+        // back empty -- so a fix that only consults CanManageGameComment() at
+        // record time restores the update row but still drops this one.
+        $this->seedNoteByAuthorWhoThenLosesTheEditRight('noteauthor');
+
+        try {
+            $this->assertTrue(SetGameComment(COMMENT_TYPE_GAME, 700, '', true));
+            $this->assertSame('', CommentRaw(COMMENT_TYPE_GAME, 700));
+
+            $row = DBQueryToRow(
+                "SELECT user_id, target, action FROM uo_game_history
+                 WHERE game=700 AND target='comment' AND action='remove'",
+            );
+            $this->assertIsArray($row, 'Deleting an own note must leave an audit row.');
+            $this->assertSame('noteauthor', $row['user_id']);
+
+            $this->assertSame(
+                1,
+                (int) DBQueryToValue("SELECT COUNT(*) FROM uo_game_history WHERE game=700 AND has_snapshot=1"),
+                'The pre-delete snapshot is the restore point for the removed note.',
+            );
+        } finally {
+            $_SESSION['uid'] = 'testuser';
+            $_SESSION['userproperties']['userrole'] = ['superadmin' => true];
+            $this->clearCommentEventLog();
+        }
+    }
+
+    public function testUpdatingOwnNoteAfterLosingTheEditRightStillRecordsAnAuditRow(): void
+    {
+        $this->seedNoteByAuthorWhoThenLosesTheEditRight('noteauthor');
+
+        try {
+            $this->assertTrue(SetGameComment(COMMENT_TYPE_GAME, 700, 'Edited by its author'));
+            $this->assertSame('Edited by its author', CommentRaw(COMMENT_TYPE_GAME, 700));
+
+            $row = DBQueryToRow(
+                "SELECT user_id, target, action FROM uo_game_history
+                 WHERE game=700 AND target='comment' AND action='update'",
+            );
+            $this->assertIsArray($row);
+            $this->assertSame('noteauthor', $row['user_id']);
+
+            // The snapshot has to hold the text as it was BEFORE this edit,
+            // or the audit row points at nothing recoverable.
+            $snapshot = DBQueryToValue(
+                "SELECT snapshot FROM uo_game_history WHERE game=700 AND has_snapshot=1 ORDER BY history_id ASC LIMIT 1",
+            );
+            $this->assertSame('Note by its author', json_decode($snapshot, true)['comment']);
+        } finally {
+            $_SESSION['uid'] = 'testuser';
+            $_SESSION['userproperties']['userrole'] = ['superadmin' => true];
+            $this->clearCommentEventLog();
+        }
+    }
+
+    public function testAStrangerCannotDeleteTheNoteAndLeavesNoHistoryRow(): void
+    {
+        // The widened authorization is for the note's AUTHOR only. A different
+        // logged-in user with no rights must still be refused by
+        // SetGameComment() itself, and must not reach the history helpers --
+        // otherwise the 'comment' target would become a way for any session to
+        // write history rows.
+        $this->seedNoteByAuthorWhoThenLosesTheEditRight('noteauthor');
+        $_SESSION['uid'] = 'someoneelse';
+
+        try {
+            // The guard has to be exercised DIRECTLY. Going through
+            // SetGameComment() proves nothing about it: that function's own
+            // CanManageGameComment() gate refuses the stranger first, so the
+            // history helpers are never reached and this test passes even if
+            // the guard accepts everyone. The spoofed author argument is the
+            // point -- claiming someone else's authorship must not be enough.
+            $this->assertFalse(
+                GameHistoryRecord(700, 'comment', 'remove', [], false, false, 'noteauthor'),
+                'A claimed author that is not the session user must be refused.',
+            );
+            $this->assertFalse(
+                GameHistorySnapshotIfNeeded(700, false, false, 'noteauthor'),
+            );
+            $this->assertSame(
+                0,
+                (int) DBQueryToValue("SELECT COUNT(*) FROM uo_game_history WHERE game=700"),
+            );
+
+            // ...and the end-to-end path stays closed too.
+            $this->assertFalse(SetGameComment(COMMENT_TYPE_GAME, 700, '', true));
+            $this->assertSame('Note by its author', CommentRaw(COMMENT_TYPE_GAME, 700));
+            $this->assertSame(
+                0,
+                (int) DBQueryToValue("SELECT COUNT(*) FROM uo_game_history WHERE game=700"),
+            );
+        } finally {
+            $_SESSION['uid'] = 'testuser';
+            $_SESSION['userproperties']['userrole'] = ['superadmin' => true];
+            $this->clearCommentEventLog();
+        }
+    }
+
     public function testSetGameCommentSnapshotsBeforeOverwritingSoABulkSaveCommentChangeIsUndoable(): void
     {
         // Seed an initial comment as though an earlier save wrote it.
