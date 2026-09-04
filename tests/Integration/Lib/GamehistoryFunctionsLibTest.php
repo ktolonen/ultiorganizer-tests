@@ -183,12 +183,77 @@ final class GamehistoryFunctionsLibTest extends TestCase
 
         $this->assertSame('700', (string) $row['game']);
         $this->assertSame('testuser', $row['user_id']);
-        $this->assertSame('203.0.113.7', $row['ip']);
+        // fixtures/baseline.sql sets DisableVisitorLogging='true', which is
+        // documented as stopping IP recording entirely, so no address is
+        // retained here. The two tests below pin both sides of that setting.
+        $this->assertSame('', $row['ip']);
         $this->assertSame('result', $row['target']);
         $this->assertSame('update', $row['action']);
         $this->assertSame(['home' => 15, 'away' => 11], json_decode($row['detail'], true));
         $this->assertSame('0', (string) $row['has_snapshot']);
         $this->assertNull($row['snapshot']);
+    }
+
+    public function testAddressIsOmittedForAnAnonymousRowWhileVisitorLoggingIsDisabled(): void
+    {
+        // The sharpest case: an ANONYMOUS_RESULT_INPUT row carries no
+        // registered user, so registered-user deletion can never reach it and
+        // it lives until the game is deleted. Retaining a visitor's raw
+        // address on it would outlast every other copy of that address.
+        $this->assertTrue(IsVisitorLoggingDisabled());
+        unset($_SESSION['uid']);
+
+        $id = (int) GameHistoryRecord(700, 'result', 'update', ['home' => 1, 'away' => 0], false, true);
+        $row = DBQueryToRow("SELECT user_id, ip FROM uo_game_history WHERE history_id=$id");
+
+        // user_id depends on the profile (see the ANONYMOUS_RESULT_INPUT note
+        // on the GameSetResult test below); the address must be absent either
+        // way, which is what this test is actually pinning.
+        $this->assertSame(
+            ANONYMOUS_RESULT_INPUT ? 'anonymous' : 'unknown',
+            $row['user_id'],
+        );
+        $this->assertSame('', $row['ip']);
+    }
+
+    public function testSnapshotRowAlsoOmitsTheAddressWhileVisitorLoggingIsDisabled(): void
+    {
+        // The snapshot path builds its row separately from GameHistoryRecord(),
+        // so it needs its own assertion or one of the two write sites could
+        // keep recording addresses unnoticed.
+        $this->assertTrue(IsVisitorLoggingDisabled());
+
+        $id = (int) GameHistorySnapshotIfNeeded(700);
+        $this->assertGreaterThan(0, $id);
+        $row = DBQueryToRow("SELECT ip, has_snapshot FROM uo_game_history WHERE history_id=$id");
+
+        $this->assertSame('1', (string) $row['has_snapshot']);
+        $this->assertSame('', $row['ip']);
+    }
+
+    #[RunInSeparateProcess]
+    #[PreserveGlobalState(false)]
+    public function testAddressIsStillRecordedWhenVisitorLoggingIsEnabled(): void
+    {
+        // Proves the suppression is conditional rather than a blanket removal
+        // of IP recording. IsVisitorLoggingDisabled() memoizes in a function
+        // static for the process lifetime, so the setting has to be flipped
+        // before the first call in a process of this test's own -- the same
+        // reason the DisableGameHistory test below runs isolated.
+        DBQuery("UPDATE uo_setting SET value='false' WHERE name='DisableVisitorLogging'");
+        $this->assertFalse(IsVisitorLoggingDisabled());
+
+        try {
+            $id = (int) GameHistoryRecord(700, 'result', 'update', ['home' => 2, 'away' => 1]);
+            $row = DBQueryToRow("SELECT ip FROM uo_game_history WHERE history_id=$id");
+            $this->assertSame('203.0.113.7', $row['ip']);
+
+            $snapshotId = (int) GameHistorySnapshotIfNeeded(700);
+            $snapshotRow = DBQueryToRow("SELECT ip FROM uo_game_history WHERE history_id=$snapshotId");
+            $this->assertSame('203.0.113.7', $snapshotRow['ip']);
+        } finally {
+            DBQuery("UPDATE uo_setting SET value='true' WHERE name='DisableVisitorLogging'");
+        }
     }
 
     public function testRecordFallsBackToUnknownUserWithoutSession(): void
@@ -1212,6 +1277,36 @@ final class GamehistoryFunctionsLibTest extends TestCase
         }
     }
 
+    public function testReadingAnEntryWithholdsASnapshotWhoseFixtureNoLongerMatches(): void
+    {
+        // hasEditGameEventsRight() resolves through the game's CURRENT series
+        // and responsible team, both of which SetGame() can change, so an
+        // admin can gain rights over a game after it moved. The snapshot they
+        // would then read describes the teams from before the move; withhold
+        // it rather than serve another fixture's roster and scorer names.
+        $snapshotId = (int) GameHistorySnapshotIfNeeded(700, true);
+        $this->assertIsArray(GameHistoryEntry($snapshotId)['snapshot']);
+
+        GameChangeHome(700);
+        try {
+            $entry = GameHistoryEntry($snapshotId);
+            $this->assertTrue($entry['fixture_mismatch']);
+            $this->assertNull($entry['snapshot'], 'a mismatched snapshot must not be readable');
+            $this->assertSame(0, (int) $entry['has_snapshot']);
+
+            // Restore opts in, so it can still report the specific reason
+            // instead of failing as though the snapshot did not exist.
+            $result = GameHistoryRestore($snapshotId);
+            $this->assertFalse($result['restored']);
+            $this->assertSame(
+                ['Restore refused: the home and visitor teams have changed since this snapshot was taken.'],
+                $result['warnings'],
+            );
+        } finally {
+            DBQuery("UPDATE uo_game SET hometeam=300, visitorteam=301 WHERE game_id=700");
+        }
+    }
+
     public function testBuildSnapshotCapturesTeamsAsFormatV4AndPreservesAnUnassignedSideAsNull(): void
     {
         SetGame(701, ['visitorteam' => '']);
@@ -1859,8 +1954,7 @@ final class GamehistoryFunctionsLibTest extends TestCase
     {
         // C2: the up-front guard in GameHistoryRestore() only rechecks
         // hasAccredidationRight() for the teams recorded in the SNAPSHOT
-        // (team 301 here). GameHistoryRestorePlayerRow() must separately
-        // recheck the player's CURRENT team before writing acknowledged=1,
+        // (team 301 here). The restore loop must separately recheck the player's CURRENT team before writing acknowledged=1,
         // or an admin holding the right only on the old team could grant an
         // acknowledgment on a team they have no accreditation right over.
         // Game 701 (respteam=301) is used, not 700, so the up-front guard's
@@ -2417,7 +2511,7 @@ final class GamehistoryFunctionsLibTest extends TestCase
         // GameHistoryRestorePlayers() no longer makes a separate
         // GameSetRolePlayers() pass after the roster rewrite (see V5) --
         // captain/spirit_captain correctness now rests entirely on
-        // GameHistoryRestorePlayerRow()'s direct INSERT including those two
+        // the restore loop's direct INSERT including those two
         // columns. Fixture game 700 already flags players 800 and 802
         // captain=1; add a spirit captain too so both roles are covered.
         GameSetSpiritCaptains(700, 300, [801]);
