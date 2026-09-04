@@ -75,6 +75,20 @@ final class GamehistoryFunctionsLibTest extends TestCase
         // size stays deterministic for other suites.
         DBQuery("DELETE FROM uo_player WHERE team=300 AND firstname='Ambiguous' AND lastname IN ('One', 'Two')");
 
+        // Same backstop for the two-sided jersey-collision tests: each
+        // already cleans up its own temp players in a finally, this covers
+        // a fatal mid-test skipping that.
+        DBQuery("DELETE FROM uo_player WHERE team=300 AND firstname='Merge' AND lastname IN ('One', 'Two', 'Replacement')");
+        DBQuery("DELETE FROM uo_player WHERE team=300 AND firstname='Reuse' AND lastname IN ('Guardian', 'Ghost')");
+
+        // testRestoreRejectsATeamReassignmentButStillHonorsAPreV4SnapshotLackingTeamKeys()
+        // reassigns game 700's hometeam, and testRestoreRejectsASwappedFixtureEvenThoughASetComparisonWouldMissIt()
+        // swaps both -- each reverts in its own finally, this is the same
+        // fatal-mid-test backstop as above so game 700's hometeam/visitorteam
+        // stay at the fixture's 300/301 for every other test in this suite.
+        DBQuery("UPDATE uo_game SET hometeam=300, visitorteam=301 WHERE game_id=700");
+        DBQuery("DELETE FROM uo_team WHERE name='Reassignment Target FC'");
+
         DBQuery("DELETE FROM uo_game_history WHERE game IN (700, 701)");
 
         // Restore tests mutate the shared fixture game 700.
@@ -339,7 +353,7 @@ final class GamehistoryFunctionsLibTest extends TestCase
     {
         $snapshot = GameHistoryBuildSnapshot(700);
 
-        $this->assertSame(3, $snapshot['v']);
+        $this->assertSame(4, $snapshot['v']);
         $this->assertSame(15, $snapshot['game']['homescore']);
         $this->assertSame(11, $snapshot['game']['visitorscore']);
         $this->assertSame(35, $snapshot['game']['halftime']);
@@ -1088,6 +1102,136 @@ final class GamehistoryFunctionsLibTest extends TestCase
         $this->assertSame('2', (string) $game['visitorscore']);
     }
 
+    public function testRestoreRejectsATeamReassignmentButStillHonorsAPreV4SnapshotLackingTeamKeys(): void
+    {
+        // Only two teams exist in this fixture's pool (300/301), and both
+        // are already game 700's own hometeam/visitorteam, so a genuine
+        // "reassigned to a different team" needs a third team to reassign
+        // to.
+        DBQuery("INSERT INTO uo_team (name, valid) VALUES ('Reassignment Target FC', 1)");
+        $tempTeamId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+
+        // Hand-build a pre-v4 snapshot from the CURRENT (matching) game
+        // state: v3 and earlier never captured hometeam/visitorteam at all,
+        // so this is what a real snapshot taken before the v4 rollout would
+        // contain. Built before any of the perturbation below, so its goal
+        // count (4) and score (15-11) are the fixture's original values.
+        $preV4Snapshot = GameHistoryBuildSnapshot(700);
+        $this->assertArrayHasKey('hometeam', $preV4Snapshot['game'], 'test precondition: current code always includes the key here.');
+        unset($preV4Snapshot['game']['hometeam'], $preV4Snapshot['game']['visitorteam']);
+        $preV4Snapshot['v'] = 3;
+        $preV4SnapshotId = (int) DBQueryInsert(sprintf(
+            "INSERT INTO uo_game_history (game, user_id, ip, source, target, action, has_snapshot, snapshot)
+             VALUES (700, 'testuser', '203.0.113.7', 'user', 'snapshot', 'capture', 1, '%s')",
+            DBEscapeString(json_encode($preV4Snapshot, JSON_UNESCAPED_UNICODE)),
+        ));
+
+        // A real v4 snapshot of the same matching state (hometeam=300,
+        // visitorteam=301) -- this is the one the team-mismatch guard must
+        // refuse once the game is reassigned below.
+        $v4SnapshotId = (int) GameHistorySnapshotIfNeeded(700, true);
+
+        // Perturb the score so "restore refused" and "restore silently did
+        // nothing to a byte-identical game" are distinguishable.
+        GameRemoveAllScores(700);
+        GameSetResult(700, 3, 2, false);
+        $this->assertSame(0, (int) DBQueryToValue("SELECT COUNT(*) FROM uo_goal WHERE game=700"));
+
+        SetGame(700, ['hometeam' => $tempTeamId]);
+        $this->assertSame(
+            (string) $tempTeamId,
+            (string) DBQueryToValue("SELECT hometeam FROM uo_game WHERE game_id=700"),
+        );
+
+        try {
+            // The v4 snapshot's recorded hometeam (300) no longer matches
+            // the game's current hometeam ($tempTeamId): refused.
+            $mismatchResult = GameHistoryRestore($v4SnapshotId);
+            $this->assertFalse($mismatchResult['restored']);
+            $this->assertSame(
+                ['Restore refused: the home and visitor teams have changed since this snapshot was taken.'],
+                $mismatchResult['warnings'],
+            );
+            $game = DBQueryToRow("SELECT hometeam, homescore, visitorscore FROM uo_game WHERE game_id=700");
+            $this->assertSame((string) $tempTeamId, (string) $game['hometeam']);
+            $this->assertSame('3', (string) $game['homescore']);
+            $this->assertSame('2', (string) $game['visitorscore']);
+            $this->assertSame(0, (int) DBQueryToValue("SELECT COUNT(*) FROM uo_goal WHERE game=700"));
+
+            // The pre-v4 snapshot has no team keys at all, so the guard
+            // cannot detect (or refuse on) the same mismatch: it proceeds
+            // and actually replays, proving the guard discriminates on key
+            // presence rather than refusing every restore once the teams
+            // differ.
+            $backCompatResult = GameHistoryRestore($preV4SnapshotId);
+            $this->assertTrue($backCompatResult['restored']);
+            $this->assertSame(['Pool is locked.', 'Event played.'], $backCompatResult['warnings']);
+            $game = DBQueryToRow("SELECT homescore, visitorscore FROM uo_game WHERE game_id=700");
+            $this->assertSame('15', (string) $game['homescore']);
+            $this->assertSame('11', (string) $game['visitorscore']);
+            $this->assertSame(4, (int) DBQueryToValue("SELECT COUNT(*) FROM uo_goal WHERE game=700"));
+        } finally {
+            DBQuery("UPDATE uo_game SET hometeam=300, visitorteam=301 WHERE game_id=700");
+            DBQuery(sprintf("DELETE FROM uo_team WHERE team_id=%d", $tempTeamId));
+        }
+    }
+
+    public function testRestoreRejectsASwappedFixtureEvenThoughASetComparisonWouldMissIt(): void
+    {
+        // GameChangeHome() swaps hometeam<->visitorteam (and the scores with
+        // them). {300, 301} as a SET is unchanged by the swap, which is
+        // exactly why the guard has to compare positionally instead --
+        // hometeam against hometeam, visitorteam against visitorteam.
+        $snapshotId = (int) GameHistorySnapshotIfNeeded(700, true);
+
+        GameRemoveAllScores(700);
+        GameSetResult(700, 3, 2, false);
+        $this->assertSame(0, (int) DBQueryToValue("SELECT COUNT(*) FROM uo_goal WHERE game=700"));
+
+        GameChangeHome(700);
+        $swapped = DBQueryToRow("SELECT hometeam, visitorteam, homescore, visitorscore FROM uo_game WHERE game_id=700");
+        $this->assertSame('301', (string) $swapped['hometeam']);
+        $this->assertSame('300', (string) $swapped['visitorteam']);
+
+        try {
+            $result = GameHistoryRestore($snapshotId);
+            $this->assertFalse($result['restored']);
+            $this->assertSame(
+                ['Restore refused: the home and visitor teams have changed since this snapshot was taken.'],
+                $result['warnings'],
+            );
+
+            $game = DBQueryToRow("SELECT hometeam, visitorteam, homescore, visitorscore FROM uo_game WHERE game_id=700");
+            $this->assertSame('301', (string) $game['hometeam']);
+            $this->assertSame('300', (string) $game['visitorteam']);
+            $this->assertSame((string) $swapped['homescore'], (string) $game['homescore']);
+            $this->assertSame((string) $swapped['visitorscore'], (string) $game['visitorscore']);
+            $this->assertSame(0, (int) DBQueryToValue("SELECT COUNT(*) FROM uo_goal WHERE game=700"));
+        } finally {
+            DBQuery("UPDATE uo_game SET hometeam=300, visitorteam=301 WHERE game_id=700");
+        }
+    }
+
+    public function testBuildSnapshotCapturesTeamsAsFormatV4AndPreservesAnUnassignedSideAsNull(): void
+    {
+        SetGame(701, ['visitorteam' => '']);
+        $this->assertNull(DBQueryToValue("SELECT visitorteam FROM uo_game WHERE game_id=701"));
+
+        try {
+            $snapshot = GameHistoryBuildSnapshot(701);
+            $this->assertSame(4, $snapshot['v']);
+            $this->assertArrayHasKey('hometeam', $snapshot['game']);
+            $this->assertArrayHasKey('visitorteam', $snapshot['game']);
+            $this->assertSame(301, $snapshot['game']['hometeam']);
+            // Not 0: an unassigned side must stay distinguishable from team
+            // id 0, which GameHistoryIntFields()'s null-preserving cast (as
+            // opposed to a blind (int) cast) is what guarantees here.
+            $this->assertNull($snapshot['game']['visitorteam']);
+        } finally {
+            DBQuery("UPDATE uo_game SET visitorteam=300 WHERE game_id=701");
+        }
+    }
+
     public function testRestoreRestoresTheAcknowledgedFlag(): void
     {
         $snapshotId = (int) GameHistorySnapshotIfNeeded(700);
@@ -1224,6 +1368,141 @@ final class GamehistoryFunctionsLibTest extends TestCase
         } finally {
             DBQuery(sprintf("DELETE FROM uo_played WHERE player IN (%d, %d) AND game=700", $ambiguousOneId, $ambiguousTwoId));
             DBQuery(sprintf("DELETE FROM uo_player WHERE player_id IN (%d, %d)", $ambiguousOneId, $ambiguousTwoId));
+        }
+    }
+
+    public function testRestoreWarnsOnBothSidesOfATwoToOneJerseyRematchInsteadOfMergingThem(): void
+    {
+        // Two DELETED snapshot players sharing (team, num), with exactly one
+        // CURRENT player wearing that number. A per-row LIMIT-2 rematch
+        // alone would find that one candidate "unique" independently for
+        // EACH row and collapse both onto it, merging their goals. The
+        // snapshot-side pre-scan has to catch this before either row
+        // reaches the rematch query.
+        DBQuery("INSERT INTO uo_player (firstname, lastname, team, num, accreditation_id, accredited, reg_id, profile_id)
+                 VALUES ('Merge', 'One', 300, 25, NULL, 1, NULL, NULL)");
+        $mergeOneId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+        DBQuery("INSERT INTO uo_player (firstname, lastname, team, num, accreditation_id, accredited, reg_id, profile_id)
+                 VALUES ('Merge', 'Two', 300, 25, NULL, 1, NULL, NULL)");
+        $mergeTwoId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+        DBQuery(sprintf(
+            "INSERT INTO uo_played (player, game, num, accredited, acknowledged, captain) VALUES
+             (%d, 700, 25, 1, 0, 0), (%d, 700, 25, 1, 0, 0)",
+            $mergeOneId,
+            $mergeTwoId,
+        ));
+        DBQuery(sprintf(
+            "INSERT INTO uo_goal (game, num, assist, scorer, time, homescore, visitorscore, ishomegoal, iscallahan)
+             VALUES (700, 90, NULL, %d, 700, 3, 2, 1, 0), (700, 91, NULL, %d, 710, 4, 2, 1, 0)",
+            $mergeOneId,
+            $mergeTwoId,
+        ));
+
+        $snapshotId = (int) GameHistorySnapshotIfNeeded(700, true);
+
+        DBQuery(sprintf("DELETE FROM uo_played WHERE player IN (%d, %d) AND game=700", $mergeOneId, $mergeTwoId));
+        DBQuery(sprintf("DELETE FROM uo_player WHERE player_id IN (%d, %d)", $mergeOneId, $mergeTwoId));
+        DBQuery("INSERT INTO uo_player (firstname, lastname, team, num, accreditation_id, accredited, reg_id, profile_id)
+                 VALUES ('Merge', 'Replacement', 300, 25, NULL, 1, NULL, NULL)");
+        $replacementId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+
+        try {
+            $result = GameHistoryRestore($snapshotId);
+
+            $this->assertTrue($result['restored']);
+            $this->assertContains('Pool is locked.', $result['warnings']);
+            $this->assertContains('Event played.', $result['warnings']);
+            $this->assertContains(
+                'Player Merge One could not be restored: jersey number 25 is not unique on team Helsinki Heat.',
+                $result['warnings'],
+            );
+            $this->assertContains(
+                'Player Merge Two could not be restored: jersey number 25 is not unique on team Helsinki Heat.',
+                $result['warnings'],
+            );
+            $this->assertCount(4, $result['warnings']);
+
+            $this->assertSame(
+                0,
+                (int) DBQueryToValue(sprintf(
+                    "SELECT COUNT(*) FROM uo_played WHERE game=700 AND player=%d",
+                    $replacementId,
+                )),
+                'The single current candidate must not be guessed onto the roster for either ambiguous row.',
+            );
+
+            // This is what actually pins the bug: without the pre-scan,
+            // both goals would silently land on the same replacement player
+            // instead of neither.
+            $goals = DBQueryToArray("SELECT num, scorer FROM uo_goal WHERE game=700 AND num IN (90, 91) ORDER BY num");
+            $this->assertNull($goals[0]['scorer']);
+            $this->assertNull($goals[1]['scorer']);
+        } finally {
+            DBQuery(sprintf("DELETE FROM uo_played WHERE player=%d AND game=700", $replacementId));
+            DBQuery(sprintf("DELETE FROM uo_player WHERE player_id=%d", $replacementId));
+        }
+    }
+
+    public function testRestoreRefusesARematchThatWouldReuseACandidateAlreadyClaimedByAnUnchangedPlayer(): void
+    {
+        // X still exists and keeps wearing jersey 26 unchanged; Y wore the
+        // same (team, num) in the snapshot but was deleted since. Y is the
+        // only row the snapshot-side pre-scan could look at (X is not
+        // deleted, so it never enters that scan), yet Y's rematch resolves
+        // to X regardless of loop order -- X's own uo_player row does not
+        // change until the replay writes it, so the reuse guard is the only
+        // thing standing between this and X quietly absorbing Y's goal too.
+        DBQuery("INSERT INTO uo_player (firstname, lastname, team, num, accreditation_id, accredited, reg_id, profile_id)
+                 VALUES ('Reuse', 'Guardian', 300, 26, NULL, 1, NULL, NULL)");
+        $keptPlayerId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+        DBQuery("INSERT INTO uo_player (firstname, lastname, team, num, accreditation_id, accredited, reg_id, profile_id)
+                 VALUES ('Reuse', 'Ghost', 300, 26, NULL, 1, NULL, NULL)");
+        $deletedPlayerId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+        DBQuery(sprintf(
+            "INSERT INTO uo_played (player, game, num, accredited, acknowledged, captain) VALUES
+             (%d, 700, 26, 1, 0, 1), (%d, 700, 26, 1, 0, 0)",
+            $keptPlayerId,
+            $deletedPlayerId,
+        ));
+        DBQuery(sprintf(
+            "INSERT INTO uo_goal (game, num, assist, scorer, time, homescore, visitorscore, ishomegoal, iscallahan)
+             VALUES (700, 92, NULL, %d, 700, 3, 2, 1, 0), (700, 93, NULL, %d, 710, 4, 2, 1, 0)",
+            $keptPlayerId,
+            $deletedPlayerId,
+        ));
+
+        $snapshotId = (int) GameHistorySnapshotIfNeeded(700, true);
+
+        DBQuery(sprintf("DELETE FROM uo_played WHERE player=%d AND game=700", $deletedPlayerId));
+        DBQuery(sprintf("DELETE FROM uo_player WHERE player_id=%d", $deletedPlayerId));
+
+        try {
+            $result = GameHistoryRestore($snapshotId);
+
+            $this->assertTrue($result['restored']);
+            $this->assertContains(
+                'Player Reuse Ghost could not be restored: jersey number 26 is not unique on team Helsinki Heat.',
+                $result['warnings'],
+            );
+
+            // X keeps its own captain flag from its OWN row, not silently
+            // overwritten by Y's row (captain=0) via an ON DUPLICATE KEY
+            // UPDATE reuse.
+            $keptRow = DBQueryToRow(sprintf(
+                "SELECT captain FROM uo_played WHERE game=700 AND player=%d",
+                $keptPlayerId,
+            ));
+            $this->assertSame('1', (string) $keptRow['captain']);
+
+            // The actual bug this guards against: Y's goal must not land on
+            // X just because X was the only rematch candidate for Y's
+            // jersey number.
+            $goals = DBQueryToArray("SELECT num, scorer FROM uo_goal WHERE game=700 AND num IN (92, 93) ORDER BY num");
+            $this->assertSame((string) $keptPlayerId, (string) $goals[0]['scorer']);
+            $this->assertNull($goals[1]['scorer']);
+        } finally {
+            DBQuery(sprintf("DELETE FROM uo_played WHERE player=%d AND game=700", $keptPlayerId));
+            DBQuery(sprintf("DELETE FROM uo_player WHERE player_id=%d", $keptPlayerId));
         }
     }
 
@@ -1594,7 +1873,7 @@ final class GamehistoryFunctionsLibTest extends TestCase
 
         $snapshot = GameHistoryBuildSnapshot(700);
 
-        $this->assertSame(3, $snapshot['v']);
+        $this->assertSame(4, $snapshot['v']);
         $this->assertSame(3, $snapshot['game']['homedefenses']);
         $this->assertSame(2, $snapshot['game']['visitordefenses']);
         $this->assertSame(1000, $snapshot['game']['timer_start']);
