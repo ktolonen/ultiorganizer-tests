@@ -317,6 +317,37 @@ final class GamehistoryFunctionsLibTest extends TestCase
         $this->assertGreaterThan(0, $id);
     }
 
+    public function testAccreditationOnlyRightCannotForgeNonRosterHistory(): void
+    {
+        // hasAccredidationRight() grants acknowledgement changes on a team's
+        // roster and nothing else. The fallback that honours it used to apply
+        // to every target, so an accreditation-only caller could reach these
+        // reusable helpers directly and forge result/goal/forfeit rows, or
+        // capture a whole snapshot, for a fixture they cannot otherwise edit.
+        $_SESSION['userproperties']['userrole'] = ['accradmin' => [300 => true]];
+        $_SESSION['uid'] = 'anonymous';
+        try {
+            $this->assertFalse(GameHistoryRecord(700, 'result', 'update', ['home' => 9, 'away' => 9]));
+            $this->assertFalse(GameHistoryRecord(700, 'goal', 'add', ['num' => 99]));
+            $this->assertFalse(GameHistoryRecord(700, 'forfeit', 'update', ['forfeit' => 'home']));
+
+            // A snapshot carries the whole scoresheet, so an untargeted
+            // capture is the broadest read of all and must be refused too.
+            $this->assertFalse(GameHistorySnapshotIfNeeded(700));
+
+            // The one thing accreditation DOES authorize still works, and is
+            // what AcknowledgeUnaccredited() relies on.
+            $this->assertGreaterThan(
+                0,
+                (int) GameHistoryRecord(700, 'played', 'update', ['player' => 800, 'acknowledged' => 1]),
+            );
+            $this->assertGreaterThan(0, (int) GameHistorySnapshotIfNeeded(700, false, false, 'played'));
+        } finally {
+            $_SESSION['uid'] = 'testuser';
+            $_SESSION['userproperties']['userrole'] = ['superadmin' => true];
+        }
+    }
+
     public function testRecordSucceedsForAMediaOnlyRight(): void
     {
         // No teamadmin/seasonadmin/seriesadmin/gameadmin/resgameadmin/
@@ -1956,6 +1987,94 @@ final class GamehistoryFunctionsLibTest extends TestCase
             $this->assertSame(1, $acknowledged);
         } finally {
             DBQuery(sprintf("DELETE FROM uo_played WHERE player=%d AND game=701", $playerId));
+            DBQuery(sprintf("DELETE FROM uo_player WHERE player_id=%d", $playerId));
+        }
+    }
+
+    public function testADeletedUnnumberedPlayerIsNeverRematchedOntoJerseyZero(): void
+    {
+        // uo_player.num is tinyint unsigned, so 0 is a jersey somebody can
+        // really wear. The rematch query cast a null number to 0, so a
+        // deleted player who never had a number would resolve onto the
+        // number-0 player on that team and inherit their goals and assists.
+        DBQuery("INSERT INTO uo_player (firstname, lastname, team, num, accreditation_id, accredited, reg_id, profile_id)
+                 VALUES ('Zero', 'Wearer', 300, 0, NULL, 1, NULL, NULL)");
+        $zeroId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+        DBQuery("INSERT INTO uo_player (firstname, lastname, team, num, accreditation_id, accredited, reg_id, profile_id)
+                 VALUES ('Unnumbered', 'Ghost', 300, NULL, NULL, 1, NULL, NULL)");
+        $ghostId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+        DBQuery(sprintf(
+            "INSERT INTO uo_played (player, game, num, accredited, acknowledged, captain) VALUES (%d, 700, NULL, 1, 0, 0)",
+            $ghostId,
+        ));
+        DBQuery(sprintf(
+            "INSERT INTO uo_goal (game, num, assist, scorer, time, homescore, visitorscore, ishomegoal, iscallahan)
+             VALUES (700, 95, NULL, %d, 800, 5, 3, 1, 0)",
+            $ghostId,
+        ));
+
+        $snapshotId = (int) GameHistorySnapshotIfNeeded(700, true);
+
+        DBQuery(sprintf("DELETE FROM uo_played WHERE player=%d AND game=700", $ghostId));
+        DBQuery(sprintf("DELETE FROM uo_player WHERE player_id=%d", $ghostId));
+
+        try {
+            $result = GameHistoryRestore($snapshotId);
+
+            $this->assertTrue($result['restored']);
+            $this->assertContains('Player Unnumbered Ghost could not be restored.', $result['warnings']);
+
+            $this->assertSame(
+                0,
+                (int) DBQueryToValue(sprintf(
+                    "SELECT COUNT(*) FROM uo_played WHERE game=700 AND player=%d",
+                    $zeroId,
+                )),
+                'The number-0 player must not be substituted for an unnumbered one.',
+            );
+            // What actually pins the bug: the goal must be orphaned, not
+            // silently reassigned to the number-0 player.
+            $this->assertNull(DBQueryToValue("SELECT scorer FROM uo_goal WHERE game=700 AND num=95"));
+        } finally {
+            DBQuery("DELETE FROM uo_goal WHERE game=700 AND num=95");
+            DBQuery(sprintf("DELETE FROM uo_played WHERE player=%d AND game=700", $zeroId));
+            DBQuery(sprintf("DELETE FROM uo_player WHERE player_id=%d", $zeroId));
+        }
+    }
+
+    public function testRestoringAnUnnumberedPlayerKeepsTheJerseyNumberNull(): void
+    {
+        // Both num columns are nullable and 0 is a real jersey, so "no
+        // number" must survive the round trip rather than becoming 0 -- on
+        // the uo_played row and on the player's global uo_player row, which
+        // restore also rewrites.
+        DBQuery("INSERT INTO uo_player (firstname, lastname, team, num, accreditation_id, accredited, reg_id, profile_id)
+                 VALUES ('Numberless', 'Regular', 300, NULL, NULL, 1, NULL, NULL)");
+        $playerId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+        DBQuery(sprintf(
+            "INSERT INTO uo_played (player, game, num, accredited, acknowledged, captain) VALUES (%d, 700, NULL, 1, 0, 0)",
+            $playerId,
+        ));
+
+        $snapshotId = (int) GameHistorySnapshotIfNeeded(700, true);
+
+        // Give them a number, so the restore has something to undo.
+        DBQuery(sprintf("UPDATE uo_player SET num=44 WHERE player_id=%d", $playerId));
+        DBQuery(sprintf("UPDATE uo_played SET num=44 WHERE player=%d AND game=700", $playerId));
+
+        try {
+            $this->assertTrue(GameHistoryRestore($snapshotId)['restored']);
+
+            $this->assertNull(DBQueryToValue(sprintf(
+                "SELECT num FROM uo_played WHERE game=700 AND player=%d",
+                $playerId,
+            )));
+            $this->assertNull(DBQueryToValue(sprintf(
+                "SELECT num FROM uo_player WHERE player_id=%d",
+                $playerId,
+            )));
+        } finally {
+            DBQuery(sprintf("DELETE FROM uo_played WHERE player=%d AND game=700", $playerId));
             DBQuery(sprintf("DELETE FROM uo_player WHERE player_id=%d", $playerId));
         }
     }
