@@ -1214,7 +1214,7 @@ final class GamehistoryFunctionsLibTest extends TestCase
             $mismatchResult = GameHistoryRestore($v4SnapshotId);
             $this->assertFalse($mismatchResult['restored']);
             $this->assertSame(
-                ['Restore refused: the home and visitor teams have changed since this snapshot was taken.'],
+                ['Restore refused: the home and away teams have changed since this snapshot was taken.'],
                 $mismatchResult['warnings'],
             );
             $game = DBQueryToRow("SELECT hometeam, homescore, visitorscore FROM uo_game WHERE game_id=700");
@@ -1262,7 +1262,7 @@ final class GamehistoryFunctionsLibTest extends TestCase
             $result = GameHistoryRestore($snapshotId);
             $this->assertFalse($result['restored']);
             $this->assertSame(
-                ['Restore refused: the home and visitor teams have changed since this snapshot was taken.'],
+                ['Restore refused: the home and away teams have changed since this snapshot was taken.'],
                 $result['warnings'],
             );
 
@@ -1299,7 +1299,7 @@ final class GamehistoryFunctionsLibTest extends TestCase
             $result = GameHistoryRestore($snapshotId);
             $this->assertFalse($result['restored']);
             $this->assertSame(
-                ['Restore refused: the home and visitor teams have changed since this snapshot was taken.'],
+                ['Restore refused: the home and away teams have changed since this snapshot was taken.'],
                 $result['warnings'],
             );
         } finally {
@@ -1915,9 +1915,11 @@ final class GamehistoryFunctionsLibTest extends TestCase
         // mismatch against the snapshot's team (an earlier fix turned that
         // die() into a warning instead). The row is now written directly into
         // uo_played from the snapshot, so a player moved between teams since
-        // the snapshot no longer produces a warning or a dropped
-        // acknowledgment -- the up-front hasAccredidationRight() check
-        // against the SNAPSHOT's team is the only accreditation check left.
+        // the snapshot no longer produces a dropped acknowledgment -- the
+        // up-front hasAccredidationRight() check against the SNAPSHOT's team
+        // is the only accreditation check left. The move is reported
+        // informationally (see the assertion below), which does not block the
+        // restore or change what is written.
         DBQuery("INSERT INTO uo_player (firstname, lastname, team, num, accreditation_id, accredited, reg_id, profile_id)
                  VALUES ('Mover', 'Player', 300, 50, NULL, 1, NULL, NULL)");
         $playerId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
@@ -1935,9 +1937,17 @@ final class GamehistoryFunctionsLibTest extends TestCase
             $result = GameHistoryRestore($snapshotId);
 
             $this->assertTrue($result['restored']);
-            foreach ($result['warnings'] as $warning) {
-                $this->assertStringNotContainsString('Mover Player', $warning);
-            }
+
+            // The move is now reported, but only informationally: GamePlayers()
+            // joins uo_played against the player's CURRENT team, so this row
+            // will list under the new team. The acknowledgment is still
+            // restored and nothing is dropped -- which is what this test has
+            // always been about. It previously asserted no warning mentioned
+            // the player at all, which was stricter than that intent.
+            $this->assertContains(
+                'Player Mover Player now plays for Tampere Tempest, so their restored roster entry lists under that team.',
+                $result['warnings'],
+            );
 
             $acknowledged = (int) DBQueryToValue(sprintf(
                 "SELECT acknowledged FROM uo_played WHERE game=701 AND player=%d",
@@ -1946,6 +1956,50 @@ final class GamehistoryFunctionsLibTest extends TestCase
             $this->assertSame(1, $acknowledged);
         } finally {
             DBQuery(sprintf("DELETE FROM uo_played WHERE player=%d AND game=701", $playerId));
+            DBQuery(sprintf("DELETE FROM uo_player WHERE player_id=%d", $playerId));
+        }
+    }
+
+    public function testRestoreWarnsWhenAnExistingPlayerHasMovedToTheOpposingTeam(): void
+    {
+        // The sharpest form of the moved-player case: the player did not just
+        // leave the recorded team, they joined the OPPONENT in this same
+        // fixture, so GamePlayers() lists them on the wrong side of this game
+        // while their restored goals still reference them. The row is still
+        // written -- that display follows from uo_player.team and would be the
+        // same without any restore -- but the operator has to be told.
+        DBQuery("INSERT INTO uo_player (firstname, lastname, team, num, accreditation_id, accredited, reg_id, profile_id)
+                 VALUES ('Defected', 'Winger', 300, 71, NULL, 1, NULL, NULL)");
+        $playerId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+        DBQuery(sprintf(
+            "INSERT INTO uo_played (player, game, num, accredited, acknowledged, captain) VALUES (%d, 700, 71, 1, 0, 0)",
+            $playerId,
+        ));
+
+        $snapshotId = (int) GameHistorySnapshotIfNeeded(700, true);
+
+        // Game 700 is team 300 against team 301; move them to the opponent.
+        DBQuery(sprintf("UPDATE uo_player SET team=301 WHERE player_id=%d", $playerId));
+
+        try {
+            $result = GameHistoryRestore($snapshotId);
+
+            $this->assertTrue($result['restored']);
+            $this->assertContains(
+                'Player Defected Winger now plays for Tampere Tempest, so their restored roster entry lists under that team.',
+                $result['warnings'],
+            );
+
+            // Still restored, not silently dropped.
+            $this->assertSame(
+                1,
+                (int) DBQueryToValue(sprintf(
+                    "SELECT COUNT(*) FROM uo_played WHERE game=700 AND player=%d",
+                    $playerId,
+                )),
+            );
+        } finally {
+            DBQuery(sprintf("DELETE FROM uo_played WHERE player=%d AND game=700", $playerId));
             DBQuery(sprintf("DELETE FROM uo_player WHERE player_id=%d", $playerId));
         }
     }
@@ -2290,30 +2344,25 @@ final class GamehistoryFunctionsLibTest extends TestCase
         }
     }
 
-    public function testAStrangerCannotDeleteTheNoteAndLeavesNoHistoryRow(): void
+    public function testALoggedInNonAuthorCannotWriteCommentHistoryForAnArbitraryGame(): void
     {
-        // The widened authorization is for the note's AUTHOR only. A different
-        // logged-in user with no rights must still be refused by
-        // SetGameComment() itself, and must not reach the history helpers --
-        // otherwise the 'comment' target would become a way for any session to
-        // write history rows.
+        // The earlier version of this test passed a spoofed author name and so
+        // only probed claiming SOMEONE ELSE'S identity, which never authorized
+        // anything. The hole was claiming YOUR OWN: the guard compared a
+        // caller-supplied author against the caller's own session, which any
+        // logged-in caller satisfies by passing $_SESSION['uid']. Authorship is
+        // now resolved server-side and no author argument exists to pass, so
+        // this session -- logged in, no rights, no note of its own -- must be
+        // refused outright.
         $this->seedNoteByAuthorWhoThenLosesTheEditRight('noteauthor');
         $_SESSION['uid'] = 'someoneelse';
 
         try {
-            // The guard has to be exercised DIRECTLY. Going through
-            // SetGameComment() proves nothing about it: that function's own
-            // CanManageGameComment() gate refuses the stranger first, so the
-            // history helpers are never reached and this test passes even if
-            // the guard accepts everyone. The spoofed author argument is the
-            // point -- claiming someone else's authorship must not be enough.
             $this->assertFalse(
-                GameHistoryRecord(700, 'comment', 'remove', [], false, false, 'noteauthor'),
-                'A claimed author that is not the session user must be refused.',
+                GameHistoryRecord(700, 'comment', 'remove', []),
+                'A logged-in non-author must not write a comment history row.',
             );
-            $this->assertFalse(
-                GameHistorySnapshotIfNeeded(700, false, false, 'noteauthor'),
-            );
+            $this->assertFalse(GameHistorySnapshotIfNeeded(700, false, false, 'comment'));
             $this->assertSame(
                 0,
                 (int) DBQueryToValue("SELECT COUNT(*) FROM uo_game_history WHERE game=700"),
