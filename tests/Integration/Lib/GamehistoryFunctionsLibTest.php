@@ -183,10 +183,11 @@ final class GamehistoryFunctionsLibTest extends TestCase
 
         $this->assertSame('700', (string) $row['game']);
         $this->assertSame('testuser', $row['user_id']);
-        // fixtures/baseline.sql sets DisableVisitorLogging='true', which is
-        // documented as stopping IP recording entirely, so no address is
-        // retained here. The two tests below pin both sides of that setting.
-        $this->assertSame('', $row['ip']);
+        // DisableVisitorLogging is documented as stopping IP recording
+        // entirely. The harness runs this file against profiles that differ
+        // on that setting, so assert whichever is correct for the one running
+        // rather than assuming the baseline's value.
+        $this->assertSame(IsVisitorLoggingDisabled() ? '' : '203.0.113.7', $row['ip']);
         $this->assertSame('result', $row['target']);
         $this->assertSame('update', $row['action']);
         $this->assertSame(['home' => 15, 'away' => 11], json_decode($row['detail'], true));
@@ -200,7 +201,9 @@ final class GamehistoryFunctionsLibTest extends TestCase
         // registered user, so registered-user deletion can never reach it and
         // it lives until the game is deleted. Retaining a visitor's raw
         // address on it would outlast every other copy of that address.
-        $this->assertTrue(IsVisitorLoggingDisabled());
+        if (!IsVisitorLoggingDisabled()) {
+            $this->markTestSkipped('This profile leaves visitor logging enabled.');
+        }
         unset($_SESSION['uid']);
 
         $id = (int) GameHistoryRecord(700, 'result', 'update', ['home' => 1, 'away' => 0], false, true);
@@ -221,7 +224,9 @@ final class GamehistoryFunctionsLibTest extends TestCase
         // The snapshot path builds its row separately from GameHistoryRecord(),
         // so it needs its own assertion or one of the two write sites could
         // keep recording addresses unnoticed.
-        $this->assertTrue(IsVisitorLoggingDisabled());
+        if (!IsVisitorLoggingDisabled()) {
+            $this->markTestSkipped('This profile leaves visitor logging enabled.');
+        }
 
         $id = (int) GameHistorySnapshotIfNeeded(700);
         $this->assertGreaterThan(0, $id);
@@ -240,6 +245,7 @@ final class GamehistoryFunctionsLibTest extends TestCase
         // static for the process lifetime, so the setting has to be flipped
         // before the first call in a process of this test's own -- the same
         // reason the DisableGameHistory test below runs isolated.
+        $original = (string) DBQueryToValue("SELECT value FROM uo_setting WHERE name='DisableVisitorLogging'");
         DBQuery("UPDATE uo_setting SET value='false' WHERE name='DisableVisitorLogging'");
         $this->assertFalse(IsVisitorLoggingDisabled());
 
@@ -252,7 +258,12 @@ final class GamehistoryFunctionsLibTest extends TestCase
             $snapshotRow = DBQueryToRow("SELECT ip FROM uo_game_history WHERE history_id=$snapshotId");
             $this->assertSame('203.0.113.7', $snapshotRow['ip']);
         } finally {
-            DBQuery("UPDATE uo_setting SET value='true' WHERE name='DisableVisitorLogging'");
+            // Restore the profile's own value, not a hardcoded 'true': the
+            // profiles differ on this setting.
+            DBQuery(sprintf(
+                "UPDATE uo_setting SET value='%s' WHERE name='DisableVisitorLogging'",
+                DBEscapeString($original),
+            ));
         }
     }
 
@@ -2122,6 +2133,118 @@ final class GamehistoryFunctionsLibTest extends TestCase
             DBQuery(sprintf("DELETE FROM uo_played WHERE player=%d AND game=700", $playerId));
             DBQuery(sprintf("DELETE FROM uo_player WHERE player_id=%d", $playerId));
             DBQuery("DELETE FROM uo_team WHERE team_id=302");
+        }
+    }
+
+    public function testRestorePlayersRefusesAMismatchedFixtureBeforeTouchingTheRoster(): void
+    {
+        // The helper loads its entry with $allowMismatchedFixture=true, which
+        // is what lets GameHistoryRestore() report a mismatch as a specific
+        // refusal. Called directly it must repeat that check, or it reaches
+        // GameRemoveAllPlayers() and rebuilds a previous fixture's roster onto
+        // the reassigned game.
+        $snapshotId = (int) GameHistorySnapshotIfNeeded(700, true);
+
+        // Perturb after the snapshot, so "refused" and "ran" are separable:
+        // a restore rebuilds the same roster, making a row count identical
+        // either way.
+        DBQuery("INSERT INTO uo_player (firstname, lastname, team, num, accreditation_id, accredited, reg_id, profile_id)
+                 VALUES ('Post', 'Snapshot', 300, 68, NULL, 1, NULL, NULL)");
+        $addedId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+        DBQuery(sprintf(
+            "INSERT INTO uo_played (player, game, num, accredited, acknowledged, captain) VALUES (%d, 700, 68, 1, 0, 0)",
+            $addedId,
+        ));
+
+        GameChangeHome(700);
+        $warnings = [];
+        try {
+            $this->assertSame([], GameHistoryRestorePlayers($snapshotId, $warnings));
+            $this->assertSame(
+                1,
+                (int) DBQueryToValue(sprintf(
+                    "SELECT COUNT(*) FROM uo_played WHERE game=700 AND player=%d",
+                    $addedId,
+                )),
+                'A mismatched fixture must not have rebuilt the roster.',
+            );
+        } finally {
+            DBQuery("UPDATE uo_game SET hometeam=300, visitorteam=301 WHERE game_id=700");
+            DBQuery(sprintf("DELETE FROM uo_played WHERE player=%d AND game=700", $addedId));
+            DBQuery(sprintf("DELETE FROM uo_player WHERE player_id=%d", $addedId));
+        }
+    }
+
+    public function testAnonymousResultAuthorizationDoesNotExtendBeyondTheResultTarget(): void
+    {
+        // $allowAnonymousResult is caller-controlled, and confirming
+        // ANONYMOUS_RESULT_INPUT only proves the installation allows anonymous
+        // SCORE reporting -- it says nothing about the caller. Unscoped, a
+        // direct caller could pass true and forge any row, or capture a whole
+        // snapshot, with no game right at all.
+        $_SESSION['userproperties']['userrole'] = [];
+        unset($_SESSION['uid']);
+        try {
+            $this->assertFalse(GameHistoryRecord(700, 'goal', 'add', ['num' => 1], false, true));
+            $this->assertFalse(GameHistoryRecord(700, 'played', 'add', ['player' => 800], false, true));
+            $this->assertFalse(GameHistoryRecord(700, 'restore', 'restore', [], false, true));
+            $this->assertFalse(GameHistorySnapshotIfNeeded(700, false, true));
+
+            // The result target keeps whichever behavior this profile defines
+            // (see the ANONYMOUS_RESULT_INPUT note on the GameSetResult test).
+            $resultId = (int) GameHistoryRecord(700, 'result', 'update', ['home' => 1, 'away' => 0], false, true);
+            if (ANONYMOUS_RESULT_INPUT) {
+                $this->assertGreaterThan(0, $resultId);
+            } else {
+                $this->assertSame(0, $resultId);
+            }
+        } finally {
+            $_SESSION['uid'] = 'testuser';
+            $_SESSION['userproperties']['userrole'] = ['superadmin' => true];
+        }
+    }
+
+    public function testRestoreNullsGoalReferencesToPlayersDeletedOffTheRoster(): void
+    {
+        // A scorer taken off the roster BEFORE the snapshot has no uo_played
+        // row, so the roster rebuild never sees them and the id map has no
+        // entry. Once they are deleted from uo_player, replaying their goal
+        // violates uo_goal's foreign key -- and DBQuery() aborts, which in a
+        // non-transactional restore would stop partway with the scoresheet
+        // already cleared.
+        DBQuery("INSERT INTO uo_player (firstname, lastname, team, num, accreditation_id, accredited, reg_id, profile_id)
+                 VALUES ('Offroster', 'Scorer', 300, 69, NULL, 1, NULL, NULL)");
+        $ghostId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+        // Referenced by a goal but deliberately NOT on the roster.
+        DBQuery(sprintf(
+            "INSERT INTO uo_goal (game, num, assist, scorer, time, homescore, visitorscore, ishomegoal, iscallahan)
+             VALUES (700, 96, NULL, %d, 900, 6, 4, 1, 0)",
+            $ghostId,
+        ));
+
+        $snapshotId = (int) GameHistorySnapshotIfNeeded(700, true);
+        DBQuery(sprintf("DELETE FROM uo_player WHERE player_id=%d", $ghostId));
+
+        try {
+            $result = GameHistoryRestore($snapshotId);
+
+            // The restore completes rather than aborting mid-rebuild...
+            $this->assertTrue($result['restored']);
+            // ...the goal is replayed with a NULL scorer, the same state
+            // ON DELETE SET NULL would have left...
+            $this->assertNull(DBQueryToValue("SELECT scorer FROM uo_goal WHERE game=700 AND num=96"));
+            $this->assertSame(
+                1,
+                (int) DBQueryToValue("SELECT COUNT(*) FROM uo_goal WHERE game=700 AND num=96"),
+            );
+            // ...and the rest of the scoresheet is intact, which is what a
+            // mid-rebuild abort would have destroyed.
+            $this->assertGreaterThan(
+                1,
+                (int) DBQueryToValue("SELECT COUNT(*) FROM uo_goal WHERE game=700"),
+            );
+        } finally {
+            DBQuery("DELETE FROM uo_goal WHERE game=700 AND num=96");
         }
     }
 
