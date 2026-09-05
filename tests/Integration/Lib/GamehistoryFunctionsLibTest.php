@@ -2042,6 +2042,152 @@ final class GamehistoryFunctionsLibTest extends TestCase
         }
     }
 
+    public function testRestoreDoesNotRewriteTheGlobalJerseyOfATransferredPlayer(): void
+    {
+        // Restore rewrites uo_player.num as a side effect inherited from
+        // GameAddPlayer(). For a player who has transferred since the
+        // snapshot, that column belongs to their CURRENT team, which the
+        // restoring admin may hold no rights over -- restore's authority is
+        // this game's roster, not another team's squad numbering. The
+        // per-game number must still come back.
+        DBQuery("INSERT INTO uo_team (team_id, name, pool, club, rank, activerank, valid, series, country, reg_id, sotg_token, abbreviation)
+                 VALUES (302, 'Oulu Outsiders', 200, NULL, 3, 3, 1, 100, 1064, NULL, NULL, 'OULU')");
+        DBQuery("INSERT INTO uo_player (firstname, lastname, team, num, accreditation_id, accredited, reg_id, profile_id)
+                 VALUES ('Transfer', 'Target', 300, 11, NULL, 1, NULL, NULL)");
+        $playerId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+        DBQuery(sprintf(
+            "INSERT INTO uo_played (player, game, num, accredited, acknowledged, captain) VALUES (%d, 700, 11, 1, 0, 0)",
+            $playerId,
+        ));
+
+        $snapshotId = (int) GameHistorySnapshotIfNeeded(700, true);
+
+        // Transferred to a third team and given that team's number.
+        DBQuery(sprintf("UPDATE uo_player SET team=302, num=99 WHERE player_id=%d", $playerId));
+        DBQuery(sprintf("UPDATE uo_played SET num=99 WHERE player=%d AND game=700", $playerId));
+
+        try {
+            $this->assertTrue(GameHistoryRestore($snapshotId)['restored']);
+
+            // The game record is reproduced...
+            $this->assertSame('11', (string) DBQueryToValue(sprintf(
+                "SELECT num FROM uo_played WHERE game=700 AND player=%d",
+                $playerId,
+            )));
+            // ...but the new team's squad number is left alone.
+            $this->assertSame('99', (string) DBQueryToValue(sprintf(
+                "SELECT num FROM uo_player WHERE player_id=%d",
+                $playerId,
+            )));
+        } finally {
+            DBQuery(sprintf("DELETE FROM uo_played WHERE player=%d AND game=700", $playerId));
+            DBQuery(sprintf("DELETE FROM uo_player WHERE player_id=%d", $playerId));
+            DBQuery("DELETE FROM uo_team WHERE team_id=302");
+        }
+    }
+
+    public function testAccreditationRightOnATransferredPlayersNewTeamStillRecordsHistory(): void
+    {
+        // AcknowledgeUnaccredited() authorizes against the player's CURRENT
+        // team, so an admin of the team a player transferred TO can legitimately
+        // acknowledge them for this old game. Checking only the fixture's two
+        // teams let that acknowledgement succeed while its snapshot and audit
+        // row were silently refused -- the exact outcome this feature exists
+        // to prevent.
+        DBQuery("INSERT INTO uo_team (team_id, name, pool, club, rank, activerank, valid, series, country, reg_id, sotg_token, abbreviation)
+                 VALUES (302, 'Oulu Outsiders', 200, NULL, 3, 3, 1, 100, 1064, NULL, NULL, 'OULU')");
+        DBQuery("INSERT INTO uo_player (firstname, lastname, team, num, accreditation_id, accredited, reg_id, profile_id)
+                 VALUES ('Moved', 'Onward', 302, 12, NULL, 0, NULL, NULL)");
+        $playerId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+        DBQuery(sprintf(
+            "INSERT INTO uo_played (player, game, num, accredited, acknowledged, captain) VALUES (%d, 700, 12, 0, 0, 0)",
+            $playerId,
+        ));
+
+        // Rights on the NEW team only, and nothing on the fixture's own teams.
+        $_SESSION['userproperties']['userrole'] = ['accradmin' => [302 => true]];
+        $_SESSION['uid'] = 'anonymous';
+        try {
+            $this->assertGreaterThan(0, (int) GameHistorySnapshotIfNeeded(700, false, false, 'played'));
+            $this->assertGreaterThan(0, (int) GameHistoryRecord(700, 'played', 'update', [
+                'player' => $playerId,
+                'acknowledged' => 1,
+            ]));
+
+            // Still scoped: this right does not authorize non-roster targets.
+            $this->assertFalse(GameHistoryRecord(700, 'result', 'update', ['home' => 1, 'away' => 1]));
+        } finally {
+            $_SESSION['uid'] = 'testuser';
+            $_SESSION['userproperties']['userrole'] = ['superadmin' => true];
+            DBQuery(sprintf("DELETE FROM uo_played WHERE player=%d AND game=700", $playerId));
+            DBQuery(sprintf("DELETE FROM uo_player WHERE player_id=%d", $playerId));
+            DBQuery("DELETE FROM uo_team WHERE team_id=302");
+        }
+    }
+
+    public function testRestorePlayersRefusesWhenTheAccreditationRightForAnAcknowledgedTeamIsMissing(): void
+    {
+        // GameHistoryRestorePlayers() sits in the shared lib interface and
+        // writes uo_played directly, bypassing GameAllowsPlayerOnRoster(). It
+        // takes a history id rather than a row set so there is nothing to
+        // fabricate, and it re-runs the restore guard so it is safe standing
+        // alone rather than trusting its caller to have run one.
+        //
+        // The accreditation right is what this asserts, deliberately.
+        // hasEditGamePlayersRight() and hasEditGameEventsRight() have
+        // identical role checks, and GameHistoryEntry() already enforces the
+        // latter, so no session can distinguish those two -- the acknowledged
+        // team's accreditation right is the only part of the guard that adds
+        // a refusal of its own.
+        DBQuery("INSERT INTO uo_player (firstname, lastname, team, num, accreditation_id, accredited, reg_id, profile_id)
+                 VALUES ('Acked', 'Player', 301, 66, NULL, 0, NULL, NULL)");
+        $playerId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+        DBQuery(sprintf(
+            "INSERT INTO uo_played (player, game, num, accredited, acknowledged, captain) VALUES (%d, 701, 66, 0, 1, 0)",
+            $playerId,
+        ));
+
+        $snapshotId = (int) GameHistorySnapshotIfNeeded(701, true);
+
+        // Perturb the roster AFTER the snapshot with a player it does not
+        // contain. Without this the assertions cannot fail: a restore rebuilds
+        // the same roster, so the row count is identical either way, and the
+        // id map stays empty whenever every player still exists. This extra
+        // player is the only thing that distinguishes "refused" from "ran".
+        DBQuery("INSERT INTO uo_player (firstname, lastname, team, num, accreditation_id, accredited, reg_id, profile_id)
+                 VALUES ('Added', 'Later', 301, 67, NULL, 1, NULL, NULL)");
+        $addedId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+        DBQuery(sprintf(
+            "INSERT INTO uo_played (player, game, num, accredited, acknowledged, captain) VALUES (%d, 701, 67, 1, 0, 0)",
+            $addedId,
+        ));
+
+        // teamadmin[301] clears both edit rights for game 701 (respteam=301)
+        // but grants no accreditation right over team 301.
+        $_SESSION['userproperties']['userrole'] = ['teamadmin' => [301 => true]];
+        $_SESSION['uid'] = 'teamadmin301';
+        $warnings = [];
+        try {
+            $this->assertSame([], GameHistoryRestorePlayers($snapshotId, $warnings));
+
+            // The guard has to return before GameRemoveAllPlayers() empties
+            // the roster, so the post-snapshot player must still be there.
+            $this->assertSame(
+                1,
+                (int) DBQueryToValue(sprintf(
+                    "SELECT COUNT(*) FROM uo_played WHERE game=701 AND player=%d",
+                    $addedId,
+                )),
+                'A refused restore must not have rebuilt the roster.',
+            );
+        } finally {
+            $_SESSION['uid'] = 'testuser';
+            $_SESSION['userproperties']['userrole'] = ['superadmin' => true];
+            DBQuery(sprintf("DELETE FROM uo_played WHERE player IN (%d, %d) AND game=701", $playerId, $addedId));
+            DBQuery(sprintf("DELETE FROM uo_player WHERE player_id IN (%d, %d)", $playerId, $addedId));
+        }
+    }
+
     public function testRestoringAnUnnumberedPlayerKeepsTheJerseyNumberNull(): void
     {
         // Both num columns are nullable and 0 is a real jersey, so "no
