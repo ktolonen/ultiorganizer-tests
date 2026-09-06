@@ -1667,6 +1667,24 @@ final class GameFunctionsLibTest extends TestCase
         $this->assertSame(['start', 'pause'], $actions);
     }
 
+    public function testGameRemoveScoreRecordsOnlyWhenAPointWasActuallyRemoved(): void
+    {
+        // A resubmitted delete, or a $num this game never had, removes
+        // nothing -- and must not leave a goal/remove row claiming a point
+        // was taken off the scoresheet.
+        $gameId = $this->createTempGame();
+        GameAddScore($gameId, 800, 801, 120, 1, 1, 0, 1, 0);
+
+        GameRemoveScore($gameId, 1);
+        GameRemoveScore($gameId, 1);
+        GameRemoveScore($gameId, 99);
+
+        $rows = DBQueryToArray(
+            "SELECT action FROM uo_game_history WHERE game=$gameId AND target='goal' AND action='remove'",
+        );
+        $this->assertCount(1, $rows);
+    }
+
     public function testGameTimeResumeAddsThePauseFromTheRowAndRecordsOnce(): void
     {
         // The resume is one guarded UPDATE that reads timer_pause_start from
