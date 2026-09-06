@@ -1667,6 +1667,34 @@ final class GameFunctionsLibTest extends TestCase
         $this->assertSame(['start', 'pause'], $actions);
     }
 
+    public function testMutatorsRecordOnlyWhenTheyChangedSomething(): void
+    {
+        // Every mutator that deletes or updates gates its history row on
+        // DBAffectedRows(): a stale resubmission, a player who is not on this
+        // roster, or a value that is already what it is being set to changes
+        // nothing, and an audit trail that reports it is wrong.
+        $gameId = $this->createTempGame();
+
+        GameRemovePlayer($gameId, 99999999);
+        GameSetPlayerNumber($gameId, 99999999, 7);
+        RemoveGameMediaEvent($gameId, 99999999);
+        GameSetStartingTeam($gameId, null);
+        GameRemoveCapEvent($gameId, 'softcap');
+
+        $this->assertSame(0, (int) DBQueryToValue(
+            "SELECT COUNT(*) FROM uo_game_history
+                WHERE game=$gameId AND target IN ('played', 'mediaevent', 'gameevent')",
+        ), 'no-op mutations must not be recorded');
+
+        // The same calls that do change something still record exactly once.
+        GameSetStartingTeam($gameId, true);
+        GameSetStartingTeam($gameId, true);
+        $this->assertSame(1, (int) DBQueryToValue(
+            "SELECT COUNT(*) FROM uo_game_history
+                WHERE game=$gameId AND target='gameevent' AND action='update'",
+        ));
+    }
+
     public function testGameRemoveScoreRecordsOnlyWhenAPointWasActuallyRemoved(): void
     {
         // A resubmitted delete, or a $num this game never had, removes

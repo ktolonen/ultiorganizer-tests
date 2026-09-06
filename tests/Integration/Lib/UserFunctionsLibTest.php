@@ -719,6 +719,37 @@ final class UserFunctionsLibTest extends TestCase
         }
     }
 
+    public function testUserUpdateInfoMovesTheAuditTrailToTheNewLogin(): void
+    {
+        // uo_game_history and uo_event_log attribute a row by login name, so a
+        // rename that stopped at uo_users/uo_userproperties would strand the
+        // account's own history under the old name -- out of its privacy
+        // export and its deletion, and onto whoever is given that name next.
+        DBQuery("INSERT INTO uo_users (userid, password, name, email) VALUES ('testuser_ren', 'hash', 'Rename', 'ren@example.com')");
+        DBQuery("INSERT INTO uo_game_history (game, user_id, ip, source, target, action, detail)
+            VALUES (700, 'testuser_ren', '', 'user', 'result', 'update', '{}')");
+        DBQuery("INSERT INTO uo_event_log (user_id, category, type, id1) VALUES ('testuser_ren', 'test', 'rename', '1')");
+        try {
+            $id = (int) DBQueryToValue("SELECT id FROM uo_users WHERE userid='testuser_ren'");
+            UserUpdateInfo($id, 'testuser_ren', 'testuser_ren2', 'Rename');
+
+            $this->assertSame(0, (int) DBQueryToValue(
+                "SELECT COUNT(*) FROM uo_game_history WHERE user_id='testuser_ren'",
+            ), 'no history may be left under the old login');
+            $this->assertSame(1, (int) DBQueryToValue(
+                "SELECT COUNT(*) FROM uo_game_history WHERE user_id='testuser_ren2'",
+            ));
+            $this->assertSame(1, (int) DBQueryToValue(
+                "SELECT COUNT(*) FROM uo_event_log WHERE user_id='testuser_ren2'",
+            ));
+        } finally {
+            DBQuery("DELETE FROM uo_game_history WHERE user_id IN ('testuser_ren', 'testuser_ren2')");
+            DBQuery("DELETE FROM uo_event_log WHERE user_id IN ('testuser_ren', 'testuser_ren2')");
+            DBQuery("DELETE FROM uo_userproperties WHERE userid IN ('testuser_ren', 'testuser_ren2')");
+            DBQuery("DELETE FROM uo_users WHERE userid IN ('testuser_ren', 'testuser_ren2')");
+        }
+    }
+
     public function testUserChangePassword(): void
     {
         DBQuery("INSERT INTO uo_users (userid, password, name) VALUES ('testuser_chpw', 'oldhash', 'ChPw')");
