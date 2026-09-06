@@ -1667,6 +1667,31 @@ final class GameFunctionsLibTest extends TestCase
         $this->assertSame(['start', 'pause'], $actions);
     }
 
+    public function testGameTimeResumeAddsThePauseFromTheRowAndRecordsOnce(): void
+    {
+        // The resume is one guarded UPDATE that reads timer_pause_start from
+        // the row it writes, so there is no read-modify-write window and no
+        // guard value that a pause in the same second could reuse. A resume
+        // with nothing paused changes nothing and records nothing.
+        $gameId = $this->createTempGame();
+        GameTimeStart($gameId);
+
+        DBQuery("UPDATE uo_game SET timer_pause_start = " . (time() - 5) . ",
+            timer_paused_duration = 10 WHERE game_id = $gameId");
+
+        $this->assertNotFalse(GameTimeResume($gameId));
+        $this->assertSame(15, (int) DBQueryToValue(
+            "SELECT timer_paused_duration FROM uo_game WHERE game_id = $gameId",
+        ));
+
+        $this->assertFalse(GameTimeResume($gameId), 'a running clock cannot be resumed');
+
+        $actions = array_column(DBQueryToArray(
+            "SELECT action FROM uo_game_history WHERE game=$gameId AND target='timer' ORDER BY history_id",
+        ), 'action');
+        $this->assertSame(['start', 'resume'], $actions);
+    }
+
     public function testGameRemoveAllGameEventsRecordsItsOwnClearRow(): void
     {
         // The helper is reachable from lib/ as a mutation helper in its own
