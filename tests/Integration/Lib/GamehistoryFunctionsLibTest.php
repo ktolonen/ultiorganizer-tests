@@ -2394,14 +2394,18 @@ final class GamehistoryFunctionsLibTest extends TestCase
 
     public function testRestoreDowngradesAcknowledgedFlagWhenAdminLacksAccreditationRightOnPlayersCurrentTeam(): void
     {
-        // C2: the up-front guard in GameHistoryRestore() only rechecks
-        // hasAccredidationRight() for the teams recorded in the SNAPSHOT
-        // (team 301 here). The restore loop must separately recheck the player's CURRENT team before writing acknowledged=1,
-        // or an admin holding the right only on the old team could grant an
-        // acknowledgment on a team they have no accreditation right over.
-        // Game 701 (respteam=301) is used, not 700, so the up-front guard's
-        // acknowledged-team set contains only the one team this test
-        // controls.
+        // C2: restore is an event-admin action (hasRestoreGameHistoryRight()),
+        // and a seasonadmin holds hasAccredidationRight() over every team in
+        // their own event -- so the recheck can only bite for a player who has
+        // transferred OUT of the event since the snapshot. The restore loop
+        // must recheck the player's CURRENT team before writing
+        // acknowledged=1, or the acknowledgment would be granted on a team the
+        // restoring admin has no accreditation right over.
+        DBQuery("INSERT INTO uo_season (season_id, name) VALUES ('HRN2027', 'Harness Invitational 2027')");
+        DBQuery("INSERT INTO uo_series (series_id, name, ordering, season, valid, type, color, pool_template)
+                 VALUES (101, 'Open 2027', 'A', 'HRN2027', 1, 'open', '336699', NULL)");
+        DBQuery("INSERT INTO uo_team (team_id, name, pool, club, rank, activerank, valid, series, country, reg_id, sotg_token, abbreviation)
+                 VALUES (303, 'Next Season United', NULL, NULL, 1, 1, 1, 101, 1064, NULL, NULL, 'NEXT')");
         DBQuery("INSERT INTO uo_player (firstname, lastname, team, num, accreditation_id, accredited, reg_id, profile_id)
                  VALUES ('Downgrade', 'Target', 301, 60, NULL, 1, NULL, NULL)");
         $playerId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
@@ -2412,15 +2416,12 @@ final class GamehistoryFunctionsLibTest extends TestCase
 
         $snapshotId = (int) GameHistorySnapshotIfNeeded(701);
 
-        // Move the player to a team this admin has no accreditation right on.
-        DBQuery(sprintf("UPDATE uo_player SET team=300 WHERE player_id=%d", $playerId));
+        // Move the player to a team in another event, which this admin does
+        // not run: seasonadmin[HRN2026] does not grant hasAccredidationRight(303).
+        DBQuery(sprintf("UPDATE uo_player SET team=303 WHERE player_id=%d", $playerId));
 
-        // teamadmin[301] clears hasEditGameEventsRight()/hasEditGamePlayersRight()
-        // for game 701 (respteam=301) and accradmin[301] clears the up-front
-        // guard for the snapshot's team -- but neither grants
-        // hasAccredidationRight(300), the player's CURRENT team.
-        $_SESSION['userproperties']['userrole'] = ['teamadmin' => [301 => true], 'accradmin' => [301 => true]];
-        $_SESSION['uid'] = 'teamadmin301';
+        $_SESSION['userproperties']['userrole'] = ['seasonadmin' => ['HRN2026' => true]];
+        $_SESSION['uid'] = 'seasonadminHRN2026';
         try {
             $result = GameHistoryRestore($snapshotId);
 
@@ -2434,6 +2435,54 @@ final class GamehistoryFunctionsLibTest extends TestCase
                 $playerId,
             ));
             $this->assertSame(0, $acknowledged);
+        } finally {
+            $_SESSION['uid'] = 'testuser';
+            $_SESSION['userproperties']['userrole'] = ['superadmin' => true];
+            DBQuery(sprintf("DELETE FROM uo_played WHERE player=%d AND game=701", $playerId));
+            DBQuery(sprintf("DELETE FROM uo_player WHERE player_id=%d", $playerId));
+            DBQuery("DELETE FROM uo_team WHERE team_id=303");
+            DBQuery("DELETE FROM uo_series WHERE series_id=101");
+            DBQuery("DELETE FROM uo_season WHERE season_id='HRN2027'");
+        }
+    }
+
+    public function testRestoreIsRefusedForATeamOrGameAdminWhoMayStillReadTheHistory(): void
+    {
+        // Reading the history needs hasEditGameEventsRight(), so a team's own
+        // game admins can review it. Restoring overwrites the whole scoresheet
+        // and needs the stricter hasRestoreGameHistoryRight(): superadmin or
+        // the event's seasonadmin. The refusal must not write anything.
+        DBQuery("INSERT INTO uo_player (firstname, lastname, team, num, accreditation_id, accredited, reg_id, profile_id)
+                 VALUES ('Refused', 'Restore', 301, 61, NULL, 1, NULL, NULL)");
+        $playerId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+        DBQuery(sprintf(
+            "INSERT INTO uo_played (player, game, num, accredited, acknowledged, captain) VALUES (%d, 701, 61, 1, 1, 0)",
+            $playerId,
+        ));
+
+        $snapshotId = (int) GameHistorySnapshotIfNeeded(701);
+
+        // The roster row the restore would put back if it ran.
+        DBQuery(sprintf("DELETE FROM uo_played WHERE game=701 AND player=%d", $playerId));
+
+        $_SESSION['userproperties']['userrole'] = [
+            'teamadmin' => [301 => true],
+            'accradmin' => [301 => true],
+            'gameadmin' => [701 => true],
+        ];
+        $_SESSION['uid'] = 'teamadmin301';
+        try {
+            $result = GameHistoryRestore($snapshotId);
+
+            $this->assertFalse($result['restored'], 'a team or game admin must not be able to restore');
+            $this->assertSame([], $result['warnings']);
+            $this->assertSame(0, (int) DBQueryToValue(sprintf(
+                "SELECT COUNT(*) FROM uo_played WHERE game=701 AND player=%d",
+                $playerId,
+            )));
+
+            // Reading is unaffected by the tighter restore right.
+            $this->assertNotEmpty(GameHistoryList(701));
         } finally {
             $_SESSION['uid'] = 'testuser';
             $_SESSION['userproperties']['userrole'] = ['superadmin' => true];
