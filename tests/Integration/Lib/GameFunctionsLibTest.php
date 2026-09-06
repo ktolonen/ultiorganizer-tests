@@ -1647,6 +1647,45 @@ final class GameFunctionsLibTest extends TestCase
         $this->assertSame(125, $setElapsed['elapsed']);
     }
 
+    public function testGameTimePauseRecordsNothingWhenTheClockDoesNotChange(): void
+    {
+        // The UPDATE is guarded on isongoing=1 AND timer_pause_start IS NULL,
+        // so a pause on a game that is not running, or a duplicate pause
+        // submission, changes nothing -- and must not claim in the audit trail
+        // that it did. GameTimeResume() already worked this way.
+        $gameId = $this->createTempGame();
+
+        $this->assertFalse(GameTimePause($gameId), 'a game that has not started cannot be paused');
+
+        GameTimeStart($gameId);
+        GameTimePause($gameId);
+        $this->assertFalse(GameTimePause($gameId), 'an already paused clock cannot be paused again');
+
+        $actions = array_column(DBQueryToArray(
+            "SELECT action FROM uo_game_history WHERE game=$gameId AND target='timer' ORDER BY history_id",
+        ), 'action');
+        $this->assertSame(['start', 'pause'], $actions);
+    }
+
+    public function testGameRemoveAllGameEventsRecordsItsOwnClearRow(): void
+    {
+        // The helper is reachable from lib/ as a mutation helper in its own
+        // right, so a caller outside GameHistoryRestore()'s suppressed replay
+        // must leave an audit row rather than only a snapshot.
+        $gameId = $this->createTempGame();
+        GameSetStartingTeam($gameId, true);
+
+        GameRemoveAllGameEvents($gameId);
+
+        $rows = DBQueryToArray(
+            "SELECT action, detail FROM uo_game_history
+                WHERE game=$gameId AND target='gameevent' AND action='clear'",
+        );
+        $this->assertCount(1, $rows);
+        $detail = json_decode($rows[0]['detail'], true);
+        $this->assertSame(1, (int) $detail['removed']);
+    }
+
     public function testGameTimeMutatorsNeverCreateASnapshot(): void
     {
         // R2 ruling: restore is whole-sheet, so a clock-only restore point

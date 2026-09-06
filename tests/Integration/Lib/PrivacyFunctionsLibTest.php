@@ -946,11 +946,24 @@ final class PrivacyFunctionsLibTest extends TestCase
         try {
             self::flushQueryCaches();
             $data = PrivacyCollectPlayerReportData($playerId);
-            $this->assertArrayHasKey('game_history_name_rows', $data);
+            $this->assertArrayHasKey('game_history_snapshot_rows', $data);
 
-            $names = array_column($data['game_history_name_rows'], 'name');
+            $names = array_column($data['game_history_snapshot_rows'], 'name');
             $this->assertContains('Old Spelling', $names, "the player's own snapshot-held name must be exported");
             $this->assertNotContains('Zzz Otherplayer', $names, "another player's name from the same snapshot must not leak");
+
+            // The snapshot is the only remaining record of the values it
+            // holds, so the subject's own fields come out with the name --
+            // and the other side of the goal stays out.
+            $scorerRows = array_values(array_filter(
+                $data['game_history_snapshot_rows'],
+                fn($row) => ($row['field'] ?? '') === 'goals.scorer',
+            ));
+            $this->assertNotEmpty($scorerRows);
+            $this->assertSame(90, (int) $scorerRows[0]['num'], "the subject's jersey at capture time must be exported");
+            $this->assertSame('1-0', $scorerRows[0]['score']);
+            $this->assertArrayNotHasKey('assist_name', $scorerRows[0]);
+            $this->assertArrayNotHasKey('assist_num', $scorerRows[0]);
 
             $report = PrivacyRenderPlayerReportText($playerId, 'admin');
             $this->assertNotNull($report);
