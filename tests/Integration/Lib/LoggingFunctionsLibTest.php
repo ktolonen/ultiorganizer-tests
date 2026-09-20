@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use PHPUnit\Framework\Attributes\PreserveGlobalState;
+use PHPUnit\Framework\Attributes\RunInSeparateProcess;
 use PHPUnit\Framework\TestCase;
 use UltiorganizerHarness\Support\LegacyApp;
 
@@ -379,12 +381,28 @@ final class LoggingFunctionsLibTest extends TestCase
 
     // --- IsVisitorLoggingDisabled / LogPageLoad / LogVisitor ---
 
+    // IsVisitorLoggingDisabled() memoizes in a function static for the
+    // process lifetime, so a test needing the setting DISABLED=false only
+    // works if nothing has called it yet. That made this test depend on
+    // running before any other class that consults the setting; game
+    // history recording now does. Its own process removes the ordering
+    // dependency in both directions.
+    #[RunInSeparateProcess]
+    #[PreserveGlobalState(false)]
     public function testIsVisitorLoggingDisabledReturnsFalseWhenSettingIsFalse(): void
     {
         // setUp already set DisableVisitorLogging='false'
         $this->assertFalse(IsVisitorLoggingDisabled());
     }
 
+    // IsVisitorLoggingDisabled() memoizes in a function static for the
+    // process lifetime, so a test needing the setting DISABLED=false only
+    // works if nothing has called it yet. That made this test depend on
+    // running before any other class that consults the setting; game
+    // history recording now does. Its own process removes the ordering
+    // dependency in both directions.
+    #[RunInSeparateProcess]
+    #[PreserveGlobalState(false)]
     public function testLogPageLoadInsertsNewEntryOnFirstLoad(): void
     {
         $page = 'harness_test_' . uniqid();
@@ -393,6 +411,14 @@ final class LoggingFunctionsLibTest extends TestCase
         $this->assertSame('1', $count);
     }
 
+    // IsVisitorLoggingDisabled() memoizes in a function static for the
+    // process lifetime, so a test needing the setting DISABLED=false only
+    // works if nothing has called it yet. That made this test depend on
+    // running before any other class that consults the setting; game
+    // history recording now does. Its own process removes the ordering
+    // dependency in both directions.
+    #[RunInSeparateProcess]
+    #[PreserveGlobalState(false)]
     public function testLogPageLoadIncrementsExistingEntry(): void
     {
         $page = 'harness_test_inc_' . uniqid();
@@ -411,6 +437,14 @@ final class LoggingFunctionsLibTest extends TestCase
         $this->assertSame($before, $after);
     }
 
+    // IsVisitorLoggingDisabled() memoizes in a function static for the
+    // process lifetime, so a test needing the setting DISABLED=false only
+    // works if nothing has called it yet. That made this test depend on
+    // running before any other class that consults the setting; game
+    // history recording now does. Its own process removes the ordering
+    // dependency in both directions.
+    #[RunInSeparateProcess]
+    #[PreserveGlobalState(false)]
     public function testLogVisitorInsertsNewEntry(): void
     {
         $ip = '192.0.2.' . rand(1, 254);
@@ -419,6 +453,14 @@ final class LoggingFunctionsLibTest extends TestCase
         $this->assertSame('1', $visits);
     }
 
+    // IsVisitorLoggingDisabled() memoizes in a function static for the
+    // process lifetime, so a test needing the setting DISABLED=false only
+    // works if nothing has called it yet. That made this test depend on
+    // running before any other class that consults the setting; game
+    // history recording now does. Its own process removes the ordering
+    // dependency in both directions.
+    #[RunInSeparateProcess]
+    #[PreserveGlobalState(false)]
     public function testLogVisitorIncrementsExistingEntry(): void
     {
         $ip = '192.0.2.' . rand(1, 254);

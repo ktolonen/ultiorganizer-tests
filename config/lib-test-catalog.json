@@ -236,6 +236,22 @@
       "sut_path": "/home/kari/dev/ultiorganizer/lib/game.functions.php"
     },
     {
+      "lib_file": "scoresheethistory.functions.php",
+      "lib_path": "lib/scoresheethistory.functions.php",
+      "subject_id": "scoresheethistory.functions",
+      "test_suite": "integration",
+      "test_path": "tests/Integration/Lib/ScoresheethistoryFunctionsLibTest.php",
+      "test_class": "ScoresheethistoryFunctionsLibTest",
+      "strategy": "direct_helper",
+      "load_profile": "bootstrap_only",
+      "test_path_exists": true,
+      "status": "covered",
+      "triage_status": "untriaged",
+      "triage_notes": "",
+      "notes": "",
+      "sut_path": "/home/kari/dev/ultiorganizer/lib/scoresheethistory.functions.php"
+    },
+    {
       "lib_file": "image.functions.php",
       "lib_path": "lib/image.functions.php",
       "subject_id": "image.functions",
