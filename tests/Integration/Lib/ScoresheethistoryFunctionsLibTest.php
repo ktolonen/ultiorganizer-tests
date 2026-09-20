@@ -2100,12 +2100,12 @@ final class ScoresheethistoryFunctionsLibTest extends TestCase
 
     public function testRestoreDoesNotRewriteTheGlobalJerseyOfATransferredPlayer(): void
     {
-        // Restore rewrites uo_player.num as a side effect inherited from
-        // GameAddPlayer(). For a player who has transferred since the
-        // snapshot, that column belongs to their CURRENT team, which the
-        // restoring admin may hold no rights over -- restore's authority is
-        // this game's roster, not another team's squad numbering. The
-        // per-game number must still come back.
+        // Restore never writes uo_player.num, the current squad number, and
+        // a transferred player is the case that makes the reason plainest:
+        // that column belongs to their CURRENT team, which the restoring
+        // admin may hold no rights over -- restore's authority is this game's
+        // roster, not another team's squad numbering. The per-game number
+        // must still come back.
         DBQuery("INSERT INTO uo_team (team_id, name, pool, club, rank, activerank, valid, series, country, reg_id, sotg_token, abbreviation)
                  VALUES (302, 'Oulu Outsiders', 200, NULL, 3, 3, 1, 100, 1064, NULL, NULL, 'OULU')");
         DBQuery("INSERT INTO uo_player (firstname, lastname, team, num, accreditation_id, accredited, reg_id, profile_id)
@@ -2359,9 +2359,10 @@ final class ScoresheethistoryFunctionsLibTest extends TestCase
     public function testRestoringAnUnnumberedPlayerKeepsTheJerseyNumberNull(): void
     {
         // Both num columns are nullable and 0 is a real jersey, so "no
-        // number" must survive the round trip rather than becoming 0 -- on
-        // the uo_played row and on the player's global uo_player row, which
-        // restore also rewrites.
+        // number" must survive the round trip on the uo_played row rather
+        // than becoming 0. uo_player.num is the player's CURRENT squad
+        // number, which restore does not touch at all, so the number given
+        // after the snapshot stays.
         DBQuery("INSERT INTO uo_player (firstname, lastname, team, num, accreditation_id, accredited, reg_id, profile_id)
                  VALUES ('Numberless', 'Regular', 300, NULL, NULL, 1, NULL, NULL)");
         $playerId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
@@ -2383,7 +2384,10 @@ final class ScoresheethistoryFunctionsLibTest extends TestCase
                 "SELECT num FROM uo_played WHERE game=700 AND player=%d",
                 $playerId,
             )));
-            $this->assertNull(DBQueryToValue(sprintf(
+            // Not restored to NULL: the squad number is present state, and
+            // nothing captures it, so restore leaves it where the roster
+            // admin last set it.
+            $this->assertSame('44', (string) DBQueryToValue(sprintf(
                 "SELECT num FROM uo_player WHERE player_id=%d",
                 $playerId,
             )));
