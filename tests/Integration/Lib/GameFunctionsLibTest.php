@@ -1695,6 +1695,44 @@ final class GameFunctionsLibTest extends TestCase
         ));
     }
 
+    public function testRoleAssignmentRecordsOnlyWhenTheFinalAssignmentDiffers(): void
+    {
+        // user/addplayerlists.php calls the two role setters four times on
+        // every player-list save, changed or not. GameSetRolePlayers() clears
+        // and reapplies the role, so the write itself cannot tell the two
+        // apart -- it compares the selection instead. Baseline fixture: player
+        // 800 already carries captain=1 on team 300, 801 does not.
+        $count = fn (): int => (int) DBQueryToValue(
+            "SELECT COUNT(*) FROM uo_game_history
+                WHERE game=700 AND target='played' AND action='update'",
+        );
+        $before = $count();
+
+        try {
+            GameSetCaptains(700, 300, [800]);
+            GameSetSpiritCaptains(700, 300, []);
+            $this->assertSame($before, $count(), 'an unchanged role assignment must not be recorded');
+
+            GameSetCaptains(700, 300, [801, 800]);
+            $this->assertSame($before + 1, $count());
+
+            // Order does not make an assignment different either.
+            GameSetCaptains(700, 300, [800, 801]);
+            $this->assertSame($before + 1, $count());
+
+            $captains = DBQueryToArray(
+                "SELECT pg.player FROM uo_played AS pg
+                    LEFT JOIN uo_player AS p ON (pg.player=p.player_id)
+                    WHERE pg.game=700 AND p.team=300 AND pg.captain=1 ORDER BY pg.player",
+            );
+            $this->assertSame([800, 801], array_map('intval', array_column($captains, 'player')));
+        } finally {
+            // No per-test fixture reload, so put the baseline roles back.
+            DBQuery("UPDATE uo_played SET captain=0, spirit_captain=0 WHERE game=700 AND player=801");
+            DBQuery("UPDATE uo_played SET captain=1 WHERE game=700 AND player=800");
+        }
+    }
+
     public function testGameRemoveScoreRecordsOnlyWhenAPointWasActuallyRemoved(): void
     {
         // A resubmitted delete, or a $num this game never had, removes
