@@ -781,27 +781,63 @@ final class GamehistoryFunctionsLibTest extends TestCase
         $this->assertCount(4, $entry['snapshot']['goals']);
     }
 
-    public function testAllDeniesNonSuperAdmins(): void
+    public function testSeasonSummaryDeniesUsersWithoutEventRights(): void
     {
         GameHistoryRecord(700, 'goal', 'add', ['num' => 1]);
         $_SESSION['userproperties']['userrole'] = [];
         try {
-            $this->assertSame([], GameHistoryAll(['game' => 700]));
-            $this->assertSame(0, GameHistoryAllCount(['game' => 700]));
+            $this->assertSame([], SeasonGameHistorySummary('HRN2026'));
+
+            // The gate is wider than the removed installation-wide log's: the
+            // event's own admin reads it, not only a superadmin.
+            $_SESSION['userproperties']['userrole']['seasonadmin']['HRN2026'] = true;
+            $this->assertNotSame([], SeasonGameHistorySummary('HRN2026'));
         } finally {
-            $_SESSION['userproperties']['userrole']['superadmin'] = true;
+            $_SESSION['userproperties']['userrole'] = ['superadmin' => true];
         }
     }
 
-    public function testAllFiltersByGame(): void
+    public function testSeasonSummaryPicksTheLatestRowByHistoryIdWhenTimesTie(): void
     {
-        GameHistoryRecord(700, 'goal', 'add', ['num' => 1]);
-        GameHistoryRecord(701, 'goal', 'add', ['num' => 1]);
+        // A bulk save writes several rows within the same second, so the time
+        // alone does not identify the latest one.
+        $_SESSION['uid'] = 'earlier';
+        $first = (int) GameHistoryRecord(700, 'goal', 'add', ['num' => 1]);
+        $_SESSION['uid'] = 'later';
+        $second = (int) GameHistoryRecord(700, 'goal', 'add', ['num' => 2]);
+        $this->assertGreaterThan($first, $second);
 
-        $rows = GameHistoryAll(['game' => 700]);
+        DBQuery("UPDATE uo_game_history SET time='2026-06-01 10:30:00' WHERE game=700");
+
+        $rows = SeasonGameHistorySummary('HRN2026');
         $this->assertCount(1, $rows);
-        $this->assertSame('700', (string) $rows[0]['game']);
-        $this->assertSame(1, GameHistoryAllCount(['game' => 700]));
+        $this->assertSame('700', (string) $rows[0]['game_id']);
+        $this->assertSame('later', $rows[0]['user_id']);
+        $this->assertSame(2, (int) $rows[0]['changes']);
+    }
+
+    public function testSeasonSummaryMarksALastChangeOutsideTheScheduledDay(): void
+    {
+        // Game 700 is scheduled 2026-06-01 10:00 in the baseline fixture.
+        $id = (int) GameHistoryRecord(700, 'goal', 'add', ['num' => 1]);
+
+        DBQuery(sprintf(
+            "UPDATE uo_game_history SET time='2026-06-01 23:30:00' WHERE history_id=%d",
+            $id,
+        ));
+        $rows = SeasonGameHistorySummary('HRN2026');
+        $this->assertCount(1, $rows);
+        $this->assertFalse((bool) $rows[0]['offday']);
+        $this->assertSame([], SeasonGameHistorySummary('HRN2026', ['offday' => true]));
+
+        DBQuery(sprintf(
+            "UPDATE uo_game_history SET time='2026-06-02 00:30:00' WHERE history_id=%d",
+            $id,
+        ));
+        $rows = SeasonGameHistorySummary('HRN2026');
+        $this->assertCount(1, $rows);
+        $this->assertTrue((bool) $rows[0]['offday']);
+        $this->assertCount(1, SeasonGameHistorySummary('HRN2026', ['offday' => true]));
     }
 
     public function testFormatDetailRendersEachTargetCompactly(): void
@@ -1740,7 +1776,13 @@ final class GamehistoryFunctionsLibTest extends TestCase
 
     public function testFormatDetailRendersRoleAssignmentsNotPlayerZero(): void
     {
-        GameSetCaptains(700, 300, [800]);
+        // Baseline fixture: player 800 already carries captain=1 on team 300,
+        // so handing the role to 801 is what makes this an actual change --
+        // GameSetRolePlayers() records nothing for an unchanged assignment.
+        // There is no per-test fixture reload, and
+        // testRestoreRestoresCaptainAndSpiritCaptainFlags() below reads the
+        // baseline roles, so both are put back at the end.
+        GameSetCaptains(700, 300, [801]);
         $captainRow = DBQueryToRow(
             "SELECT action, detail FROM uo_game_history
              WHERE game=700 AND target='played' AND action='update' ORDER BY history_id DESC LIMIT 1",
@@ -1765,6 +1807,9 @@ final class GamehistoryFunctionsLibTest extends TestCase
         ]);
         $this->assertNotSame('Player 0', $spiritText);
         $this->assertSame('Spirit captain: 1', $spiritText);
+
+        DBQuery("UPDATE uo_played SET captain=0, spirit_captain=0 WHERE game=700 AND player=801");
+        DBQuery("UPDATE uo_played SET captain=1, spirit_captain=0 WHERE game=700 AND player=800");
     }
 
     public function testRestoreReproducesTheStartingOffence(): void
@@ -1934,7 +1979,7 @@ final class GamehistoryFunctionsLibTest extends TestCase
 
     public function testToFilterIncludesRowsRecordedOnTheChosenEndDate(): void
     {
-        // admin/gamehistory.php feeds a bare YYYY-MM-DD from <input
+        // admin/seasongamehistory.php feeds a bare YYYY-MM-DD from <input
         // type='date'>, which MySQL widens to 00:00:00 -- a plain `<=` would
         // exclude every row recorded later on the chosen end date.
         $id = (int) GameHistoryRecord(700, 'goal', 'add', ['num' => 1]);
@@ -1944,9 +1989,9 @@ final class GamehistoryFunctionsLibTest extends TestCase
             $id,
         ));
 
-        $rows = GameHistoryAll(['game' => 700, 'to' => date('Y-m-d')]);
+        $rows = SeasonGameHistorySummary('HRN2026', ['to' => date('Y-m-d')]);
         $this->assertCount(1, $rows);
-        $this->assertSame(1, GameHistoryAllCount(['game' => 700, 'to' => date('Y-m-d')]));
+        $this->assertSame('700', (string) $rows[0]['game_id']);
     }
 
     public function testRestoreRestoresTheAcknowledgedFlagEvenWhenThePlayerHasChangedTeamsSinceTheSnapshot(): void
