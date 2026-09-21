@@ -310,31 +310,13 @@ final class ScoresheethistoryFunctionsLibTest extends TestCase
         $this->assertSame(0, $count);
     }
 
-    public function testRecordSucceedsForAnAccreditationOnlyRight(): void
-    {
-        // uid stays 'anonymous' so hasAddMediaRight() cannot mask a missing
-        // hasAccredidationRight() check -- otherwise any logged-in session
-        // would pass via the media right regardless of role, and this test
-        // would not actually exercise the accreditation branch of the guard.
-        // Game 700's respteam (home team) is 300 (see fixtures/baseline.sql).
-        $_SESSION['userproperties']['userrole'] = ['accradmin' => [300 => true]];
-        $_SESSION['uid'] = 'anonymous';
-        try {
-            $id = (int) ScoresheetHistoryRecord(700, 'played', 'update', ['player' => 800, 'acknowledged' => 1]);
-        } finally {
-            $_SESSION['uid'] = 'testuser';
-            $_SESSION['userproperties']['userrole'] = ['superadmin' => true];
-        }
-        $this->assertGreaterThan(0, $id);
-    }
-
-    public function testAccreditationOnlyRightCannotForgeNonRosterHistory(): void
+    public function testAccreditationOnlyRightCannotWriteHistory(): void
     {
         // hasAccredidationRight() grants acknowledgement changes on a team's
-        // roster and nothing else. The fallback that honours it used to apply
-        // to every target, so an accreditation-only caller could reach these
-        // reusable helpers directly and forge result/goal/forfeit rows, or
-        // capture a whole snapshot, for a fixture they cannot otherwise edit.
+        // roster and nothing else, and the guard honours no accreditation
+        // branch at all, so an accreditation-only caller cannot reach these
+        // reusable helpers to forge history for a fixture they cannot
+        // otherwise edit.
         $_SESSION['userproperties']['userrole'] = ['accradmin' => [300 => true]];
         $_SESSION['uid'] = 'anonymous';
         try {
@@ -346,13 +328,12 @@ final class ScoresheethistoryFunctionsLibTest extends TestCase
             // capture is the broadest read of all and must be refused too.
             $this->assertFalse(ScoresheetHistorySnapshotIfNeeded(700));
 
-            // The one thing accreditation DOES authorize still works, and is
-            // what AcknowledgeUnaccredited() relies on.
-            $this->assertGreaterThan(
-                0,
-                (int) ScoresheetHistoryRecord(700, 'played', 'update', ['player' => 800, 'acknowledged' => 1]),
-            );
-            $this->assertGreaterThan(0, (int) ScoresheetHistorySnapshotIfNeeded(700, false, false, 'played'));
+            // The played target is refused as well: acknowledgement changes
+            // record no history, so nothing scopes a right to them.
+            $this->assertFalse(ScoresheetHistoryRecord(700, 'played', 'update', [
+                'player' => 800,
+                'acknowledged' => 1,
+            ]));
         } finally {
             $_SESSION['uid'] = 'testuser';
             $_SESSION['userproperties']['userrole'] = ['superadmin' => true];
@@ -937,24 +918,9 @@ final class ScoresheethistoryFunctionsLibTest extends TestCase
         $this->assertSame('Halftime cap', $gameeventCap);
     }
 
-    public function testFormatDetailRendersTheAcknowledgedPlayedChange(): void
+    public function testFormatDetailRendersAPlainPlayedChange(): void
     {
-        $acknowledged = ScoresheetHistoryFormatDetail([
-            'target' => 'played',
-            'action' => 'update',
-            'detail' => json_encode(['player' => 800, 'acknowledged' => 1]),
-        ]);
-        $this->assertSame('Player 800: Acknowledged', $acknowledged);
-
-        $unacknowledged = ScoresheetHistoryFormatDetail([
-            'target' => 'played',
-            'action' => 'update',
-            'detail' => json_encode(['player' => 800, 'acknowledged' => 0]),
-        ]);
-        $this->assertSame('Player 800: Not acknowledged', $unacknowledged);
-
-        // A plain jersey-number change (no 'acknowledged' key) must still
-        // fall through to the generic "Player N" rendering.
+        // A jersey-number change renders through the generic "Player N" case.
         $numberChange = ScoresheetHistoryFormatDetail([
             'target' => 'played',
             'action' => 'update',
@@ -980,76 +946,6 @@ final class ScoresheethistoryFunctionsLibTest extends TestCase
         $this->assertSame('Set game clock: 125', ScoresheetHistoryFormatDetail([
             'target' => 'timer', 'action' => 'update', 'detail' => json_encode(['elapsed' => 125]),
         ]));
-    }
-
-    // --- R1: AcknowledgeUnaccredited() / UnAcknowledgeUnaccredited() ---
-
-    public function testAcknowledgeUnaccreditedWritesAPlayedUpdateRowAndASnapshot(): void
-    {
-        DBQuery("UPDATE uo_played SET acknowledged=0 WHERE game=700 AND player=800");
-        DBQuery("DELETE FROM uo_scoresheet_history WHERE game=700");
-
-        AcknowledgeUnaccredited(800, 700, 'test-acknowledge');
-
-        $row = DBQueryToRow(
-            "SELECT action, detail FROM uo_scoresheet_history
-             WHERE game=700 AND target='played' AND action='update' ORDER BY history_id DESC LIMIT 1",
-        );
-        $this->assertNotNull($row, 'AcknowledgeUnaccredited() must write a played/update row');
-        $detail = json_decode($row['detail'], true);
-        $this->assertSame(800, $detail['player']);
-        $this->assertSame(1, $detail['acknowledged']);
-
-        $snapshotCount = (int) DBQueryToValue(
-            "SELECT COUNT(*) FROM uo_scoresheet_history WHERE game=700 AND has_snapshot=1",
-        );
-        $this->assertSame(1, $snapshotCount, 'AcknowledgeUnaccredited() must also create a restore point');
-    }
-
-    public function testUnAcknowledgeUnaccreditedWritesAPlayedUpdateRowAndASnapshot(): void
-    {
-        DBQuery("DELETE FROM uo_scoresheet_history WHERE game=700");
-
-        UnAcknowledgeUnaccredited(800, 700, 'test-unacknowledge');
-
-        $row = DBQueryToRow(
-            "SELECT action, detail FROM uo_scoresheet_history
-             WHERE game=700 AND target='played' AND action='update' ORDER BY history_id DESC LIMIT 1",
-        );
-        $this->assertNotNull($row, 'UnAcknowledgeUnaccredited() must write a played/update row');
-        $detail = json_decode($row['detail'], true);
-        $this->assertSame(800, $detail['player']);
-        $this->assertSame(0, $detail['acknowledged']);
-
-        $snapshotCount = (int) DBQueryToValue(
-            "SELECT COUNT(*) FROM uo_scoresheet_history WHERE game=700 AND has_snapshot=1",
-        );
-        $this->assertSame(1, $snapshotCount, 'UnAcknowledgeUnaccredited() must also create a restore point');
-    }
-
-    public function testRestoreReinstatesAcknowledgedValueToggledThroughUnAcknowledgeUnaccredited(): void
-    {
-        DBQuery("DELETE FROM uo_scoresheet_history WHERE game=700");
-
-        // No manual ScoresheetHistorySnapshotIfNeeded() call: the restore point
-        // must come from UnAcknowledgeUnaccredited() itself, so this pins
-        // both halves of the fix (recording and restorability) together.
-        UnAcknowledgeUnaccredited(800, 700, 'test-unacknowledge');
-        $this->assertSame(0, (int) DBQueryToValue(
-            "SELECT acknowledged FROM uo_played WHERE game=700 AND player=800",
-        ));
-
-        $snapshotId = (int) DBQueryToValue(
-            "SELECT history_id FROM uo_scoresheet_history WHERE game=700 AND has_snapshot=1 ORDER BY history_id DESC LIMIT 1",
-        );
-        $this->assertGreaterThan(0, $snapshotId, 'UnAcknowledgeUnaccredited() must create a restore point');
-
-        $result = ScoresheetHistoryRestore($snapshotId);
-
-        $this->assertTrue($result['restored']);
-        $this->assertSame(1, (int) DBQueryToValue(
-            "SELECT acknowledged FROM uo_played WHERE game=700 AND player=800",
-        ));
     }
 
     public function testFormatDetailNeverEmitsTheRawResultStateToken(): void
@@ -2136,45 +2032,6 @@ final class ScoresheethistoryFunctionsLibTest extends TestCase
                 $playerId,
             )));
         } finally {
-            DBQuery(sprintf("DELETE FROM uo_played WHERE player=%d AND game=700", $playerId));
-            DBQuery(sprintf("DELETE FROM uo_player WHERE player_id=%d", $playerId));
-            DBQuery("DELETE FROM uo_team WHERE team_id=302");
-        }
-    }
-
-    public function testAccreditationRightOnATransferredPlayersNewTeamStillRecordsHistory(): void
-    {
-        // AcknowledgeUnaccredited() authorizes against the player's CURRENT
-        // team, so an admin of the team a player transferred TO can legitimately
-        // acknowledge them for this old game. Checking only the fixture's two
-        // teams let that acknowledgement succeed while its snapshot and audit
-        // row were silently refused -- the exact outcome this feature exists
-        // to prevent.
-        DBQuery("INSERT INTO uo_team (team_id, name, pool, club, rank, activerank, valid, series, country, reg_id, sotg_token, abbreviation)
-                 VALUES (302, 'Oulu Outsiders', 200, NULL, 3, 3, 1, 100, 1064, NULL, NULL, 'OULU')");
-        DBQuery("INSERT INTO uo_player (firstname, lastname, team, num, accreditation_id, accredited, reg_id, profile_id)
-                 VALUES ('Moved', 'Onward', 302, 12, NULL, 0, NULL, NULL)");
-        $playerId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
-        DBQuery(sprintf(
-            "INSERT INTO uo_played (player, game, num, accredited, acknowledged, captain) VALUES (%d, 700, 12, 0, 0, 0)",
-            $playerId,
-        ));
-
-        // Rights on the NEW team only, and nothing on the fixture's own teams.
-        $_SESSION['userproperties']['userrole'] = ['accradmin' => [302 => true]];
-        $_SESSION['uid'] = 'anonymous';
-        try {
-            $this->assertGreaterThan(0, (int) ScoresheetHistorySnapshotIfNeeded(700, false, false, 'played'));
-            $this->assertGreaterThan(0, (int) ScoresheetHistoryRecord(700, 'played', 'update', [
-                'player' => $playerId,
-                'acknowledged' => 1,
-            ]));
-
-            // Still scoped: this right does not authorize non-roster targets.
-            $this->assertFalse(ScoresheetHistoryRecord(700, 'result', 'update', ['home' => 1, 'away' => 1]));
-        } finally {
-            $_SESSION['uid'] = 'testuser';
-            $_SESSION['userproperties']['userrole'] = ['superadmin' => true];
             DBQuery(sprintf("DELETE FROM uo_played WHERE player=%d AND game=700", $playerId));
             DBQuery(sprintf("DELETE FROM uo_player WHERE player_id=%d", $playerId));
             DBQuery("DELETE FROM uo_team WHERE team_id=302");
