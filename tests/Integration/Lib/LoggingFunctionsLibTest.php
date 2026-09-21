@@ -381,12 +381,13 @@ final class LoggingFunctionsLibTest extends TestCase
 
     // --- IsVisitorLoggingDisabled / LogPageLoad / LogVisitor ---
 
-    // IsVisitorLoggingDisabled() memoizes in a function static for the
-    // process lifetime, so a test needing the setting DISABLED=false only
-    // works if nothing has called it yet. That made this test depend on
-    // running before any other class that consults the setting; game
-    // history recording now does. Its own process removes the ordering
-    // dependency in both directions.
+    // IsVisitorLoggingDisabled() memoized its answer in a function static
+    // until ultiorganizer 685893c, so whichever class called it first fixed
+    // the setting for the whole process - and scoresheet history recording
+    // made GameFunctionsLibTest that caller, ahead of this class. The helper
+    // reads the setting on every call now, but these tests keep their own
+    // process so they say what they mean whatever it does next.
+
     #[RunInSeparateProcess]
     #[PreserveGlobalState(false)]
     public function testIsVisitorLoggingDisabledReturnsFalseWhenSettingIsFalse(): void
@@ -395,12 +396,6 @@ final class LoggingFunctionsLibTest extends TestCase
         $this->assertFalse(IsVisitorLoggingDisabled());
     }
 
-    // IsVisitorLoggingDisabled() memoizes in a function static for the
-    // process lifetime, so a test needing the setting DISABLED=false only
-    // works if nothing has called it yet. That made this test depend on
-    // running before any other class that consults the setting; game
-    // history recording now does. Its own process removes the ordering
-    // dependency in both directions.
     #[RunInSeparateProcess]
     #[PreserveGlobalState(false)]
     public function testLogPageLoadInsertsNewEntryOnFirstLoad(): void
@@ -411,12 +406,6 @@ final class LoggingFunctionsLibTest extends TestCase
         $this->assertSame('1', $count);
     }
 
-    // IsVisitorLoggingDisabled() memoizes in a function static for the
-    // process lifetime, so a test needing the setting DISABLED=false only
-    // works if nothing has called it yet. That made this test depend on
-    // running before any other class that consults the setting; game
-    // history recording now does. Its own process removes the ordering
-    // dependency in both directions.
     #[RunInSeparateProcess]
     #[PreserveGlobalState(false)]
     public function testLogPageLoadIncrementsExistingEntry(): void
@@ -437,12 +426,6 @@ final class LoggingFunctionsLibTest extends TestCase
         $this->assertSame($before, $after);
     }
 
-    // IsVisitorLoggingDisabled() memoizes in a function static for the
-    // process lifetime, so a test needing the setting DISABLED=false only
-    // works if nothing has called it yet. That made this test depend on
-    // running before any other class that consults the setting; game
-    // history recording now does. Its own process removes the ordering
-    // dependency in both directions.
     #[RunInSeparateProcess]
     #[PreserveGlobalState(false)]
     public function testLogVisitorInsertsNewEntry(): void
@@ -453,12 +436,6 @@ final class LoggingFunctionsLibTest extends TestCase
         $this->assertSame('1', $visits);
     }
 
-    // IsVisitorLoggingDisabled() memoizes in a function static for the
-    // process lifetime, so a test needing the setting DISABLED=false only
-    // works if nothing has called it yet. That made this test depend on
-    // running before any other class that consults the setting; game
-    // history recording now does. Its own process removes the ordering
-    // dependency in both directions.
     #[RunInSeparateProcess]
     #[PreserveGlobalState(false)]
     public function testLogVisitorIncrementsExistingEntry(): void
