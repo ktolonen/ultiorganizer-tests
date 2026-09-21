@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use PHPUnit\Framework\Attributes\PreserveGlobalState;
+use PHPUnit\Framework\Attributes\RunInSeparateProcess;
 use PHPUnit\Framework\TestCase;
 use UltiorganizerHarness\Support\LegacyApp;
 
@@ -379,12 +381,23 @@ final class LoggingFunctionsLibTest extends TestCase
 
     // --- IsVisitorLoggingDisabled / LogPageLoad / LogVisitor ---
 
+    // IsVisitorLoggingDisabled() memoized its answer in a function static
+    // until ultiorganizer 685893c, so whichever class called it first fixed
+    // the setting for the whole process - and scoresheet history recording
+    // made GameFunctionsLibTest that caller, ahead of this class. The helper
+    // reads the setting on every call now, but these tests keep their own
+    // process so they say what they mean whatever it does next.
+
+    #[RunInSeparateProcess]
+    #[PreserveGlobalState(false)]
     public function testIsVisitorLoggingDisabledReturnsFalseWhenSettingIsFalse(): void
     {
         // setUp already set DisableVisitorLogging='false'
         $this->assertFalse(IsVisitorLoggingDisabled());
     }
 
+    #[RunInSeparateProcess]
+    #[PreserveGlobalState(false)]
     public function testLogPageLoadInsertsNewEntryOnFirstLoad(): void
     {
         $page = 'harness_test_' . uniqid();
@@ -393,6 +406,8 @@ final class LoggingFunctionsLibTest extends TestCase
         $this->assertSame('1', $count);
     }
 
+    #[RunInSeparateProcess]
+    #[PreserveGlobalState(false)]
     public function testLogPageLoadIncrementsExistingEntry(): void
     {
         $page = 'harness_test_inc_' . uniqid();
@@ -411,6 +426,8 @@ final class LoggingFunctionsLibTest extends TestCase
         $this->assertSame($before, $after);
     }
 
+    #[RunInSeparateProcess]
+    #[PreserveGlobalState(false)]
     public function testLogVisitorInsertsNewEntry(): void
     {
         $ip = '192.0.2.' . rand(1, 254);
@@ -419,6 +436,8 @@ final class LoggingFunctionsLibTest extends TestCase
         $this->assertSame('1', $visits);
     }
 
+    #[RunInSeparateProcess]
+    #[PreserveGlobalState(false)]
     public function testLogVisitorIncrementsExistingEntry(): void
     {
         $ip = '192.0.2.' . rand(1, 254);

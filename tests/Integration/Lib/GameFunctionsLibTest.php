@@ -93,7 +93,7 @@ final class GameFunctionsLibTest extends TestCase
         int    $visitorTeam = 301,
         int    $poolId = 200,
         ?int   $reservation = null,
-        ?string $time = null
+        ?string $time = null,
     ): int {
         $reservationSql = $reservation === null ? 'NULL' : (string) $reservation;
         $timeSql = $time === null ? 'NULL' : "'" . DBEscapeString($time) . "'";
@@ -639,8 +639,8 @@ final class GameFunctionsLibTest extends TestCase
     public function testGoalDisplayTextCallahan(): void
     {
         $goal = ['iscallahan' => 1, 'assist' => null, 'scorer' => null,
-                 'assistfirstname' => '', 'assistlastname' => '',
-                 'scorerfirstname' => '', 'scorerlastname' => ''];
+            'assistfirstname' => '', 'assistlastname' => '',
+            'scorerfirstname' => '', 'scorerlastname' => ''];
         $text = GoalDisplayText($goal, 700);
         $this->assertNotSame('', $text);
     }
@@ -1220,6 +1220,23 @@ final class GameFunctionsLibTest extends TestCase
         $this->assertCount(0, $defenses);
     }
 
+    public function testGameAddDefenseAcceptsANullAuthorWithoutViolatingTheForeignKey(): void
+    {
+        // author is nullable, and a ScoresheetHistoryRestore() replay can pass null
+        // for an unresolvable player. DBEscapeString(null) would otherwise
+        // interpolate '' -> 0, violating fk_defense_author and silently
+        // dropping the row -- GameAddDefense() must emit a real SQL NULL
+        // instead, the same way GameAddScoreEntry() already does.
+        $gameId = $this->createTempGame();
+
+        $result = GameAddDefense($gameId, null, 1, 0, 120, 0, 1);
+        $this->assertNotFalse($result);
+
+        $defenses = GameDefenses($gameId);
+        $this->assertCount(1, $defenses);
+        $this->assertNull($defenses[0]['author']);
+    }
+
     // --- GameAddTimeout / GameRemoveAllTimeouts ---
 
     public function testGameAddTimeoutInsertsRow(): void
@@ -1610,6 +1627,195 @@ final class GameFunctionsLibTest extends TestCase
         $this->assertNotFalse($result);
     }
 
+    public function testGameTimeMutatorsRecordAHistoryRowForEachOperation(): void
+    {
+        $gameId = $this->createTempGame();
+
+        GameTimeStart($gameId);
+        GameTimePause($gameId);
+        GameTimeSetElapsed($gameId, 125);
+        GameTimeResume($gameId);
+        GameTimeReset($gameId);
+
+        $rows = DBQueryToArray(
+            "SELECT action, detail FROM uo_scoresheet_history WHERE game=$gameId AND target='timer' ORDER BY history_id",
+        );
+        $actions = array_column($rows, 'action');
+        $this->assertSame(['start', 'pause', 'update', 'resume', 'reset'], $actions);
+
+        $setElapsed = json_decode($rows[2]['detail'], true);
+        $this->assertSame(125, $setElapsed['elapsed']);
+    }
+
+    public function testGameTimePauseRecordsNothingWhenTheClockDoesNotChange(): void
+    {
+        // The UPDATE is guarded on isongoing=1 AND timer_pause_start IS NULL,
+        // so a pause on a game that is not running, or a duplicate pause
+        // submission, changes nothing -- and must not claim in the audit trail
+        // that it did. GameTimeResume() already worked this way.
+        $gameId = $this->createTempGame();
+
+        $this->assertFalse(GameTimePause($gameId), 'a game that has not started cannot be paused');
+
+        GameTimeStart($gameId);
+        GameTimePause($gameId);
+        $this->assertFalse(GameTimePause($gameId), 'an already paused clock cannot be paused again');
+
+        $actions = array_column(DBQueryToArray(
+            "SELECT action FROM uo_scoresheet_history WHERE game=$gameId AND target='timer' ORDER BY history_id",
+        ), 'action');
+        $this->assertSame(['start', 'pause'], $actions);
+    }
+
+    public function testMutatorsRecordOnlyWhenTheyChangedSomething(): void
+    {
+        // Every mutator that deletes or updates gates its history row on
+        // DBAffectedRows(): a stale resubmission, a player who is not on this
+        // roster, or a value that is already what it is being set to changes
+        // nothing, and an audit trail that reports it is wrong.
+        $gameId = $this->createTempGame();
+
+        GameRemovePlayer($gameId, 99999999);
+        GameSetPlayerNumber($gameId, 99999999, 7);
+        RemoveGameMediaEvent($gameId, 99999999);
+        GameSetStartingTeam($gameId, null);
+        GameRemoveCapEvent($gameId, 'softcap');
+
+        $this->assertSame(0, (int) DBQueryToValue(
+            "SELECT COUNT(*) FROM uo_scoresheet_history
+                WHERE game=$gameId AND target IN ('played', 'mediaevent', 'gameevent')",
+        ), 'no-op mutations must not be recorded');
+
+        // The same calls that do change something still record exactly once.
+        GameSetStartingTeam($gameId, true);
+        GameSetStartingTeam($gameId, true);
+        $this->assertSame(1, (int) DBQueryToValue(
+            "SELECT COUNT(*) FROM uo_scoresheet_history
+                WHERE game=$gameId AND target='gameevent' AND action='update'",
+        ));
+    }
+
+    public function testRoleAssignmentRecordsOnlyWhenTheFinalAssignmentDiffers(): void
+    {
+        // user/addplayerlists.php calls the two role setters four times on
+        // every player-list save, changed or not. GameSetRolePlayers() clears
+        // and reapplies the role, so the write itself cannot tell the two
+        // apart -- it compares the selection instead. Baseline fixture: player
+        // 800 already carries captain=1 on team 300, 801 does not.
+        $count = fn (): int => (int) DBQueryToValue(
+            "SELECT COUNT(*) FROM uo_scoresheet_history
+                WHERE game=700 AND target='played' AND action='update'",
+        );
+        $before = $count();
+
+        try {
+            GameSetCaptains(700, 300, [800]);
+            GameSetSpiritCaptains(700, 300, []);
+            $this->assertSame($before, $count(), 'an unchanged role assignment must not be recorded');
+
+            GameSetCaptains(700, 300, [801, 800]);
+            $this->assertSame($before + 1, $count());
+
+            // Order does not make an assignment different either.
+            GameSetCaptains(700, 300, [800, 801]);
+            $this->assertSame($before + 1, $count());
+
+            $captains = DBQueryToArray(
+                "SELECT pg.player FROM uo_played AS pg
+                    LEFT JOIN uo_player AS p ON (pg.player=p.player_id)
+                    WHERE pg.game=700 AND p.team=300 AND pg.captain=1 ORDER BY pg.player",
+            );
+            $this->assertSame([800, 801], array_map('intval', array_column($captains, 'player')));
+        } finally {
+            // No per-test fixture reload, so put the baseline roles back.
+            DBQuery("UPDATE uo_played SET captain=0, spirit_captain=0 WHERE game=700 AND player=801");
+            DBQuery("UPDATE uo_played SET captain=1 WHERE game=700 AND player=800");
+        }
+    }
+
+    public function testGameRemoveScoreRecordsOnlyWhenAPointWasActuallyRemoved(): void
+    {
+        // A resubmitted delete, or a $num this game never had, removes
+        // nothing -- and must not leave a goal/remove row claiming a point
+        // was taken off the scoresheet.
+        $gameId = $this->createTempGame();
+        GameAddScore($gameId, 800, 801, 120, 1, 1, 0, 1, 0);
+
+        GameRemoveScore($gameId, 1);
+        GameRemoveScore($gameId, 1);
+        GameRemoveScore($gameId, 99);
+
+        $rows = DBQueryToArray(
+            "SELECT action FROM uo_scoresheet_history WHERE game=$gameId AND target='goal' AND action='remove'",
+        );
+        $this->assertCount(1, $rows);
+    }
+
+    public function testGameTimeResumeAddsThePauseFromTheRowAndRecordsOnce(): void
+    {
+        // The resume is one guarded UPDATE that reads timer_pause_start from
+        // the row it writes, so there is no read-modify-write window and no
+        // guard value that a pause in the same second could reuse. A resume
+        // with nothing paused changes nothing and records nothing.
+        $gameId = $this->createTempGame();
+        GameTimeStart($gameId);
+
+        DBQuery("UPDATE uo_game SET timer_pause_start = " . (time() - 5) . ",
+            timer_paused_duration = 10 WHERE game_id = $gameId");
+
+        $this->assertNotFalse(GameTimeResume($gameId));
+        $this->assertSame(15, (int) DBQueryToValue(
+            "SELECT timer_paused_duration FROM uo_game WHERE game_id = $gameId",
+        ));
+
+        $this->assertFalse(GameTimeResume($gameId), 'a running clock cannot be resumed');
+
+        $actions = array_column(DBQueryToArray(
+            "SELECT action FROM uo_scoresheet_history WHERE game=$gameId AND target='timer' ORDER BY history_id",
+        ), 'action');
+        $this->assertSame(['start', 'resume'], $actions);
+    }
+
+    public function testGameRemoveAllGameEventsRecordsItsOwnClearRow(): void
+    {
+        // The helper is reachable from lib/ as a mutation helper in its own
+        // right, so a caller outside ScoresheetHistoryRestore()'s suppressed replay
+        // must leave an audit row rather than only a snapshot.
+        $gameId = $this->createTempGame();
+        GameSetStartingTeam($gameId, true);
+
+        GameRemoveAllGameEvents($gameId);
+
+        $rows = DBQueryToArray(
+            "SELECT action, detail FROM uo_scoresheet_history
+                WHERE game=$gameId AND target='gameevent' AND action='clear'",
+        );
+        $this->assertCount(1, $rows);
+        $detail = json_decode($rows[0]['detail'], true);
+        $this->assertSame(1, (int) $detail['removed']);
+    }
+
+    public function testGameTimeMutatorsNeverCreateASnapshot(): void
+    {
+        // R2 ruling: restore is whole-sheet, so a clock-only restore point
+        // would roll back goals/roster/result along with the timer edit. This
+        // pins that none of the five clock mutators calls
+        // ScoresheetHistorySnapshotIfNeeded(), even though each records its own
+        // change row (see testGameTimeMutatorsRecordAHistoryRowForEachOperation()).
+        $gameId = $this->createTempGame();
+
+        GameTimeStart($gameId);
+        GameTimePause($gameId);
+        GameTimeSetElapsed($gameId, 125);
+        GameTimeResume($gameId);
+        GameTimeReset($gameId);
+
+        $snapshotCount = (int) DBQueryToValue(
+            "SELECT COUNT(*) FROM uo_scoresheet_history WHERE game=$gameId AND has_snapshot=1",
+        );
+        $this->assertSame(0, $snapshotCount);
+    }
+
     // --- GameProcessMassInput ---
 
     public function testGameProcessMassInputClearsResult(): void
@@ -1802,7 +2008,7 @@ final class GameFunctionsLibTest extends TestCase
              VALUES ('TempTestPool', '99', 0, 0, 0, 0, 0,
              70, 35, 15, NULL, NULL, 0, NULL, NULL,
              2, 'half', 1, 'soft', 90, 100, 1,
-             15, 0, 0)"
+             15, 0, 0)",
         );
         $tempPoolId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
         try {

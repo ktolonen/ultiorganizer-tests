@@ -332,6 +332,59 @@ final class UrlFunctionsLibTest extends TestCase
         }
     }
 
+    public function testRemoveMediaUrlRecordsOneHistoryRowPerGameTheLinkWasOn(): void
+    {
+        LegacyApp::loadUserFunctions();
+        LegacyApp::loginAsAdmin();
+        $mediaId = null;
+        try {
+            $mediaId = (int) AddMediaUrl([
+                'owner' => 'game',
+                'owner_id' => '700',
+                'type' => 'video',
+                'name' => 'Harness Media',
+                'url' => 'https://media.example.com',
+                'mediaowner' => 'admin',
+            ]);
+            $this->assertGreaterThan(0, $mediaId);
+
+            // The url is url-scoped and can span games, unlike
+            // RemoveGameMediaEvent(), which detaches one game at a time. Game
+            // 700 carries the link twice so the SELECT DISTINCT is pinned too:
+            // two attachments on one game are still one removal to record.
+            DBQuery("INSERT INTO uo_gameevent (game, num, time, type, ishome, info) VALUES
+                (700, 10, 100, 'media', 0, '$mediaId'),
+                (700, 11, 200, 'media', 0, '$mediaId'),
+                (701, 10, 100, 'media', 0, '$mediaId')");
+
+            $this->assertNotFalse(RemoveMediaUrl($mediaId));
+            $removedId = $mediaId;
+            $mediaId = null;
+
+            $rows = DBQueryToArray("SELECT game, COUNT(*) AS rowcount
+                FROM uo_scoresheet_history
+                WHERE target='mediaevent' AND action='remove' AND game IN (700, 701)
+                GROUP BY game ORDER BY game");
+            $this->assertSame(['700', '701'], array_map('strval', array_column($rows, 'game')));
+            $this->assertSame(['1', '1'], array_map('strval', array_column($rows, 'rowcount')));
+
+            $detail = DBQueryToValue("SELECT detail FROM uo_scoresheet_history
+                WHERE target='mediaevent' AND action='remove' AND game=701");
+            $this->assertSame(['url' => $removedId], json_decode((string) $detail, true));
+
+            $left = (int) DBQueryToValue("SELECT COUNT(*) FROM uo_gameevent
+                WHERE type='media' AND info='$removedId'");
+            $this->assertSame(0, $left);
+        } finally {
+            if ($mediaId !== null) {
+                $this->insertedUrlIds[] = $mediaId;
+                DBQuery("DELETE FROM uo_gameevent WHERE type='media' AND info='$mediaId'");
+            }
+            DBQuery("DELETE FROM uo_scoresheet_history WHERE target='mediaevent' AND game IN (700, 701)");
+            $_SESSION = [];
+        }
+    }
+
     // --- RemoveMediaUrl early-return path ---
 
     public function testRemoveMediaUrlReturnsFalseForNonExistentId(): void
