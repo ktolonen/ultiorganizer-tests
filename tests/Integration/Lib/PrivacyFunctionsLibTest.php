@@ -1062,4 +1062,33 @@ final class PrivacyFunctionsLibTest extends TestCase
             self::flushQueryCaches();
         }
     }
+
+    public function testUserExportLeavesTheScorekeeperNamesOutOfOfficialRows(): void
+    {
+        // An official row's detail holds the free-text scorekeeper names the
+        // save set, which name other people. The rest of the row stays.
+        $historyId = (int) DBQueryInsert(sprintf(
+            "INSERT INTO uo_scoresheet_history (game, user_id, ip, source, target, action, has_snapshot, detail)
+             VALUES (700, 'admin', '203.0.113.78', 'harness', 'official', 'update', 0, '%s')",
+            DBEscapeString(json_encode(['name' => 'PRIVACY_KEEPER_NAME_SHOULD_NOT_LEAK', 'marker' => 'KEPT'])),
+        ));
+        try {
+            self::flushQueryCaches();
+            $data = PrivacyCollectUserReportData('admin');
+            $found = null;
+            foreach ($data['scoresheet_history_rows'] as $row) {
+                if ((int) $row['history_id'] === $historyId) {
+                    $found = $row;
+                }
+            }
+            $this->assertNotNull($found, 'the official row must still be exported');
+            $this->assertSame(['marker' => 'KEPT'], json_decode($found['detail'], true));
+
+            $report = PrivacyRenderUserReportText('admin', 'admin');
+            $this->assertStringNotContainsString('PRIVACY_KEEPER_NAME_SHOULD_NOT_LEAK', $report);
+        } finally {
+            $this->cleanupScoresheetHistoryRows([$historyId]);
+            self::flushQueryCaches();
+        }
+    }
 }

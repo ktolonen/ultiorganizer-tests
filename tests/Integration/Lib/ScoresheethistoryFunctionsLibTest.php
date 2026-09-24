@@ -642,6 +642,34 @@ final class ScoresheethistoryFunctionsLibTest extends TestCase
         $this->assertSame(1, $count);
     }
 
+    public function testACaptureIdenticalToTheLatestSnapshotReusesItsRow(): void
+    {
+        // A desktop save that changes nothing still runs the bulk Remove*()
+        // helpers, so each save would otherwise store another identical
+        // restore point.
+        $first = (int) ScoresheetHistorySnapshotIfNeeded(701);
+        $this->assertGreaterThan(0, $first);
+
+        CacheForgetNamespace('scoresheet_history_snapshot');
+        $this->assertSame($first, (int) ScoresheetHistorySnapshotIfNeeded(701));
+        $this->assertSame(1, (int) DBQueryToValue(
+            "SELECT COUNT(*) FROM uo_scoresheet_history WHERE game=701 AND has_snapshot=1",
+        ));
+
+        // A changed state is stored as a new row.
+        DBQuery("UPDATE uo_game SET halftime=IFNULL(halftime, 0)+1 WHERE game_id=701");
+        CacheForgetNamespace('scoresheet_history_snapshot');
+        $changed = (int) ScoresheetHistorySnapshotIfNeeded(701);
+        $this->assertGreaterThan($first, $changed);
+
+        // The pre-restore capture always writes its own row.
+        $forced = (int) ScoresheetHistorySnapshotIfNeeded(701, true);
+        $this->assertGreaterThan($changed, $forced);
+        $this->assertSame(3, (int) DBQueryToValue(
+            "SELECT COUNT(*) FROM uo_scoresheet_history WHERE game=701 AND has_snapshot=1",
+        ));
+    }
+
     public function testGameAddPlayerRecordsThePlayerAndJerseyNumber(): void
     {
         GameAddPlayer(701, 800, 8);
@@ -2285,8 +2313,8 @@ final class ScoresheethistoryFunctionsLibTest extends TestCase
 
     public function testRestoreIsRefusedForATeamOrGameAdminWhoMayStillReadTheHistory(): void
     {
-        // Reading the history needs hasEditGameEventsRight(), so a team's own
-        // game admins can review it. Restoring overwrites the whole scoresheet
+        // Reading the history needs hasViewScoresheetHistoryRight(), which a
+        // team's own game admins hold through hasEditGameEventsRight(). Restoring overwrites the whole scoresheet
         // and needs the stricter hasRestoreScoresheetHistoryRight(): superadmin or
         // the event's seasonadmin. The refusal must not write anything.
         DBQuery("INSERT INTO uo_player (firstname, lastname, team, num, accreditation_id, accredited, reg_id, profile_id)
@@ -2325,6 +2353,41 @@ final class ScoresheethistoryFunctionsLibTest extends TestCase
             $_SESSION['userproperties']['userrole'] = ['superadmin' => true];
             DBQuery(sprintf("DELETE FROM uo_played WHERE player=%d AND game=701", $playerId));
             DBQuery(sprintf("DELETE FROM uo_player WHERE player_id=%d", $playerId));
+        }
+    }
+
+    public function testASeasonAdminCanStillReadTheHistoryOfAReadOnlyEvent(): void
+    {
+        // Archiving statistics sets the event read-only, which removes the
+        // season admin's edit right. Reading the history must survive that;
+        // restoring must not.
+        $recordId = (int) ScoresheetHistoryRecord(701, 'result', 'update', ['home' => 1, 'away' => 0]);
+        $this->assertGreaterThan(0, $recordId);
+
+        $season = SeriesSeasonId(GameSeries(701));
+        DBQuery(sprintf("UPDATE uo_season SET event_readonly=1 WHERE season_id='%s'", DBEscapeString($season)));
+        // SeasonInfo is request-cached; flush it so the DB change is visible.
+        CacheForgetNamespace('season_info');
+        $_SESSION['userproperties']['userrole'] = ['seasonadmin' => [$season => true]];
+        $_SESSION['uid'] = 'seasonadmin';
+        try {
+            $this->assertFalse(hasEditGameEventsRight(701));
+            $this->assertFalse(hasRestoreScoresheetHistoryRight(701));
+            $this->assertTrue(hasViewScoresheetHistoryRight(701));
+            $this->assertSame(1, ScoresheetHistoryCount(701));
+            $this->assertSame($recordId, (int) ScoresheetHistoryList(701)[0]['history_id']);
+            $this->assertNotNull(ScoresheetHistoryEntry($recordId));
+
+            // Contrast: a session with no role on the event reads nothing.
+            $_SESSION['userproperties']['userrole'] = [];
+            $this->assertFalse(hasViewScoresheetHistoryRight(701));
+            $this->assertSame(0, ScoresheetHistoryCount(701));
+            $this->assertNull(ScoresheetHistoryEntry($recordId));
+        } finally {
+            $_SESSION['uid'] = 'testuser';
+            $_SESSION['userproperties']['userrole'] = ['superadmin' => true];
+            DBQuery(sprintf("UPDATE uo_season SET event_readonly=0 WHERE season_id='%s'", DBEscapeString($season)));
+            CacheForgetNamespace('season_info');
         }
     }
 
