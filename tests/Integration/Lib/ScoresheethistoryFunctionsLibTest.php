@@ -1326,7 +1326,7 @@ final class ScoresheethistoryFunctionsLibTest extends TestCase
             $this->assertArrayHasKey('visitorteam', $snapshot['game']);
             $this->assertSame(301, $snapshot['game']['hometeam']);
             // Not 0: an unassigned side must stay distinguishable from team
-            // id 0, which ScoresheetHistoryIntFields()'s null-preserving cast (as
+            // id 0, which the snapshot's null-preserving cast (as
             // opposed to a blind (int) cast) is what guarantees here.
             $this->assertNull($snapshot['game']['visitorteam']);
         } finally {
@@ -1391,7 +1391,7 @@ final class ScoresheethistoryFunctionsLibTest extends TestCase
 
         // The snapshotted player id is gone by the time restore runs, but a
         // replacement wearing the same number for the same team has taken
-        // their place -- the team+num fallback in ScoresheetHistoryRestorePlayers()
+        // their place -- the team+num fallback in the restore's roster rebuild
         // must find them, since uo_goal's ON DELETE SET NULL on player keys
         // means the id itself cannot always be resolved.
         DBQuery(sprintf("DELETE FROM uo_played WHERE player=%d AND game=700", $tempPlayerId));
@@ -1817,7 +1817,7 @@ final class ScoresheethistoryFunctionsLibTest extends TestCase
 
     public function testRestoreRoundTripsADefenseWithAnUnresolvableAuthor(): void
     {
-        // author is nullable, and ScoresheetHistoryMapPlayer() returns null for a
+        // author is nullable, and the restore maps it to null for a
         // player restore could not resolve. GameAddDefense() must emit a real
         // SQL NULL instead of letting DBEscapeString(null) turn into '' -> 0,
         // which would violate fk_defense_author and silently drop the row.
@@ -1925,7 +1925,7 @@ final class ScoresheethistoryFunctionsLibTest extends TestCase
 
     public function testRestoreRestoresTheAcknowledgedFlagEvenWhenThePlayerHasChangedTeamsSinceTheSnapshot(): void
     {
-        // V5 fix: ScoresheetHistoryRestorePlayers() no longer routes an acknowledged
+        // V5 fix: the restore's roster rebuild no longer routes an acknowledged
         // roster flag through AcknowledgeUnaccredited(), which used to
         // re-read the player's CURRENT team via PlayerInfo() and die() on a
         // mismatch against the snapshot's team (an earlier fix turned that
@@ -2071,45 +2071,6 @@ final class ScoresheethistoryFunctionsLibTest extends TestCase
         }
     }
 
-    public function testRestorePlayersRefusesAMismatchedFixtureBeforeTouchingTheRoster(): void
-    {
-        // The helper loads its entry with $allowMismatchedFixture=true, which
-        // is what lets ScoresheetHistoryRestore() report a mismatch as a specific
-        // refusal. Called directly it must repeat that check, or it reaches
-        // GameRemoveAllPlayers() and rebuilds a previous fixture's roster onto
-        // the reassigned game.
-        $snapshotId = (int) ScoresheetHistorySnapshotIfNeeded(700, true);
-
-        // Perturb after the snapshot, so "refused" and "ran" are separable:
-        // a restore rebuilds the same roster, making a row count identical
-        // either way.
-        DBQuery("INSERT INTO uo_player (firstname, lastname, team, num, accreditation_id, accredited, reg_id, profile_id)
-                 VALUES ('Post', 'Snapshot', 300, 68, NULL, 1, NULL, NULL)");
-        $addedId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
-        DBQuery(sprintf(
-            "INSERT INTO uo_played (player, game, num, accredited, acknowledged, captain) VALUES (%d, 700, 68, 1, 0, 0)",
-            $addedId,
-        ));
-
-        GameChangeHome(700);
-        $warnings = [];
-        try {
-            $this->assertSame([], ScoresheetHistoryRestorePlayers($snapshotId, $warnings));
-            $this->assertSame(
-                1,
-                (int) DBQueryToValue(sprintf(
-                    "SELECT COUNT(*) FROM uo_played WHERE game=700 AND player=%d",
-                    $addedId,
-                )),
-                'A mismatched fixture must not have rebuilt the roster.',
-            );
-        } finally {
-            DBQuery("UPDATE uo_game SET hometeam=300, visitorteam=301 WHERE game_id=700");
-            DBQuery(sprintf("DELETE FROM uo_played WHERE player=%d AND game=700", $addedId));
-            DBQuery(sprintf("DELETE FROM uo_player WHERE player_id=%d", $addedId));
-        }
-    }
-
     public function testAnonymousResultAuthorizationDoesNotExtendBeyondTheResultTarget(): void
     {
         // $allowAnonymousResult is caller-controlled, and confirming
@@ -2180,69 +2141,6 @@ final class ScoresheethistoryFunctionsLibTest extends TestCase
             );
         } finally {
             DBQuery("DELETE FROM uo_goal WHERE game=700 AND num=96");
-        }
-    }
-
-    public function testRestorePlayersRefusesWhenTheAccreditationRightForAnAcknowledgedTeamIsMissing(): void
-    {
-        // ScoresheetHistoryRestorePlayers() sits in the shared lib interface and
-        // writes uo_played directly, bypassing GameAllowsPlayerOnRoster(). It
-        // takes a history id rather than a row set so there is nothing to
-        // fabricate, and it re-runs the restore guard so it is safe standing
-        // alone rather than trusting its caller to have run one.
-        //
-        // The accreditation right is what this asserts, deliberately.
-        // hasEditGamePlayersRight() and hasEditGameEventsRight() have
-        // identical role checks, and ScoresheetHistoryEntry() already enforces the
-        // latter, so no session can distinguish those two -- the acknowledged
-        // team's accreditation right is the only part of the guard that adds
-        // a refusal of its own.
-        DBQuery("INSERT INTO uo_player (firstname, lastname, team, num, accreditation_id, accredited, reg_id, profile_id)
-                 VALUES ('Acked', 'Player', 301, 66, NULL, 0, NULL, NULL)");
-        $playerId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
-        DBQuery(sprintf(
-            "INSERT INTO uo_played (player, game, num, accredited, acknowledged, captain) VALUES (%d, 701, 66, 0, 1, 0)",
-            $playerId,
-        ));
-
-        $snapshotId = (int) ScoresheetHistorySnapshotIfNeeded(701, true);
-
-        // Perturb the roster AFTER the snapshot with a player it does not
-        // contain. Without this the assertions cannot fail: a restore rebuilds
-        // the same roster, so the row count is identical either way, and the
-        // id map stays empty whenever every player still exists. This extra
-        // player is the only thing that distinguishes "refused" from "ran".
-        DBQuery("INSERT INTO uo_player (firstname, lastname, team, num, accreditation_id, accredited, reg_id, profile_id)
-                 VALUES ('Added', 'Later', 301, 67, NULL, 1, NULL, NULL)");
-        $addedId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
-        DBQuery(sprintf(
-            "INSERT INTO uo_played (player, game, num, accredited, acknowledged, captain) VALUES (%d, 701, 67, 1, 0, 0)",
-            $addedId,
-        ));
-
-        // teamadmin[301] clears both edit rights for game 701 (respteam=301)
-        // but grants no accreditation right over team 301.
-        $_SESSION['userproperties']['userrole'] = ['teamadmin' => [301 => true]];
-        $_SESSION['uid'] = 'teamadmin301';
-        $warnings = [];
-        try {
-            $this->assertSame([], ScoresheetHistoryRestorePlayers($snapshotId, $warnings));
-
-            // The guard has to return before GameRemoveAllPlayers() empties
-            // the roster, so the post-snapshot player must still be there.
-            $this->assertSame(
-                1,
-                (int) DBQueryToValue(sprintf(
-                    "SELECT COUNT(*) FROM uo_played WHERE game=701 AND player=%d",
-                    $addedId,
-                )),
-                'A refused restore must not have rebuilt the roster.',
-            );
-        } finally {
-            $_SESSION['uid'] = 'testuser';
-            $_SESSION['userproperties']['userrole'] = ['superadmin' => true];
-            DBQuery(sprintf("DELETE FROM uo_played WHERE player IN (%d, %d) AND game=701", $playerId, $addedId));
-            DBQuery(sprintf("DELETE FROM uo_player WHERE player_id IN (%d, %d)", $playerId, $addedId));
         }
     }
 
@@ -2930,7 +2828,7 @@ final class ScoresheethistoryFunctionsLibTest extends TestCase
 
     public function testRestoreRestoresCaptainAndSpiritCaptainFlags(): void
     {
-        // ScoresheetHistoryRestorePlayers() no longer makes a separate
+        // The restore's roster rebuild no longer makes a separate
         // GameSetRolePlayers() pass after the roster rewrite (see V5) --
         // captain/spirit_captain correctness now rests entirely on
         // the restore loop's direct INSERT including those two
@@ -2945,7 +2843,7 @@ final class ScoresheethistoryFunctionsLibTest extends TestCase
         $snapshotId = (int) ScoresheetHistorySnapshotIfNeeded(700, true);
 
         // Damage every role flag on the game the way GameRemoveAllPlayers()
-        // (called at the start of ScoresheetHistoryRestorePlayers()) effectively
+        // (called at the start of the restore's roster rebuild) effectively
         // does, and confirm the damage actually took -- otherwise a restore
         // that silently drops the captain/spirit_captain columns from the
         // direct write could pass this test by accident.
