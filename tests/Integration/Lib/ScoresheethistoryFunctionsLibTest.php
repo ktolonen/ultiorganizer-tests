@@ -21,8 +21,8 @@ final class ScoresheethistoryFunctionsLibTest extends TestCase
         );
         $_SESSION['userproperties']['userrole']['superadmin'] = true;
 
-        // IsScoresheetHistoryDisabled() caches in a static, so the setting must be
-        // written before the first call in this process.
+        // Every test starts with recording on; the ones that turn it off
+        // restore it themselves.
         DBQuery("DELETE FROM uo_setting WHERE name='DisableScoresheetHistory'");
         DBQuery("INSERT INTO uo_setting (name, value) VALUES ('DisableScoresheetHistory', 'false')");
 
@@ -241,10 +241,8 @@ final class ScoresheethistoryFunctionsLibTest extends TestCase
     public function testAddressIsStillRecordedWhenVisitorLoggingIsEnabled(): void
     {
         // Proves the suppression is conditional rather than a blanket removal
-        // of IP recording. IsVisitorLoggingDisabled() memoizes in a function
-        // static for the process lifetime, so the setting has to be flipped
-        // before the first call in a process of this test's own -- the same
-        // reason the DisableScoresheetHistory test below runs isolated.
+        // of IP recording. The setting is flipped for this test only and put
+        // back afterwards.
         $original = (string) DBQueryToValue("SELECT value FROM uo_setting WHERE name='DisableVisitorLogging'");
         DBQuery("UPDATE uo_setting SET value='false' WHERE name='DisableVisitorLogging'");
         $this->assertFalse(IsVisitorLoggingDisabled());
@@ -489,10 +487,22 @@ final class ScoresheethistoryFunctionsLibTest extends TestCase
 
     public function testIsScoresheetHistoryDisabledReflectsTheSeededSetting(): void
     {
-        // IsScoresheetHistoryDisabled() caches in a static for the life of the
-        // process, so only the seeded value is observable here. The
-        // recording-off path is exercised through ScoresheetHistorySuppressed()
-        // above; this pins the setting parsing itself.
+        $this->assertFalse(IsScoresheetHistoryDisabled());
+    }
+
+    public function testIsScoresheetHistoryDisabledFollowsTheSettingWithinOneProcess(): void
+    {
+        // The setting is read on every call rather than memoised, so a change
+        // later in the same process is seen.
+        $this->assertFalse(IsScoresheetHistoryDisabled());
+        try {
+            DBQuery("UPDATE uo_setting SET value='true' WHERE name='DisableScoresheetHistory'");
+            $this->assertTrue(IsScoresheetHistoryDisabled());
+            DBQuery("UPDATE uo_setting SET value='yes' WHERE name='DisableScoresheetHistory'");
+            $this->assertTrue(IsScoresheetHistoryDisabled());
+        } finally {
+            DBQuery("UPDATE uo_setting SET value='false' WHERE name='DisableScoresheetHistory'");
+        }
         $this->assertFalse(IsScoresheetHistoryDisabled());
     }
 
@@ -2823,11 +2833,8 @@ final class ScoresheethistoryFunctionsLibTest extends TestCase
     #[PreserveGlobalState(false)]
     public function testForceCapturedSnapshotAndRestoreAuditRowSurviveWhileRecordingIsDisabled(): void
     {
-        // IsScoresheetHistoryDisabled() caches in a function-static for the process
-        // lifetime (see setUp()'s comment above), so the "disabled" branch is
-        // only observable in a process of its own -- the setting must be
-        // flipped BEFORE the first call in this process, which happens below,
-        // not in the shared setUp().
+        // Recording is switched off for this test only; the finally block
+        // below switches it back on.
         DBQuery("DELETE FROM uo_setting WHERE name='DisableScoresheetHistory'");
         DBQuery("INSERT INTO uo_setting (name, value) VALUES ('DisableScoresheetHistory', 'true')");
         $this->assertTrue(IsScoresheetHistoryDisabled());
