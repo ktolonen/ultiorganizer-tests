@@ -943,9 +943,32 @@ final class ScoresheethistoryFunctionsLibTest extends TestCase
         $this->assertSame('Reset game clock', ScoresheetHistoryFormatDetail([
             'target' => 'timer', 'action' => 'reset', 'detail' => json_encode([]),
         ]));
-        $this->assertSame('Set game clock: 125', ScoresheetHistoryFormatDetail([
+        $this->assertSame('Set game clock: 2.05', ScoresheetHistoryFormatDetail([
             'target' => 'timer', 'action' => 'update', 'detail' => json_encode(['elapsed' => 125]),
         ]));
+    }
+
+    public function testFormatDetailRendersHalftimeAsMinutesAndAClearedOneAsRemoved(): void
+    {
+        $this->assertSame('Halftime 45.00', ScoresheetHistoryFormatDetail([
+            'target' => 'halftime', 'action' => 'update', 'detail' => json_encode(['time' => 2700]),
+        ]));
+        $this->assertSame('Halftime removed', ScoresheetHistoryFormatDetail([
+            'target' => 'halftime', 'action' => 'update', 'detail' => json_encode(['time' => null]),
+        ]));
+    }
+
+    public function testGameSetHalftimeRecordsAClearedHalftimeAsNull(): void
+    {
+        GameSetHalftime(701, 1800);
+        GameSetHalftime(701, null);
+
+        $row = DBQueryToRow(
+            "SELECT detail FROM uo_scoresheet_history
+             WHERE game=701 AND target='halftime' ORDER BY history_id DESC LIMIT 1",
+        );
+        $this->assertIsArray($row);
+        $this->assertSame(['time' => null], json_decode($row['detail'], true));
     }
 
     public function testFormatDetailNeverEmitsTheRawResultStateToken(): void
