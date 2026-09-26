@@ -25,6 +25,21 @@ The smoke test requests each page through `index.php` and fails if it sees:
 - PHP warnings or notices in the response
 - PHP warnings or notices newly written to the Apache error log
 
+## Page content tests
+
+Besides the `smoke_pages` allowlist, `tests/Smoke` holds a few HTTP content
+contracts for logic that lives in page files rather than `lib/`, so the
+in-process suites cannot reach it:
+
+- `GameplayPageContentTest`: cap events on the public gameplay replay.
+- `ScoresheetHistoryPageTest`: the login-gated scoresheet history pages. It
+  logs in as the fixture superadmin, seeds `uo_scoresheet_history` rows for
+  game 700 directly, and deletes them again. It pins hiding unchanged re-saves,
+  pairing saved and current points by order, and the season page's links.
+
+These assert only locale-independent output (row counts, CSS classes, links),
+since the `config-overrides` case renders pages in fi_FI.
+
 ## Characteristics
 
 Smoke is intentionally:
