@@ -36,6 +36,10 @@ in-process suites cannot reach it:
   logs in as the fixture superadmin, seeds `uo_scoresheet_history` rows for
   game 700 directly, and deletes them again. It pins hiding unchanged re-saves,
   pairing saved and current points by order, and the season page's links.
+- `ScoresheetPageTest`: the login-gated desktop scoresheet editor
+  (`user/addscoresheet`). It logs in as the fixture superadmin, posts to game
+  701, and restores the game afterwards. It pins that a refused save
+  re-renders every posted field rather than the stored game.
 
 These assert only locale-independent output (row counts, CSS classes, links),
 since the `config-overrides` case renders pages in fi_FI.
