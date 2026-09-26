@@ -13,13 +13,16 @@ use UltiorganizerHarness\Support\LegacyApp;
  * game 701 (unplayed, no roster), and restores the game afterwards.
  *
  * Everything asserted is locale-independent (form values, highlight scripts,
- * database state), because the config-overrides case renders the page in fi_FI.
+ * the history_token field, database state), because the config-overrides case
+ * renders the page in fi_FI.
  */
 final class ScoresheetPageTest extends TestCase
 {
     private const GAME = 701;
 
     private static ?string $cookie = null;
+
+    private ?string $historySetting = null;
 
     protected function setUp(): void
     {
@@ -29,11 +32,23 @@ final class ScoresheetPageTest extends TestCase
             'pool_stack',
         );
         $_SESSION['userproperties']['userrole']['superadmin'] = true;
+        $_SESSION['uid'] = 'testuser';
+        self::flushQueryCaches();
+        $value = DBQueryToValue("SELECT value FROM uo_setting WHERE name='DisableScoresheetHistory'");
+        $this->historySetting = $value === null ? null : (string) $value;
+        self::setHistoryDisabled(false);
         self::restoreGame();
     }
 
     protected function tearDown(): void
     {
+        DBQuery("DELETE FROM uo_setting WHERE name='DisableScoresheetHistory'");
+        if ($this->historySetting !== null) {
+            DBQuery(sprintf(
+                "INSERT INTO uo_setting (name, value) VALUES ('DisableScoresheetHistory', '%s')",
+                DBEscapeString($this->historySetting),
+            ));
+        }
         self::restoreGame();
         LegacyApp::closeDatabaseConnection();
     }
@@ -71,6 +86,112 @@ final class ScoresheetPageTest extends TestCase
         $this->assertSame(0, (int) $game['isongoing']);
         $this->assertSame(0, (int) DBQueryToValue(sprintf("SELECT COUNT(*) FROM uo_timeout WHERE game=%d", self::GAME)));
         $this->assertSame(0, (int) DBQueryToValue(sprintf("SELECT COUNT(*) FROM uo_gameevent WHERE game=%d", self::GAME)));
+    }
+
+    public function testSaveWithACurrentTokenSucceeds(): void
+    {
+        $token = self::fetchToken();
+
+        self::post(['save' => '1', 'secretary' => 'Scorekeeper A', 'history_token' => (string) $token]);
+
+        $this->assertSame('Scorekeeper A', self::official());
+    }
+
+    public function testSaveWithAStaleTokenIsRefusedAndKeepsEntries(): void
+    {
+        $token = self::fetchToken();
+        $this->assertGreaterThan(0, (int) ScoresheetHistoryRecord(self::GAME, 'goal', 'add', ['num' => 1]));
+
+        $body = self::post(['save' => '1', 'secretary' => 'Scorekeeper A', 'history_token' => (string) $token]);
+
+        $this->assertNull(self::official());
+        $this->assertStringContainsString("id='secretary' value='Scorekeeper A'", $body);
+        $this->assertStringNotContainsString('highlightError("', $body);
+        $this->assertGreaterThan($token, self::tokenIn($body));
+    }
+
+    public function testRetryWithTheReturnedTokenOverwrites(): void
+    {
+        $token = self::fetchToken();
+        $this->assertGreaterThan(0, (int) ScoresheetHistoryRecord(self::GAME, 'goal', 'add', ['num' => 1]));
+        $refused = self::post(['save' => '1', 'secretary' => 'Scorekeeper A', 'history_token' => (string) $token]);
+        $this->assertNull(self::official());
+
+        self::post(['save' => '1', 'secretary' => 'Scorekeeper A', 'history_token' => (string) self::tokenIn($refused)]);
+
+        $this->assertSame('Scorekeeper A', self::official());
+    }
+
+    public function testMissingTokenIsAConflict(): void
+    {
+        $body = self::post(['save' => '1', 'secretary' => 'Scorekeeper A']);
+
+        $this->assertNull(self::official());
+        $this->assertStringContainsString("id='secretary' value='Scorekeeper A'", $body);
+    }
+
+    public function testExcludedChangesDoNotRefuse(): void
+    {
+        $token = self::fetchToken();
+        foreach (['timer', 'played', 'defense', 'mediaevent'] as $target) {
+            $this->assertGreaterThan(0, (int) ScoresheetHistoryRecord(self::GAME, $target, 'update', ['x' => 1]));
+        }
+        $this->assertGreaterThan(0, (int) ScoresheetHistoryRecord(self::GAME, 'gameevent', 'update', ['type' => 'half_cap']));
+
+        self::post(['save' => '1', 'secretary' => 'Scorekeeper A', 'history_token' => (string) $token]);
+
+        $this->assertSame('Scorekeeper A', self::official());
+    }
+
+    public function testDisabledHistoryFailsOpen(): void
+    {
+        self::setHistoryDisabled(true);
+        $tokenA = self::fetchToken();
+
+        // The other operator saves through the app, which writes no history
+        // while the flag is on.
+        $tokenB = self::fetchToken();
+        self::post(['save' => '1', 'secretary' => 'Scorekeeper B', 'history_token' => (string) $tokenB]);
+        $this->assertSame('Scorekeeper B', self::official());
+
+        self::post(['save' => '1', 'secretary' => 'Scorekeeper A', 'history_token' => (string) $tokenA]);
+
+        $this->assertSame('Scorekeeper A', self::official());
+    }
+
+    private static function fetchToken(): int
+    {
+        [$status, $body] = self::request(
+            '/index.php?view=user/addscoresheet&game=' . self::GAME,
+            'GET',
+            ['Cookie: ' . self::sessionCookie()],
+        );
+        self::assertStringContainsString(' 200 ', $status, 'unexpected status: ' . $status);
+        return self::tokenIn($body);
+    }
+
+    private static function tokenIn(string $body): int
+    {
+        self::assertMatchesRegularExpression("/name='history_token' value='(\\d+)'/", $body);
+        preg_match("/name='history_token' value='(\\d+)'/", $body, $m);
+        return (int) $m[1];
+    }
+
+    private static function official(): ?string
+    {
+        self::flushQueryCaches();
+        $value = DBQueryToValue(sprintf("SELECT official FROM uo_game WHERE game_id=%d", self::GAME));
+        return $value === null ? null : (string) $value;
+    }
+
+    private static function setHistoryDisabled(bool $disabled): void
+    {
+        DBQuery("DELETE FROM uo_setting WHERE name='DisableScoresheetHistory'");
+        DBQuery(sprintf(
+            "INSERT INTO uo_setting (name, value) VALUES ('DisableScoresheetHistory', '%s')",
+            $disabled ? 'true' : 'false',
+        ));
+        self::flushQueryCaches();
     }
 
     /** Put game 701 back to its fixture state. */

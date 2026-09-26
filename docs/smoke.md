@@ -39,7 +39,10 @@ in-process suites cannot reach it:
 - `ScoresheetPageTest`: the login-gated desktop scoresheet editor
   (`user/addscoresheet`). It logs in as the fixture superadmin, posts to game
   701, and restores the game afterwards. It pins that a refused save
-  re-renders every posted field rather than the stored game.
+  re-renders every posted field rather than the stored game, and the
+  `history_token` concurrency check: a stale or missing token is refused, the
+  returned token makes the retry overwrite, changes the sheet does not own do
+  not refuse, and `DisableScoresheetHistory` fails open.
 
 These assert only locale-independent output (row counts, CSS classes, links),
 since the `config-overrides` case renders pages in fi_FI.
