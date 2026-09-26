@@ -24,6 +24,8 @@ final class PrivateEventAccessTest extends TestCase
     private const SERIES = 110;
     private const TEAM = 310;
     private const PLAYER = 810;
+    private const POOL = 210;
+    private const GAME = 710;
     private const TEAM_NAME = 'Secret Squad';
     private const PLAYER_NAME = 'Hidden';
 
@@ -61,6 +63,24 @@ final class PrivateEventAccessTest extends TestCase
             self::PLAYER_NAME,
             self::TEAM,
         ));
+        DBQuery(sprintf(
+            "INSERT INTO uo_pool (pool_id, name, ordering, visible, continuingpool, placementpool, teams, mvgames,
+                timeoutlen, halftime, winningscore, timecap, scorecap, played, addscore, halftimescore, timeouts,
+                timeoutsper, timeoutsovertime, timeoutstimecap, betweenpointslen, series, type, timeslot, color,
+                forfeitscore, forfeitagainst, follower, drawsallowed, playoff_template)
+             VALUES (%d, 'Private Pool', '1', 1, 0, 0, 2, 0, 70, 35, 15, NULL, NULL, 1, NULL, NULL, 2, 'half',
+                1, 'soft', 90, %d, 1, NULL, '336699', 15, 0, NULL, 0, NULL)",
+            self::POOL,
+            self::SERIES,
+        ));
+        DBQuery(sprintf(
+            "INSERT INTO uo_game (game_id, hometeam, visitorteam, reservation, time, valid, isongoing, hasstarted)
+             VALUES (%d, %d, %d, 500, '2026-06-01 12:00:00', 1, 0, 0)",
+            self::GAME,
+            self::TEAM,
+            self::TEAM,
+        ));
+        DBQuery(sprintf("INSERT INTO uo_game_pool (game, pool, timetable) VALUES (%d, %d, 1)", self::GAME, self::POOL));
         self::flushQueryCaches();
     }
 
@@ -105,8 +125,27 @@ final class PrivateEventAccessTest extends TestCase
         $this->assertStringNotContainsString(self::PLAYER_NAME, $body);
     }
 
+    public function testPrivatePoolScheduleRedirectsAnonymousVisitors(): void
+    {
+        // Precondition for the pools case below.
+        [$status, $body] = self::get('/index.php?view=games&pools=' . self::POOL);
+
+        $this->assertSame(302, $status);
+        $this->assertStringNotContainsString(self::TEAM_NAME, $body);
+    }
+
+    public function testListingAPublicPoolFirstDoesNotOpenAPrivatePoolSchedule(): void
+    {
+        [$status, $body] = self::get('/index.php?view=games&pools=200,' . self::POOL);
+
+        $this->assertStringNotContainsString(self::TEAM_NAME, $body, 'status ' . $status);
+    }
+
     private static function cleanUp(): void
     {
+        DBQuery(sprintf("DELETE FROM uo_game_pool WHERE game=%d", self::GAME));
+        DBQuery(sprintf("DELETE FROM uo_game WHERE game_id=%d", self::GAME));
+        DBQuery(sprintf("DELETE FROM uo_pool WHERE pool_id=%d", self::POOL));
         DBQuery(sprintf("DELETE FROM uo_player WHERE player_id=%d", self::PLAYER));
         DBQuery(sprintf("DELETE FROM uo_team WHERE team_id=%d", self::TEAM));
         DBQuery(sprintf("DELETE FROM uo_series WHERE series_id=%d", self::SERIES));
