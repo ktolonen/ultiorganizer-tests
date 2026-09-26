@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -163,7 +164,32 @@ def ensure_vendor() -> dict:
     return {"status": "installed", "vendor_autoload": str(vendor_autoload)}
 
 
-def write_test_config(case: dict, profile: dict, runtime_sut: Path, maintenance_runtime_dir: Path) -> Path:
+def prepare_persistent_cache_dir(persistent_cache_dir: Path, db_name: str) -> None:
+    # Apache (www-data) and PHPUnit (host uid) share the SUT's persistent query
+    # cache. Left to the SUT, the first writer creates the per-install directory
+    # as 0700, and tests can then neither see nor flush Apache's entries. Start
+    # every run empty, with the per-install directory the SUT derives from
+    # DB_HOST|DB_DATABASE|DB_USER already present and world-writable.
+    if persistent_cache_dir.exists():
+        shutil.rmtree(persistent_cache_dir)
+    instance_key = "|".join([
+        os.environ.get("UO_DB_HOST", "mariadb"),
+        db_name,
+        os.environ.get("UO_DB_USER", "ultiorganizer"),
+    ])
+    instance_dir = persistent_cache_dir / hashlib.md5(instance_key.encode("utf-8")).hexdigest()
+    instance_dir.mkdir(parents=True)
+    persistent_cache_dir.chmod(0o777)
+    instance_dir.chmod(0o777)
+
+
+def write_test_config(
+    case: dict,
+    profile: dict,
+    runtime_sut: Path,
+    maintenance_runtime_dir: Path,
+    persistent_cache_dir: Path,
+) -> Path:
     db_name = case["database_name"]
     if not db_name.startswith("ultiorganizer_test"):
         raise RunnerFailure(
@@ -177,6 +203,7 @@ def write_test_config(case: dict, profile: dict, runtime_sut: Path, maintenance_
         config_path.chmod(0o644)
     maintenance_runtime_dir.mkdir(parents=True, exist_ok=True)
     maintenance_runtime_dir.chmod(0o777)
+    prepare_persistent_cache_dir(persistent_cache_dir, db_name)
     lines = [
         "<?php",
         f"define('DB_HOST', '{os.environ.get('UO_DB_HOST', 'mariadb')}');",
@@ -186,6 +213,7 @@ def write_test_config(case: dict, profile: dict, runtime_sut: Path, maintenance_
         f"define('BASEURL', '{profile['base_url']}');",
         "define('UPLOAD_DIR', 'images/uploads/');",
         f"define('MAINTENANCE_RUNTIME_DIR', '{maintenance_runtime_dir}');",
+        f"define('PERSISTENT_CACHE_DIR', '{persistent_cache_dir}');",
         f"define('CUSTOMIZATIONS', '{case['customization']}');",
         "define('DATE_FORMAT', _('%d.%m.%Y %H:%M'));",
         "define('WORD_DELIMITER', '/([\\;\\,\\-_\\s\\/\\.])/');",
@@ -209,6 +237,7 @@ def prepare_runtime(case: dict, profile: dict, setup_log_path: Path) -> dict:
     runtime_case_root = RUNTIME_ROOT / "cases" / case["id"]
     runtime_sut = runtime_case_root / "sut"
     maintenance_runtime_dir = runtime_case_root / "maintenance-runtime"
+    persistent_cache_dir = runtime_case_root / "persistent-cache"
     runtime_case_root.mkdir(parents=True, exist_ok=True)
     runtime_sut.mkdir(parents=True, exist_ok=True)
 
@@ -231,7 +260,7 @@ def prepare_runtime(case: dict, profile: dict, setup_log_path: Path) -> dict:
         )
 
     try:
-        config_path = write_test_config(case, profile, runtime_sut, maintenance_runtime_dir)
+        config_path = write_test_config(case, profile, runtime_sut, maintenance_runtime_dir, persistent_cache_dir)
     except OSError as exc:
         raise RunnerFailure(
             "runtime_sut_copy_config_failure",
@@ -252,6 +281,7 @@ def prepare_runtime(case: dict, profile: dict, setup_log_path: Path) -> dict:
         "runtime_case_root": str(runtime_case_root),
         "runtime_sut": str(runtime_sut),
         "maintenance_runtime_dir": str(maintenance_runtime_dir),
+        "persistent_cache_dir": str(persistent_cache_dir),
         "config_path": str(config_path),
         "webroot": str(WEBROOT_LINK),
     }

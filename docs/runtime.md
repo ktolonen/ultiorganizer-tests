@@ -15,6 +15,7 @@ Main runtime paths:
 
 - `.runtime/cases/<case-id>/sut`: copied runtime SUT
 - `.runtime/cases/<case-id>/maintenance-runtime`: writable maintenance directory for the runtime copy
+- `.runtime/cases/<case-id>/persistent-cache`: the SUT's persistent query cache (`PERSISTENT_CACHE_DIR`), emptied every run and world-writable so HTTP-level tests running as the host uid can flush entries Apache (www-data) wrote
 - `.runtime/webroot`: symlink to the active runtime SUT
 - `.runtime/phpunit-cache`: PHPUnit cache directory
 
