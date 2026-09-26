@@ -76,6 +76,7 @@ final class GameMediaReadonlyTest extends TestCase
     {
         ClearSeasonRuntimeCache();
         foreach (['db_query_value', 'db_query_array', 'db_query_row', 'db_query_rowcount'] as $ns) {
+            CacheForgetPersistent($ns);
             CacheForgetNamespace($ns);
         }
     }
