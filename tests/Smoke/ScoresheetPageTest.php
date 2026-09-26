@@ -122,6 +122,41 @@ final class ScoresheetPageTest extends TestCase
         $this->assertSame('Scorekeeper A', self::official());
     }
 
+    public function testChangeLandingDuringValidationIsAConflict(): void
+    {
+        $token = self::fetchToken();
+
+        // Hold uo_played so the save stalls in GamePlayerFromNumber(), after
+        // the page-top token read and before the comparison.
+        $lock = self::connect();
+        $lock->query('LOCK TABLES uo_played WRITE');
+        try {
+            $pending = self::startPost([
+                'save' => '1',
+                'secretary' => 'Scorekeeper A',
+                'history_token' => (string) $token,
+                'team0' => 'H',
+                'time0' => '1.00',
+                'goal0' => '7',
+            ]);
+            self::awaitBlockedRosterLookup();
+
+            // Another scorekeeper appends a point while the save is validating.
+            $appended = (int) ScoresheetHistoryRecord(self::GAME, 'goal', 'add', ['num' => 1]);
+            $this->assertGreaterThan($token, $appended);
+        } finally {
+            $lock->query('UNLOCK TABLES');
+            $lock->close();
+        }
+        $body = self::finishPost($pending);
+
+        $this->assertNull(self::official());
+        $this->assertStringContainsString("id='secretary' value='Scorekeeper A'", $body);
+        $this->assertStringNotContainsString('highlightError("', $body);
+        // The refusal carries back the value it was compared against.
+        $this->assertSame($appended, self::tokenIn($body));
+    }
+
     public function testMissingTokenIsAConflict(): void
     {
         $body = self::post(['save' => '1', 'secretary' => 'Scorekeeper A']);
@@ -258,6 +293,74 @@ final class ScoresheetPageTest extends TestCase
         );
         self::assertStringContainsString(' 200 ', $status, 'unexpected status: ' . $status);
         self::assertStringNotContainsString('Insufficient rights', $body);
+        self::assertDoesNotMatchRegularExpression(
+            '/(Fatal error|Warning|Notice|Deprecated|Parse error)<\/b>:/',
+            $body,
+        );
+        return $body;
+    }
+
+    private static function connect(): mysqli
+    {
+        $db = mysqli_connect(DB_HOST, DB_USER, DB_PASSWORD, DB_DATABASE);
+        self::assertInstanceOf(mysqli::class, $db);
+        return $db;
+    }
+
+    /** Wait until the page's roster lookup is queued behind the uo_played lock. */
+    private static function awaitBlockedRosterLookup(): void
+    {
+        $db = self::connect();
+        try {
+            for ($i = 0; $i < 200; $i++) {
+                $row = $db->query(sprintf(
+                    "SELECT COUNT(*) FROM information_schema.PROCESSLIST
+                    WHERE INFO LIKE '%%INNER JOIN (SELECT player, num FROM uo_played WHERE game=''%d'')%%'
+                    AND STATE LIKE 'Waiting%%'",
+                    self::GAME,
+                ))->fetch_row();
+                if ((int) $row[0] > 0) {
+                    return;
+                }
+                usleep(50000);
+            }
+        } finally {
+            $db->close();
+        }
+        self::fail('the save never reached the roster lookup');
+    }
+
+    /** @return resource */
+    private static function startPost(array $fields)
+    {
+        $parts = parse_url(getenv('UO_BASE_URL') ?: 'http://127.0.0.1');
+        $host = $parts['host'];
+        $port = $parts['port'] ?? 80;
+        $content = http_build_query($fields);
+        $socket = stream_socket_client("tcp://$host:$port", $errno, $error, 20);
+        self::assertIsResource($socket, "connect failed: $error");
+        stream_set_timeout($socket, 20);
+        fwrite($socket, implode("\r\n", [
+            'POST /index.php?view=user/addscoresheet&game=' . self::GAME . ' HTTP/1.0',
+            "Host: $host",
+            'Cookie: ' . self::sessionCookie(),
+            'Content-Type: application/x-www-form-urlencoded',
+            'Content-Length: ' . strlen($content),
+            'Connection: close',
+            '',
+            $content,
+        ]));
+        return $socket;
+    }
+
+    /** @param resource $socket */
+    private static function finishPost($socket): string
+    {
+        $response = stream_get_contents($socket);
+        fclose($socket);
+        self::assertIsString($response);
+        [$head, $body] = explode("\r\n\r\n", $response, 2) + ['', ''];
+        self::assertMatchesRegularExpression('/^HTTP\/\S+ 200 /', $head);
         self::assertDoesNotMatchRegularExpression(
             '/(Fatal error|Warning|Notice|Deprecated|Parse error)<\/b>:/',
             $body,
