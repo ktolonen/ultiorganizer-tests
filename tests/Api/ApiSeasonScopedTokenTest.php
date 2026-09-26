@@ -24,6 +24,9 @@ final class ApiSeasonScopedTokenTest extends TestCase
     {
         LegacyApp::resetRequestState();
         LegacyApp::loadLibFilesUsingProfile(['api.functions.php'], 'database_with_common');
+        // Apache's persistent query cache is in a www-data-only directory the
+        // test process cannot clear; keep it off while rows are seeded.
+        DBQuery("UPDATE uo_setting SET value='false' WHERE name='PersistentCacheEnabled'");
         self::cleanUp();
         DBQuery(sprintf(
             "INSERT INTO uo_season (season_id, name, starttime, endtime, iscurrent, enrollopen, type,
@@ -42,13 +45,12 @@ final class ApiSeasonScopedTokenTest extends TestCase
             self::TOKEN,
             self::SEASON,
         ));
-        self::flushQueryCaches();
     }
 
     protected function tearDown(): void
     {
         self::cleanUp();
-        self::flushQueryCaches();
+        DBQuery("UPDATE uo_setting SET value='true' WHERE name='PersistentCacheEnabled'");
         LegacyApp::closeDatabaseConnection();
     }
 
@@ -74,18 +76,6 @@ final class ApiSeasonScopedTokenTest extends TestCase
         DBQuery(sprintf("DELETE FROM uo_api_token WHERE token_id=%d", self::TOKEN_ID));
         DBQuery(sprintf("DELETE FROM uo_api_rate_limit WHERE rate_key LIKE '%s|%%'", ApiHashToken(self::TOKEN)));
         DBQuery(sprintf("DELETE FROM uo_season WHERE season_id='%s'", self::SEASON));
-    }
-
-    private static function flushQueryCaches(): void
-    {
-        foreach (['db_query_value', 'db_query_array', 'db_query_row', 'db_query_rowcount'] as $ns) {
-            if (function_exists('CacheForgetPersistent')) {
-                CacheForgetPersistent($ns);
-            }
-            if (function_exists('CacheForgetNamespace')) {
-                CacheForgetNamespace($ns);
-            }
-        }
     }
 
     /** @return array{0: int, 1: array} */

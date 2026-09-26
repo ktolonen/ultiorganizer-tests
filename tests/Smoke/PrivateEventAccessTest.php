@@ -17,6 +17,10 @@ use UltiorganizerHarness\Support\LegacyApp;
  * The fixture has only a public event, so the test seeds a private one with a
  * team and a player. Assertions are locale-independent (status codes, the
  * seeded names).
+ *
+ * Apache's persistent query cache lives in a www-data-only directory the test
+ * process cannot clear, so the test turns the cache off for its duration
+ * rather than risk a season row cached before a visibility flip.
  */
 final class PrivateEventAccessTest extends TestCase
 {
@@ -34,6 +38,7 @@ final class PrivateEventAccessTest extends TestCase
     {
         LegacyApp::resetRequestState();
         LegacyApp::loadLibFilesUsingProfile([], 'database_with_common');
+        DBQuery("UPDATE uo_setting SET value='false' WHERE name='PersistentCacheEnabled'");
         self::cleanUp();
         DBQuery(sprintf(
             "INSERT INTO uo_season (season_id, name, starttime, endtime, iscurrent, enrollopen, type,
@@ -82,13 +87,12 @@ final class PrivateEventAccessTest extends TestCase
             self::TEAM,
         ));
         DBQuery(sprintf("INSERT INTO uo_game_pool (game, pool, timetable) VALUES (%d, %d, 1)", self::GAME, self::POOL));
-        self::flushQueryCaches();
     }
 
     protected function tearDown(): void
     {
         self::cleanUp();
-        self::flushQueryCaches();
+        DBQuery("UPDATE uo_setting SET value='true' WHERE name='PersistentCacheEnabled'");
         LegacyApp::closeDatabaseConnection();
     }
 
@@ -170,17 +174,14 @@ final class PrivateEventAccessTest extends TestCase
             self::SEASON,
             self::SERIES,
         ));
-        self::flushQueryCaches();
 
         // Contrast: once the event is public, the same row is listed.
         DBQuery(sprintf("UPDATE uo_season SET public_event=1 WHERE season_id='%s'", self::SEASON));
-        self::flushQueryCaches();
         [$status, $body] = self::get('/index.php?view=statistics&list=playerscoresall');
         $this->assertSame(200, $status);
         $this->assertStringContainsString(self::PLAYER_NAME, $body);
 
         DBQuery(sprintf("UPDATE uo_season SET public_event=0 WHERE season_id='%s'", self::SEASON));
-        self::flushQueryCaches();
         [$status, $body] = self::get('/index.php?view=statistics&list=playerscoresall');
         $this->assertSame(200, $status);
         $this->assertStringNotContainsString(self::PLAYER_NAME, $body);
@@ -198,18 +199,6 @@ final class PrivateEventAccessTest extends TestCase
         DBQuery(sprintf("DELETE FROM uo_team WHERE team_id=%d", self::TEAM));
         DBQuery(sprintf("DELETE FROM uo_series WHERE series_id=%d", self::SERIES));
         DBQuery(sprintf("DELETE FROM uo_season WHERE season_id='%s'", self::SEASON));
-    }
-
-    private static function flushQueryCaches(): void
-    {
-        foreach (['db_query_value', 'db_query_array', 'db_query_row', 'db_query_rowcount'] as $ns) {
-            if (function_exists('CacheForgetPersistent')) {
-                CacheForgetPersistent($ns);
-            }
-            if (function_exists('CacheForgetNamespace')) {
-                CacheForgetNamespace($ns);
-            }
-        }
     }
 
     /** @return array{0: int, 1: string} */
