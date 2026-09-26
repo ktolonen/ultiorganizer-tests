@@ -141,6 +141,17 @@ final class PrivateEventAccessTest extends TestCase
         $this->assertStringNotContainsString(self::TEAM_NAME, $body, 'status ' . $status);
     }
 
+    public function testAllPlayersListLeavesOutPlayersOfAPrivateEvent(): void
+    {
+        // allteams filters teams through CanAccessSeason(); the player list
+        // should not name a player whose only roster is in a private event.
+        [$status, $body] = self::get('/index.php?view=allplayers&list=all');
+
+        $this->assertSame(200, $status);
+        $this->assertStringContainsString('Ace', $body, 'the public fixture player is listed');
+        $this->assertStringNotContainsString(self::PLAYER_NAME, $body);
+    }
+
     private static function cleanUp(): void
     {
         DBQuery(sprintf("DELETE FROM uo_game_pool WHERE game=%d", self::GAME));
