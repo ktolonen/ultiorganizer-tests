@@ -25,6 +25,7 @@ final class PrivateEventAccessTest extends TestCase
     private const TEAM = 310;
     private const PLAYER = 810;
     private const POOL = 210;
+    private const PROFILE = 9810;
     private const GAME = 710;
     private const TEAM_NAME = 'Secret Squad';
     private const PLAYER_NAME = 'Hidden';
@@ -152,12 +153,48 @@ final class PrivateEventAccessTest extends TestCase
         $this->assertStringNotContainsString(self::PLAYER_NAME, $body);
     }
 
+    public function testAllTimeScoreboardLeavesOutPrivateEventStatistics(): void
+    {
+        DBQuery(sprintf(
+            "INSERT INTO uo_player_profile (profile_id, firstname, lastname) VALUES (%d, 'Very', '%s')",
+            self::PROFILE,
+            self::PLAYER_NAME,
+        ));
+        DBQuery(sprintf("UPDATE uo_player SET profile_id=%d WHERE player_id=%d", self::PROFILE, self::PLAYER));
+        DBQuery(sprintf(
+            "INSERT INTO uo_player_stats (player_id, profile_id, team, season, series, games, goals, passes)
+             VALUES (%d, %d, %d, '%s', %d, 5, 40, 10)",
+            self::PLAYER,
+            self::PROFILE,
+            self::TEAM,
+            self::SEASON,
+            self::SERIES,
+        ));
+        self::flushQueryCaches();
+
+        // Contrast: once the event is public, the same row is listed.
+        DBQuery(sprintf("UPDATE uo_season SET public_event=1 WHERE season_id='%s'", self::SEASON));
+        self::flushQueryCaches();
+        [$status, $body] = self::get('/index.php?view=statistics&list=playerscoresall');
+        $this->assertSame(200, $status);
+        $this->assertStringContainsString(self::PLAYER_NAME, $body);
+
+        DBQuery(sprintf("UPDATE uo_season SET public_event=0 WHERE season_id='%s'", self::SEASON));
+        self::flushQueryCaches();
+        [$status, $body] = self::get('/index.php?view=statistics&list=playerscoresall');
+        $this->assertSame(200, $status);
+        $this->assertStringNotContainsString(self::PLAYER_NAME, $body);
+        $this->assertStringNotContainsString(self::TEAM_NAME, $body);
+    }
+
     private static function cleanUp(): void
     {
         DBQuery(sprintf("DELETE FROM uo_game_pool WHERE game=%d", self::GAME));
         DBQuery(sprintf("DELETE FROM uo_game WHERE game_id=%d", self::GAME));
         DBQuery(sprintf("DELETE FROM uo_pool WHERE pool_id=%d", self::POOL));
+        DBQuery(sprintf("DELETE FROM uo_player_stats WHERE player_id=%d", self::PLAYER));
         DBQuery(sprintf("DELETE FROM uo_player WHERE player_id=%d", self::PLAYER));
+        DBQuery(sprintf("DELETE FROM uo_player_profile WHERE profile_id=%d", self::PROFILE));
         DBQuery(sprintf("DELETE FROM uo_team WHERE team_id=%d", self::TEAM));
         DBQuery(sprintf("DELETE FROM uo_series WHERE series_id=%d", self::SERIES));
         DBQuery(sprintf("DELETE FROM uo_season WHERE season_id='%s'", self::SEASON));
