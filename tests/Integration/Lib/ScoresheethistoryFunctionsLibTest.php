@@ -1208,7 +1208,9 @@ final class ScoresheethistoryFunctionsLibTest extends TestCase
         // are already game 700's own hometeam/visitorteam, so a genuine
         // "reassigned to a different team" needs a third team to reassign
         // to.
-        DBQuery("INSERT INTO uo_team (name, valid) VALUES ('Reassignment Target FC', 1)");
+        // In the fixture division, so the reassignment is one an event admin
+        // could make (a team from no event at all is not a realistic target).
+        DBQuery("INSERT INTO uo_team (name, valid, series) VALUES ('Reassignment Target FC', 1, 100)");
         $tempTeamId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
 
         // Hand-build a pre-v4 snapshot from the CURRENT (matching) game
