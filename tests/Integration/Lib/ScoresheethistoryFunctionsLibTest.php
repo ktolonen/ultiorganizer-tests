@@ -2965,6 +2965,9 @@ final class ScoresheethistoryFunctionsLibTest extends TestCase
         foreach (['timer', 'defense', 'mediaevent'] as $target) {
             $this->assertGreaterThan(0, (int) ScoresheetHistoryRecord(701, $target, "update", ['x' => 1]));
         }
+        foreach (['pause', 'resume'] as $action) {
+            $this->assertGreaterThan(0, (int) ScoresheetHistoryRecord(701, "timer", $action));
+        }
         $this->assertGreaterThan(0, (int) ScoresheetHistoryRecord(701, "played", "update", ['team' => 1, 'role' => "captain", 'players' => [1]]));
         $this->assertGreaterThan(0, (int) ScoresheetHistoryRecord(701, "gameevent", "update", ['type' => "half_cap", 'time' => 600, 'info' => 8]));
         $this->assertGreaterThan(0, (int) ScoresheetHistoryRecord(701, "gameevent", "remove", ['type' => "time_cap"]));
@@ -2988,6 +2991,18 @@ final class ScoresheethistoryFunctionsLibTest extends TestCase
             $before = ScoresheetHistoryToken(701);
             ScoresheetHistoryRecord(701, "played", $action, $detail);
             $this->assertGreaterThan($before, ScoresheetHistoryToken(701), "played/$action");
+        }
+    }
+
+    public function testTokenRisesWhenTheClockStartsOrResets(): void
+    {
+        // Both write isongoing and hasstarted, which the desktop save
+        // rewrites from its "Game ongoing" checkbox.
+        DBQuery("DELETE FROM uo_scoresheet_history WHERE game=701");
+        foreach (['start', 'reset'] as $action) {
+            $before = ScoresheetHistoryToken(701);
+            ScoresheetHistoryRecord(701, "timer", $action);
+            $this->assertGreaterThan($before, ScoresheetHistoryToken(701), "timer/$action");
         }
     }
 
