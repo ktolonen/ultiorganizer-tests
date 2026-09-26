@@ -13,10 +13,6 @@ use UltiorganizerHarness\Support\LegacyApp;
  * (showspiritpoints) and the game's show_spirit flag is set. The fixture event
  * hides them (showspiritpoints=0). The test seeds one team's spirit scores for
  * game 700 and compares the API with the rule in both directions.
- *
- * Apache's persistent query cache lives in a www-data-only directory the test
- * process cannot clear, and it would serve the season row from before a flag
- * change, so the test turns the cache off for its duration.
  */
 final class ApiSpiritVisibilityTest extends TestCase
 {
@@ -28,7 +24,6 @@ final class ApiSpiritVisibilityTest extends TestCase
     {
         LegacyApp::resetRequestState();
         LegacyApp::loadLibFilesUsingProfile([], 'database_with_common');
-        DBQuery("UPDATE uo_setting SET value='false' WHERE name='PersistentCacheEnabled'");
         self::cleanUp();
         foreach ([1009, 1010, 1011, 1012, 1013] as $categoryId) {
             DBQuery(sprintf(
@@ -45,7 +40,7 @@ final class ApiSpiritVisibilityTest extends TestCase
         self::cleanUp();
         DBQuery("UPDATE uo_season SET showspiritpoints=0 WHERE season_id='HRN2026'");
         DBQuery(sprintf("UPDATE uo_game SET show_spirit=0 WHERE game_id=%d", self::GAME));
-        DBQuery("UPDATE uo_setting SET value='true' WHERE name='PersistentCacheEnabled'");
+        self::flushQueryCaches();
         LegacyApp::closeDatabaseConnection();
     }
 
@@ -67,6 +62,8 @@ final class ApiSpiritVisibilityTest extends TestCase
     /** @return list<int|float> every spirit value the endpoint reveals */
     private static function exposedSpiritValues(): array
     {
+        // Rows written by this process must not be masked by Apache's cache.
+        self::flushQueryCaches();
         $baseUrl = getenv('UO_BASE_URL') ?: 'http://127.0.0.1';
         $context = stream_context_create(['http' => ['ignore_errors' => true, 'timeout' => 20]]);
         $body = file_get_contents(
@@ -95,5 +92,13 @@ final class ApiSpiritVisibilityTest extends TestCase
     private static function cleanUp(): void
     {
         DBQuery(sprintf("DELETE FROM uo_spirit_score WHERE game_id=%d", self::GAME));
+    }
+
+    private static function flushQueryCaches(): void
+    {
+        foreach (['db_query_value', 'db_query_array', 'db_query_row', 'db_query_rowcount'] as $ns) {
+            CacheForgetPersistent($ns);
+            CacheForgetNamespace($ns);
+        }
     }
 }

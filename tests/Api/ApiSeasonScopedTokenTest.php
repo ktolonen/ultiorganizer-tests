@@ -24,9 +24,6 @@ final class ApiSeasonScopedTokenTest extends TestCase
     {
         LegacyApp::resetRequestState();
         LegacyApp::loadLibFilesUsingProfile(['api.functions.php'], 'database_with_common');
-        // Apache's persistent query cache is in a www-data-only directory the
-        // test process cannot clear; keep it off while rows are seeded.
-        DBQuery("UPDATE uo_setting SET value='false' WHERE name='PersistentCacheEnabled'");
         self::cleanUp();
         DBQuery(sprintf(
             "INSERT INTO uo_season (season_id, name, starttime, endtime, iscurrent, enrollopen, type,
@@ -50,7 +47,7 @@ final class ApiSeasonScopedTokenTest extends TestCase
     protected function tearDown(): void
     {
         self::cleanUp();
-        DBQuery("UPDATE uo_setting SET value='true' WHERE name='PersistentCacheEnabled'");
+        self::flushQueryCaches();
         LegacyApp::closeDatabaseConnection();
     }
 
@@ -81,6 +78,8 @@ final class ApiSeasonScopedTokenTest extends TestCase
     /** @return array{0: int, 1: array} */
     private static function apiGet(string $path): array
     {
+        // Rows written by this process must not be masked by Apache's cache.
+        self::flushQueryCaches();
         $baseUrl = getenv('UO_BASE_URL') ?: 'http://127.0.0.1';
         $context = stream_context_create([
             'http' => [
@@ -95,5 +94,13 @@ final class ApiSeasonScopedTokenTest extends TestCase
         $decoded = json_decode((string) $body, true);
         self::assertIsArray($decoded, 'not JSON: ' . substr((string) $body, 0, 300));
         return [(int) ($m[1] ?? 0), $decoded];
+    }
+
+    private static function flushQueryCaches(): void
+    {
+        foreach (['db_query_value', 'db_query_array', 'db_query_row', 'db_query_rowcount'] as $ns) {
+            CacheForgetPersistent($ns);
+            CacheForgetNamespace($ns);
+        }
     }
 }

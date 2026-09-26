@@ -17,10 +17,6 @@ use UltiorganizerHarness\Support\LegacyApp;
  * The fixture has only a public event, so the test seeds a private one with a
  * team and a player. Assertions are locale-independent (status codes, the
  * seeded names).
- *
- * Apache's persistent query cache lives in a www-data-only directory the test
- * process cannot clear, so the test turns the cache off for its duration
- * rather than risk a season row cached before a visibility flip.
  */
 final class PrivateEventAccessTest extends TestCase
 {
@@ -38,7 +34,6 @@ final class PrivateEventAccessTest extends TestCase
     {
         LegacyApp::resetRequestState();
         LegacyApp::loadLibFilesUsingProfile([], 'database_with_common');
-        DBQuery("UPDATE uo_setting SET value='false' WHERE name='PersistentCacheEnabled'");
         self::cleanUp();
         DBQuery(sprintf(
             "INSERT INTO uo_season (season_id, name, starttime, endtime, iscurrent, enrollopen, type,
@@ -92,7 +87,7 @@ final class PrivateEventAccessTest extends TestCase
     protected function tearDown(): void
     {
         self::cleanUp();
-        DBQuery("UPDATE uo_setting SET value='true' WHERE name='PersistentCacheEnabled'");
+        self::flushQueryCaches();
         LegacyApp::closeDatabaseConnection();
     }
 
@@ -204,6 +199,8 @@ final class PrivateEventAccessTest extends TestCase
     /** @return array{0: int, 1: string} */
     private static function get(string $path): array
     {
+        // Rows written by this process must not be masked by Apache's cache.
+        self::flushQueryCaches();
         $baseUrl = getenv('UO_BASE_URL') ?: 'http://127.0.0.1';
         $context = stream_context_create([
             'http' => ['ignore_errors' => true, 'follow_location' => 0, 'timeout' => 20],
@@ -211,5 +208,13 @@ final class PrivateEventAccessTest extends TestCase
         $body = file_get_contents($baseUrl . $path, false, $context);
         preg_match('/\s(\d{3})\b/', $http_response_header[0] ?? '', $m);
         return [(int) ($m[1] ?? 0), (string) $body];
+    }
+
+    private static function flushQueryCaches(): void
+    {
+        foreach (['db_query_value', 'db_query_array', 'db_query_row', 'db_query_rowcount'] as $ns) {
+            CacheForgetPersistent($ns);
+            CacheForgetNamespace($ns);
+        }
     }
 }
