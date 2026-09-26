@@ -2958,17 +2958,37 @@ final class ScoresheethistoryFunctionsLibTest extends TestCase
         ScoresheetHistoryRecord(701, "goal", "add", ['num' => 1]);
         $before = ScoresheetHistoryToken(701);
 
-        // A scorekeeper pausing the clock, editing the roster, saving the
+        // A scorekeeper pausing the clock, naming captains, saving the
         // defense sheet, attaching a media link or setting a cap must not
         // invalidate an open desktop sheet. Each row must really be written,
         // or the token staying put proves nothing.
-        foreach (['timer', 'played', 'defense', 'mediaevent'] as $target) {
+        foreach (['timer', 'defense', 'mediaevent'] as $target) {
             $this->assertGreaterThan(0, (int) ScoresheetHistoryRecord(701, $target, "update", ['x' => 1]));
         }
+        $this->assertGreaterThan(0, (int) ScoresheetHistoryRecord(701, "played", "update", ['team' => 1, 'role' => "captain", 'players' => [1]]));
         $this->assertGreaterThan(0, (int) ScoresheetHistoryRecord(701, "gameevent", "update", ['type' => "half_cap", 'time' => 600, 'info' => 8]));
         $this->assertGreaterThan(0, (int) ScoresheetHistoryRecord(701, "gameevent", "remove", ['type' => "time_cap"]));
 
         $this->assertSame($before, ScoresheetHistoryToken(701));
+    }
+
+    public function testTokenRisesWhenTheRosterMappingChanges(): void
+    {
+        // The desktop sheet posts jersey numbers and the save resolves them
+        // against the current roster, so every change to who wears which
+        // number has to invalidate an open sheet.
+        DBQuery("DELETE FROM uo_scoresheet_history WHERE game=701");
+        $rows = [
+            ["add", ['player' => 1, 'num' => 7]],
+            ["update", ['player' => 1, 'num' => 8]],
+            ["remove", ['player' => 1]],
+            ["clear", ['removed' => 2]],
+        ];
+        foreach ($rows as [$action, $detail]) {
+            $before = ScoresheetHistoryToken(701);
+            ScoresheetHistoryRecord(701, "played", $action, $detail);
+            $this->assertGreaterThan($before, ScoresheetHistoryToken(701), "played/$action");
+        }
     }
 
     public function testTokenIsScopedToOneGame(): void
