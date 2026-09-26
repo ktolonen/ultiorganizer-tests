@@ -2930,4 +2930,56 @@ final class ScoresheethistoryFunctionsLibTest extends TestCase
         );
         $this->assertSame(801, $spiritCaptain);
     }
+
+    public function testTokenIsZeroForAGameWithNoHistory(): void
+    {
+        DBQuery("DELETE FROM uo_scoresheet_history WHERE game=701");
+        $this->assertSame(0, ScoresheetHistoryToken(701));
+    }
+
+    public function testTokenRisesWhenAnOwnedTargetIsRecorded(): void
+    {
+        DBQuery("DELETE FROM uo_scoresheet_history WHERE game=701");
+        ScoresheetHistoryRecord(701, "goal", "add", ['num' => 1]);
+        $first = ScoresheetHistoryToken(701);
+        $this->assertGreaterThan(0, $first);
+
+        ScoresheetHistoryRecord(701, "result", "update", ['home' => 1, 'away' => 0]);
+        $second = ScoresheetHistoryToken(701);
+        $this->assertGreaterThan($first, $second);
+
+        ScoresheetHistoryRecord(701, "gameevent", "update", ['type' => "start", 'home' => 1]);
+        $this->assertGreaterThan($second, ScoresheetHistoryToken(701));
+    }
+
+    public function testTokenIgnoresChangesTheDesktopSheetDoesNotOwn(): void
+    {
+        DBQuery("DELETE FROM uo_scoresheet_history WHERE game=701");
+        ScoresheetHistoryRecord(701, "goal", "add", ['num' => 1]);
+        $before = ScoresheetHistoryToken(701);
+
+        // A scorekeeper pausing the clock, editing the roster, saving the
+        // defense sheet, attaching a media link or setting a cap must not
+        // invalidate an open desktop sheet. Each row must really be written,
+        // or the token staying put proves nothing.
+        foreach (['timer', 'played', 'defense', 'mediaevent'] as $target) {
+            $this->assertGreaterThan(0, (int) ScoresheetHistoryRecord(701, $target, "update", ['x' => 1]));
+        }
+        $this->assertGreaterThan(0, (int) ScoresheetHistoryRecord(701, "gameevent", "update", ['type' => "half_cap", 'time' => 600, 'info' => 8]));
+        $this->assertGreaterThan(0, (int) ScoresheetHistoryRecord(701, "gameevent", "remove", ['type' => "time_cap"]));
+
+        $this->assertSame($before, ScoresheetHistoryToken(701));
+    }
+
+    public function testTokenIsScopedToOneGame(): void
+    {
+        DBQuery("DELETE FROM uo_scoresheet_history WHERE game IN (700, 701)");
+        ScoresheetHistoryRecord(701, "goal", "add", ['num' => 1]);
+        $before = ScoresheetHistoryToken(701);
+
+        ScoresheetHistoryRecord(700, "goal", "add", ['num' => 1]);
+
+        $this->assertSame($before, ScoresheetHistoryToken(701));
+        $this->assertGreaterThan(0, ScoresheetHistoryToken(700));
+    }
 }
