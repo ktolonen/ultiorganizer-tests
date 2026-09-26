@@ -30,7 +30,9 @@ final class StoredNameEscapingTest extends TestCase
         DBQuery("UPDATE uo_season SET name=CONCAT(name, '$m'), showspiritpoints=1 WHERE season_id='HRN2026'");
         DBQuery("UPDATE uo_series SET name=CONCAT(name, '$m') WHERE series_id=100");
         DBQuery("UPDATE uo_pool SET name=CONCAT(name, '$m') WHERE pool_id=200");
-        DBQuery("UPDATE uo_reservation SET reservationgroup=CONCAT(reservationgroup, '$m') WHERE id IN (500, 501)");
+        DBQuery("UPDATE uo_reservation SET reservationgroup=CONCAT(reservationgroup, '$m') WHERE id=500");
+        // A second grouping, so the schedule pages also render their grouping links.
+        DBQuery("UPDATE uo_reservation SET reservationgroup=CONCAT('Second day', '$m') WHERE id=501");
         DBQuery("INSERT INTO uo_club (club_id, name, valid) VALUES (952, 'Harness Club', 1)");
         DBQuery("UPDATE uo_team SET club=952 WHERE team_id=300");
     }
