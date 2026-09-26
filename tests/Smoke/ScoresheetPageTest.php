@@ -130,6 +130,25 @@ final class ScoresheetPageTest extends TestCase
         $this->assertStringContainsString("id='secretary' value='Scorekeeper A'", $body);
     }
 
+    public function testMissingTokenStaysAConflictAfterAPointError(): void
+    {
+        // Another operator's change, made after the tokenless form was rendered.
+        $this->assertGreaterThan(0, (int) ScoresheetHistoryRecord(self::GAME, 'goal', 'add', ['num' => 1]));
+
+        $refused = self::post([
+            'save' => '1',
+            'secretary' => 'Scorekeeper A',
+            'team0' => 'H',
+            'time0' => '99.99.99',
+        ]);
+        $this->assertStringContainsString('highlightError("time0")', $refused);
+
+        // The corrected save must still be judged against the tokenless form.
+        self::post(['save' => '1', 'secretary' => 'Scorekeeper A', 'history_token' => (string) self::tokenIn($refused)]);
+
+        $this->assertNull(self::official());
+    }
+
     public function testExcludedChangesDoNotRefuse(): void
     {
         $token = self::fetchToken();
