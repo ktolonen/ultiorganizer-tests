@@ -152,9 +152,13 @@ final class ScoresheetPageTest extends TestCase
     public function testExcludedChangesDoNotRefuse(): void
     {
         $token = self::fetchToken();
-        foreach (['timer', 'played', 'defense', 'mediaevent'] as $target) {
+        foreach (['timer', 'defense', 'mediaevent'] as $target) {
             $this->assertGreaterThan(0, (int) ScoresheetHistoryRecord(self::GAME, $target, 'update', ['x' => 1]));
         }
+        foreach (['pause', 'resume'] as $action) {
+            $this->assertGreaterThan(0, (int) ScoresheetHistoryRecord(self::GAME, 'timer', $action));
+        }
+        $this->assertGreaterThan(0, (int) ScoresheetHistoryRecord(self::GAME, 'played', 'update', ['team' => 1, 'role' => 'captain', 'players' => [1]]));
         $this->assertGreaterThan(0, (int) ScoresheetHistoryRecord(self::GAME, 'gameevent', 'update', ['type' => 'half_cap']));
 
         self::post(['save' => '1', 'secretary' => 'Scorekeeper A', 'history_token' => (string) $token]);
