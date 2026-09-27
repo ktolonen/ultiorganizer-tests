@@ -35,3 +35,4 @@ This directory contains short topic-oriented documents for the Ultiorganizer tes
 ## Maintenance
 
 - [Lib Test Triage](lib-test-triage.md): changed-file failure classification for per-file lib tests
+- [SUT Bug Hunt 2026-09](sut-bug-hunt-2026-09.md): open SUT bugs with severity, cause, pinning test, and fix direction
