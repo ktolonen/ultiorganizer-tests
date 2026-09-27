@@ -41,6 +41,7 @@ final class ReflectedParameterEscapingLoggedInTest extends TestCase
             'admin/addseasons season' => ['admin/addseasons', ['season' => self::PAYLOAD]],
             'admin/addseasonseries season' => ['admin/addseasonseries', ['series' => '100', 'season' => self::PAYLOAD]],
             'admin/addseasonusers season' => ['admin/addseasonusers', ['season' => self::PAYLOAD]],
+            'admin/dbequalize filter' => ['admin/dbequalize', ['filter' => self::PAYLOAD]],
             'admin/editgame game' => ['admin/editgame', ['season' => 'HRN2026', 'game' => self::PAYLOAD]],
             'admin/editgame season' => ['admin/editgame', ['game' => '700', 'season' => self::PAYLOAD]],
             'admin/editstanding pool' => ['admin/editstanding', ['season' => 'HRN2026', 'team' => '300', 'pool' => self::PAYLOAD]],
