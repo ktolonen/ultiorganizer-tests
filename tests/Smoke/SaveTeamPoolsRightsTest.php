@@ -63,6 +63,40 @@ final class SaveTeamPoolsRightsTest extends TestCase
         $this->assertSame('2', self::activerank(300), 'the scrambled standing was rewritten');
     }
 
+    public function testAccountWithoutRightsCannotResolveThePoolFromTheTeamsPage(): void
+    {
+        // admin/serieteams.php had no rights check either: a save with no teams
+        // selected went straight to the resolver.
+        $cookie = self::login(self::PLAIN_USER);
+
+        [$status, $body] = self::request(
+            '/index.php?view=admin/serieteams&pool=200',
+            'POST',
+            ['Cookie: ' . $cookie, 'Content-Type: application/x-www-form-urlencoded'],
+            http_build_query(['save' => '1']),
+        );
+
+        $this->assertStringContainsString(' 200 ', $status);
+        $this->assertStringContainsString('Insufficient user rights', $body);
+        $this->assertSame('2', self::activerank(300), 'the scrambled standing was rewritten');
+    }
+
+    public function testSuperadminSaveOnTheTeamsPageResolvesThePool(): void
+    {
+        $cookie = self::login('admin');
+        // Keep the fixture's seeding ranks; only activerank is scrambled.
+        $teams = ['selcheck' => ['300', '301'], 'rank300' => '1', 'rank301' => '2'];
+
+        self::request(
+            '/index.php?view=admin/serieteams&pool=200',
+            'POST',
+            ['Cookie: ' . $cookie, 'Content-Type: application/x-www-form-urlencoded'],
+            http_build_query(['save' => '1'] + $teams),
+        );
+
+        $this->assertSame('1', self::activerank(300));
+    }
+
     private static function activerank(int $teamId): string
     {
         self::flushQueryCaches();
