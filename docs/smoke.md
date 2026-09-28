@@ -1,85 +1,30 @@
 # Smoke Testing
 
-## Purpose
+The `smoke` suite is every PHPUnit test under `tests/Smoke/`, run over HTTP against the served runtime copy. It has two parts.
 
-The `smoke` suite is the smallest runtime page check in the harness.
+## Page Allowlist
 
-It exists to answer one question quickly:
+`PublicPagesSmokeTest` requests each `smoke_pages` entry (`id`, `query`) of the case through `index.php`. A page fails on:
 
-Does a known allowlist of important public pages render without obvious runtime failures?
+- a non-`200` status
+- a PHP fatal error, parse error, warning, or notice in the response
+- a PHP warning or notice newly written to the Apache error log
 
-## Configuration
+A failure is reported with the page id, query, status, a response snippet, and an Apache log excerpt.
 
-Smoke coverage is declared per case in `config/matrix.json` under `smoke_pages`.
+## Page-Level Tests
 
-Each page entry defines:
+The remaining classes pin logic that lives in page files rather than `lib/`, so the in-process suites cannot reach it. Current themes:
 
-- `id`
-- `query`
+- output escaping of reflected parameters and stored names, anonymous and logged in
+- cross-event checks, where an id from another event must be refused
+- rights checks before a page acts
+- page content: gameplay replay, standings, team cards, series status
+- login-gated editors such as `ScoresheetPageTest` and `ScoresheetHistoryPageTest`, which log in as the fixture superadmin and restore any rows they change
 
-The smoke test requests each page through `index.php` and fails if it sees:
+Rules for these tests:
 
-- non-`200` HTTP status
-- PHP fatal errors
-- PHP parse errors
-- PHP warnings or notices in the response
-- PHP warnings or notices newly written to the Apache error log
+- Assert only locale-independent output (ids, CSS classes, links, injected markers), because `config-overrides` renders in `fi_FI`.
+- Flush the persistent cache before each request that should see a DB write.
 
-## Page content tests
-
-Besides the `smoke_pages` allowlist, `tests/Smoke` holds a few HTTP content
-contracts for logic that lives in page files rather than `lib/`, so the
-in-process suites cannot reach it:
-
-- `GameplayPageContentTest`: cap events on the public gameplay replay.
-- `ScoresheetHistoryPageTest`: the login-gated scoresheet history pages. It
-  logs in as the fixture superadmin, seeds `uo_scoresheet_history` rows for
-  game 700 directly, and deletes them again. It pins hiding unchanged re-saves,
-  pairing saved and current points by order, and the season page's links.
-- `ScoresheetPageTest`: the login-gated desktop scoresheet editor
-  (`user/addscoresheet`). It logs in as the fixture superadmin, posts to game
-  701, and restores the game afterwards. It pins that a refused save
-  re-renders every posted field rather than the stored game, and the
-  `history_token` concurrency check: a stale or missing token is refused, the
-  returned token makes the retry overwrite, changes the sheet does not own do
-  not refuse, and `DisableScoresheetHistory` fails open.
-
-These assert only locale-independent output (row counts, CSS classes, links),
-since the `config-overrides` case renders pages in fi_FI.
-
-## Characteristics
-
-Smoke is intentionally:
-
-- small
-- deterministic
-- public by default
-- quick to run
-
-This makes it suitable for day-to-day confidence checks and simple regression coverage.
-
-## Artifacts
-
-Smoke writes:
-
-- suite log
-- JUnit XML
-- failure details in the summary
-
-When a page fails, the summary includes:
-
-- page id
-- query
-- status code
-- response snippet
-- Apache log excerpt
-
-## When To Use
-
-Use `smoke` when you want:
-
-- a fast public runtime sanity check
-- a stable regression signal
-- a small suite suitable for repeated local runs
-
-If you need broader discovery, authenticated coverage, or path security checks, use `crawl` instead.
+Failures are classified `smoke_http_runtime_failure`. Use `crawl` for broad discovery rather than growing the allowlist into a crawler.

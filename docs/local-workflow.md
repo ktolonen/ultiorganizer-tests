@@ -1,128 +1,32 @@
 # Local Workflow
 
-## Purpose
+Point the harness at a checkout, run a suite or case, then inspect reports.
 
-This repository is designed for local and worktree-based validation of Ultiorganizer changes.
+## Commands
 
-The usual workflow is:
+| Command | Purpose |
+|---|---|
+| `./doctor` | Check SUT path, Docker, Compose, and DB connectivity |
+| `./test:quick` | `lint` + `unit` + `integration` on `baseline-default`; the day-to-day command |
+| `./test:{lint,unit,integration,export,api,smoke,crawl}` | One suite on `baseline-default`; PHPUnit suites accept `--test-filter` |
+| `./test:case <case-id> [--suites a,b]` | One full case |
+| `./test:matrix` | All cases; run before pushing |
+| `./test:filter <case-id> <pattern>` | `integration` suite only, with a PHPUnit `--filter` |
+| `./test:js` | Host Node tests for SUT JavaScript |
+| `./report:latest`, `./report:case <case-id>` | Latest summary |
+| `./logs:case <case-id>` | Log paths, including the Apache/PHP error log |
+| `./report:html`, `./report:clean` | Browser index; prune old runs |
+| `./libtest:*` | Per-file lib tests; see [Lib Tests](lib-tests.md) |
 
-1. point the harness at a local checkout or worktree
-2. run one case or one suite
-3. inspect reports and logs
+For a unit-suite filter use `./test:unit --test-filter <pattern>`; `./test:filter` never runs `unit`.
 
-## Common Commands
+## Alternate Checkouts And PR Context
 
-Environment check:
-
-```sh
-./doctor
-```
-
-Default day-to-day validation:
-
-```sh
-./test:quick
-```
-
-Only PHP syntax lint:
-
-```sh
-./test:lint
-```
-
-Only export endpoint contracts:
-
-```sh
-./test:export
-```
-
-Only REST API contracts:
-
-```sh
-./test:api
-```
-
-Full default case:
-
-```sh
-./test:case baseline-default
-```
-
-Only crawl coverage:
-
-```sh
-./test:crawl
-```
-
-Latest summary:
-
-```sh
-./report:latest
-```
-
-Per-file lib catalog refresh:
-
-```sh
-./libtest:catalog-refresh
-```
-
-Per-file lib test gap report:
-
-```sh
-./libtest:missing
-```
-
-Run one per-file lib test:
-
-```sh
-./libtest:run --lib-file common.functions.php
-```
-
-## Alternate SUT Checkouts
-
-The default SUT path is `../ultiorganizer`.
-
-You can point the harness at another checkout or worktree with `--sut-path`.
-
-Example:
-
-```sh
-./test:case baseline-default --sut-path /path/to/other/ultiorganizer
-```
-
-## Branch And PR Context
-
-The harness records SUT git context with each run.
-
-This is useful for:
-
-- local branch work
-- PR worktrees
-- keeping separate latest pointers by context label
-
-Examples:
-
-```sh
-./test:quick --sut-path ../ultiorganizer
-./report:latest --context-label branch-my-feature
-```
+Every run command accepts `--sut-path` (default `../ultiorganizer`). The harness records the SUT's branch, commit, and dirty state, and keeps separate latest pointers per context label (inferred from the branch, or set with `--context-label`).
 
 ```sh
 ./test:case baseline-default \
   --sut-path ../ultiorganizer-pr-123 \
-  --pr-number 123 \
-  --pr-head-ref feature/my-change \
-  --pr-base-ref main
+  --pr-number 123 --pr-head-ref feature/my-change --pr-base-ref main
+./report:case baseline-default --context-label pr-123
 ```
-
-## Practical Use
-
-Use `test:quick` for frequent local feedback. It runs PHP syntax lint before the unit and integration suites.
-
-Use `test:case` when you want the full configured case, including export contracts, API contracts, runtime HTTP checks, and crawl plans.
-
-Use `report:case` and `logs:case` when a failure needs artifact inspection instead of just terminal output.
-
-`logs:case` now also includes the run-level Apache/PHP error-log artifact. Check that path when a request failed without a clear PHPUnit assertion message or when runtime warnings only appeared in Apache logs.
-
-Use `libtest:catalog-refresh`, `libtest:missing`, `libtest:scaffold`, and `libtest:run` when the change is centered on one top-level `lib/*.php` file rather than a broad harness run.

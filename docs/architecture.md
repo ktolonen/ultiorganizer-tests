@@ -1,105 +1,42 @@
 # Architecture
 
-## Purpose
+This repository is a Dockerized test harness for the Ultiorganizer codebase (default: `../ultiorganizer`). It owns orchestration, the disposable runtime copy and database, tests, and reports. It never owns or modifies production code, config, or state.
 
-This repository is a separate Dockerized test harness for the production Ultiorganizer codebase, usually located at `../ultiorganizer`.
+## Components
 
-The harness owns:
+- `scripts/harness.py`: host-side CLI (`doctor`, `quick`, `suite`, `case`, `matrix`, reports, `lib-test-*`). All `./test:*`, `./report:*`, `./libtest:*` wrappers call it.
+- `scripts/container_runner.py`: in-container runtime copy, config generation, DB bootstrap, suite execution, coverage merge, summaries.
+- `scripts/libtest_coverage.py`: per-lib-file coverage report behind `./libtest:coverage`.
+- `scripts/crawl/*.sh`: wget helpers used by crawl plans.
+- `config/matrix.json`, `config/profiles/*.json`, `config/lib-test-catalog.json`: cases, config profiles, lib-test catalog.
+- `fixtures/*.sql`: fixture packs loaded after the SUT schema.
+- `tests/{Unit,Integration,Export,Api,Smoke}`: PHPUnit suites; `tests/Support/LegacyApp.php` loads SUT lib files.
+- `tests/Js`: host Node tests (not part of the Docker flow).
+- `docker-compose.yml`, `docker/php-test/`: `php-test` (PHP 8.3 + Apache + PCOV + Node) and `mariadb`.
+- `mcp/server.py`: thin MCP wrapper over `harness.py`.
 
-- test orchestration
-- disposable runtime preparation
-- disposable MariaDB test data
-- test execution
-- reports and logs
+## Run Flow
 
-The harness does not own:
+1. Preflight the SUT path; start `mariadb` and `php-test`; ensure Composer deps.
+2. Copy the read-only SUT mount into `.runtime/cases/<case-id>/sut` and generate `conf/config.inc.php` there.
+3. Recreate the case database, load the SUT schema, then the fixture pack.
+4. Run the requested suites; merge coverage if any in-process suite ran.
+5. Capture the Apache/PHP error-log delta and write summaries and latest pointers under `reports/`.
 
-- production application code
-- production configuration
-- persistent application state
+A setup failure skips all suites.
 
-## Main Components
+## Suites
 
-- `scripts/harness.py`: host-side entrypoint for `doctor`, suite runs, case runs, matrix runs, and report access
-- `scripts/container_runner.py`: container-side runtime preparation, database bootstrap, suite execution, crawl execution, and summary writing
-- `config/matrix.json`: declarative case definitions, enabled suites, smoke pages, and crawl plans
-- `config/profiles/*.json`: test-only config profiles injected into the runtime copy
-- `fixtures/*.sql`: deterministic fixture packs loaded after the production schema
-- `tests/Unit`, `tests/Integration`, `tests/Export`, `tests/Api`, `tests/Smoke`: PHPUnit suites
-- `docker-compose.yml` and `docker/php-test/Dockerfile`: runtime services and test image
-- `mcp/server.py`: thin MCP wrapper over the normal harness commands
+| Suite | What it checks |
+|---|---|
+| `lint` | `php -l` over every SUT PHP file; cheapest gate |
+| `unit` | In-process PHP, no DB dependence |
+| `integration` | In-process PHP against the fixture DB |
+| `export` | HTTP contracts for `ext/` endpoints |
+| `api` | HTTP contracts for `/api/v1` |
+| `smoke` | `smoke_pages` allowlist plus page-level HTTP tests |
+| `crawl` | Declarative `crawl_plans` (link following, direct PHP fetches, path probes) |
 
-## Execution Model
+## Design Rule
 
-Each run follows the same high-level flow:
-
-1. Validate the SUT path and required files.
-2. Start `mariadb` and `php-test`.
-3. Copy the SUT from the read-only mount into `.runtime/cases/<case-id>/sut`.
-4. Generate test-only `conf/config.inc.php` inside that runtime copy.
-5. Recreate the disposable test database.
-6. Load the production schema from the SUT.
-7. Load the selected fixture pack from this repository.
-8. Run the requested suites.
-9. Write summaries, logs, and latest pointers under `reports/`.
-
-## Runtime Boundaries
-
-- SUT source: mounted read-only into the test container
-- Runtime SUT: copied into `.runtime/cases/<case-id>/sut`
-- Webroot: `.runtime/webroot` symlink to the active runtime SUT copy
-- Database: disposable MariaDB schema per case run
-- Reports: persisted under `reports/`
-
-This separation is the core design rule: test-only config and data belong in the runtime copy and disposable database, not in the production checkout.
-
-## Suite Types
-
-- `lint`: SUT-wide PHP syntax checks using `php -l`
-- `unit`: PHPUnit tests that do not require DB-backed application state
-- `integration`: PHPUnit tests that exercise DB-backed application behavior
-- `export`: PHPUnit HTTP contract tests for public export endpoints
-- `api`: PHPUnit HTTP contract tests for the versioned JSON API
-- `smoke`: deterministic public page checks driven by `smoke_pages`
-- `crawl`: broader route and path probing driven by `crawl_plans`
-
-`lint` is the cheapest first gate. `smoke` is intentionally small and stable. `crawl` is broader and artifact-heavy.
-
-Related documents:
-
-- [PHP Syntax Lint](lint.md)
-- [Export Contract Testing](export.md)
-- [REST API Contract Testing](api.md)
-- [PHPUnit Suites](phpunit.md)
-- [Smoke Testing](smoke.md)
-- [Crawl Testing](crawl.md)
-- [Matrix](matrix.md)
-- [Fixtures](fixtures.md)
-- [Reporting](reporting.md)
-- [MCP](mcp.md)
-- [Runtime](runtime.md)
-- [Local Workflow](local-workflow.md)
-
-## Control Surfaces
-
-There are three user-facing control layers:
-
-- shell wrappers such as `./test:quick` and `./test:case`
-- `scripts/harness.py` as the canonical CLI
-- `mcp/server.py` as a thin JSON-RPC wrapper
-
-The MCP layer should stay thin. Orchestration logic belongs in the existing harness scripts, not duplicated in the MCP server.
-
-## Reporting Model
-
-Canonical artifacts are written under `reports/cases/<case-id>/<run-id>/`.
-
-Each run may produce:
-
-- setup log
-- per-suite raw logs
-- JUnit XML for PHPUnit suites
-- crawl artifacts for crawl plans
-- JSON and Markdown summaries
-
-Latest pointers are also maintained at summary scope, case scope, and optional context scope.
+Test-only config and data belong in the runtime copy and disposable database, never in the SUT checkout. Orchestration belongs in the Python scripts; MCP and shell wrappers stay thin.

@@ -7,54 +7,21 @@ metadata:
 
 # Write Lib File Test
 
-Use this skill when the task is to add or update the matching PHPUnit test for one top-level `../ultiorganizer/lib/*.php` file.
+Add or update the one matching PHPUnit file for one top-level `../ultiorganizer/lib/*.php` file.
 
-Always read these references first:
-
-- `docs/lib-tests.md`
-- `docs/phpunit.md`
-- `docs/fixtures.md`
-- `docs/lib-test-pitfalls.md`
-- `config/lib-test-catalog.json`
-
-To use code coverage to find uncovered branches in the target file and confirm new assertions exercised them, use `docs/ai/use-coverage-for-tests/SKILL.md`.
-
-## Goal
-
-Maintain strict one-test-file-per-lib traceability.
-
-For the target file, the stable artifacts are:
-
-- one catalog entry
-- one matching PHPUnit file
-- one declared strategy
-- optional triage status
+Read first: `docs/lib-tests.md`, `docs/lib-test-pitfalls.md`, `docs/fixtures.md`, the file's entry in `config/lib-test-catalog.json`, and the SUT source of the functions under test.
 
 ## Workflow
 
-1. Locate the catalog entry for the target `lib/*.php` file.
-2. Reuse the deterministic matching path from the catalog instead of inventing a new file name.
-3. Start from the declared `LegacyApp` load profile and only widen it if the first-pass setup is clearly insufficient.
-4. Add at least one meaningful assertion.
-5. Record fragile or unclear areas in notes instead of overfitting the first version.
-6. Run the narrowest validation command first.
+1. Use the catalog's `test_path` and `load_profile`. Never invent a filename or split one lib file across test files. If the file is missing, run `./libtest:scaffold --lib-file <f>`.
+2. Widen the load profile only when the declared one clearly falls short.
+3. Drive the work with `docs/ai/use-coverage-for-tests/SKILL.md`.
+4. Pin values from the fixture, and anchor every negative assertion with a positive contrast (see `AGENTS.md`).
+5. Validate with `./libtest:run --lib-file <f>`, then `./test:matrix` before pushing.
 
-## Validation
-
-Use the smallest relevant command first:
-
-- `./test:filter baseline-default <pattern>`
-- `./test:unit`
-- `./test:integration`
-
-Use these maintenance commands as needed:
-
-- `./libtest:catalog-refresh`
-- `./libtest:missing`
-- `./libtest:scaffold --lib-file <name>`
+Note that `./test:filter` runs only the `integration` suite. For unit lib tests, use `./libtest:run` or `./test:unit --test-filter <pattern>`.
 
 ## Boundaries
 
-- Do not broaden one file task into a repo-wide lib test regeneration.
-- Do not split one lib file across multiple PHPUnit files.
-- Do not hide ambiguity by writing weak assertions that say nothing useful.
+- Keep the task to one file; do not regenerate tests repo-wide.
+- Record unreachable or ambiguous areas in `triage_notes` rather than writing weak assertions.

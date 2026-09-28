@@ -7,88 +7,45 @@ metadata:
 
 # Use Coverage For Tests
 
-Use this skill whenever you are authoring or extending PHPUnit tests for a top-level
-`lib/*.php` file. Invoke it **automatically** — the user does not need to ask for it.
+Use automatically whenever authoring or extending a test for a top-level `lib/*.php` file. Do not ask the user first.
 
-## When to invoke
+## Targets
 
-- User asks to deepen, add, or improve tests for a lib file.
-- User asks to improve lib test coverage generally.
-- You are mid-task on a lib test file and need to know what is still missing.
+Per-file line and function targets live in `config/lib-test-catalog.json` (`targets`, with optional per-entry `line_target` or `function_target`). `./libtest:coverage` reports them, so you do not need to read the catalog.
 
-## Coverage targets
+Coverage comes only from the in-process `unit` and `integration` suites, scoped to the SUT `lib/` tree minus vendored directories. Code outside `lib/` (entrypoints, `localization.php`) never appears, so an entrypoint-coupled wrapper is not a fixable gap.
 
-Per file:
-- Line coverage ≥ **80%**
-- Function coverage = **100%** (every function called at least once on the happy path)
-
-Targets are stored in `config/lib-test-catalog.json` (`targets` block + optional per-entry overrides).
-The `./libtest:coverage` command reads and reports them — you never need to read the catalog directly.
-
-## What coverage covers
-
-Coverage comes only from the in-process `unit` and `integration` suites (PCOV).
-HTTP-driven `export`, `api`, `smoke`, and `crawl` suites yield no coverage.
-
-Coverage scope is the SUT's `lib/` tree minus vendored directories.
-Lines exercised outside `lib/` (page entrypoints, `localization.php`, bootstrap) never appear —
-do not treat an entrypoint-coupled wrapper as an uncovered-and-fixable line when the real code
-lives outside `lib/`.
-
-## The command
+## Command
 
 ```sh
 ./libtest:coverage --lib-file <lib-filename>
 ```
 
-This runs the matching test suite with coverage and emits JSON to stdout:
+It emits JSON like:
 
 ```json
 {
   "lib_file": "team.functions.php",
   "line":      { "pct": 69.6, "covered": 638, "total": 917, "meets_target": false },
   "functions": { "pct": 70.8, "covered": 46,  "total": 65,  "meets_target": false },
-  "uncovered": ["TeamMove", "AddTeamProfileUrl"],
+  "uncovered": ["TeamMove"],
   "partial":   [{ "name": "TeamListAll", "pct": 64.3, "covered": 18, "total": 28 }],
-  "targets":   { "line_pct": 80, "function_pct": 100 }
+  "targets":   { "line_pct": 90, "function_pct": 100 }
 }
 ```
 
-| Field | Meaning |
-|---|---|
-| `uncovered` | Functions whose first statement was never executed — add tests |
-| `partial` | Functions entered but body not fully covered — deepen |
-| `line.meets_target` | `line.pct >= targets.line_pct` |
-| `functions.meets_target` | `functions.covered == functions.total` |
+- `uncovered`: functions never entered. Add tests for these first.
+- `partial`: functions entered but not fully covered. Deepen these next.
 
-## Workflow
+## Loop
 
-1. Pick the target `lib/*.php` file and its matching test (see `write-lib-file-test/SKILL.md` and the catalog).
-2. Run `./libtest:coverage --lib-file <name>` and read the JSON.
-3. Write tests targeting functions in `uncovered` first (zero → covered on the happy path), then
-   functions in `partial` (deepen the body to push line coverage toward the target).
-   Read `docs/lib-test-pitfalls.md` before writing any test.
-4. After each batch of new tests, run `./libtest:coverage --lib-file <name>` again — **do not ask
-   the user** — and re-read the JSON.
-5. Repeat steps 3–4 until both `line.meets_target` and `functions.meets_target` are `true`.
-6. If a function cannot be covered (auth-only `die()` / `exit()` with no testable happy path),
-   add a triage comment in the test file noting the gap and move on — **do not ask the user**.
+1. Read `docs/lib-test-pitfalls.md`, then run the command.
+2. Test `uncovered` functions, then `partial` ones.
+3. Rerun the command after each batch, and repeat until both `meets_target` values are `true`.
+4. If a branch cannot be reached in-process (`exit()`/`die()`, entrypoint coupling), record it in the catalog `triage_notes` and move on. See `docs/lib-test-deep-coverage.md`.
 
 ## Rules
 
-- Never add an assertion-free test just to colour a line. Coverage tells you what code ran,
-  not whether the behaviour is correct.
-- Prefer branches that map to deterministic, fixture-backed behaviour. Defer branches that only
-  run via `die()` / `exit()` / redirect or hidden entrypoint bootstrap; record those as triage
-  notes (see `docs/lib-test-deep-coverage.md`).
-- Do not widen the `<source>` scope in `phpunit.xml.dist`.
-- Do not hand-edit `.runtime/` or `reports/`.
-- Do not convert a coverage-guided test task into an SUT refactor. Surface refactor needs per
-  `docs/lib-test-deep-coverage.md` rather than forcing coverage.
-
-## Also read
-
-- `docs/lib-tests.md` — naming conventions, catalog, incremental commands
-- `docs/lib-test-pitfalls.md` — concrete gotchas: shim persistence, cache flush, assertContains types
-- `docs/lib-test-deep-coverage.md` — what blocks deep coverage and what to do about it
-- `docs/phpunit.md` — PHPUnit mechanics, coverage artifact locations
+- Coverage shows what ran, not what is correct. Every covered branch needs a value assertion; follow the assertion-quality rules in `AGENTS.md`.
+- Do not widen `<source>` in `phpunit.xml.dist`.
+- Do not turn a test task into an SUT refactor. Surface the refactor need instead.

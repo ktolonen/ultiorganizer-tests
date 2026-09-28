@@ -1,56 +1,20 @@
 # Runtime
 
-## Purpose
+Each case run prepares a disposable copy of the SUT. It is the isolation boundary between the production checkout and test-only config and data.
 
-The harness prepares a disposable runtime copy of the SUT for each case run.
+## Layout
 
-This is the main isolation boundary between:
+- `.runtime/cases/<case-id>/sut`: runtime SUT copy with generated `conf/config.inc.php`
+- `.runtime/cases/<case-id>/maintenance-runtime`: writable maintenance directory
+- `.runtime/cases/<case-id>/persistent-cache`: the SUT's `PERSISTENT_CACHE_DIR`, emptied every run and world-writable so host-uid HTTP tests can flush entries Apache (`www-data`) wrote
+- `.runtime/webroot`: symlink to the active case's runtime SUT; Apache serves `/workspace/.runtime/webroot`
+- `.runtime/phpunit-cache`: PHPUnit cache
 
-- the production checkout
-- test-only config and data
+The generated config points at the Compose MariaDB (plain TCP, SSL off) and the case's database, and sets `ALLOW_INSTALL=true` so `index.php` boots while `install.php` exists.
 
-## Runtime Layout
+HTTP suites (`export`, `api`, `smoke`, `crawl`) hit the served runtime copy, not the SUT mount.
 
-Main runtime paths:
+## Rules
 
-- `.runtime/cases/<case-id>/sut`: copied runtime SUT
-- `.runtime/cases/<case-id>/maintenance-runtime`: writable maintenance directory for the runtime copy
-- `.runtime/cases/<case-id>/persistent-cache`: the SUT's persistent query cache (`PERSISTENT_CACHE_DIR`), emptied every run and world-writable so HTTP-level tests running as the host uid can flush entries Apache (www-data) wrote
-- `.runtime/webroot`: symlink to the active runtime SUT
-- `.runtime/phpunit-cache`: PHPUnit cache directory
-
-## Why The Runtime Copy Exists
-
-The production checkout is treated as read-only from the harness perspective.
-
-The runtime copy allows the harness to:
-
-- generate `conf/config.inc.php`
-- point Apache at a prepared case-specific webroot
-- keep test-only files and writable paths out of the production checkout
-
-## Database Relationship
-
-The runtime copy and disposable database are prepared together for each case run.
-
-The runtime config points at:
-
-- local MariaDB in Docker Compose
-- the case-specific disposable database name
-
-## Web Serving Model
-
-Apache in `php-test` serves:
-
-- `/workspace/.runtime/webroot`
-
-That symlink points to the prepared runtime SUT for the active case.
-
-HTTP-based suites such as `smoke` and `crawl` run against this served runtime, not against the original SUT mount.
-
-## Design Rules
-
-- Do not hand-edit `.runtime/`.
-- Do not treat runtime outputs as source-controlled assets.
-- Put test-only config in the runtime copy, not in the production repo.
-- Recreate runtime state from harness code and config, not from manual edits.
+- Never hand-edit `.runtime/`; recreate it from harness code and config.
+- Never commit runtime outputs.

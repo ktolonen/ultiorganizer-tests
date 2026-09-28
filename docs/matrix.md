@@ -1,89 +1,24 @@
 # Matrix
 
-## Purpose
+`config/matrix.json` declares the cases the harness can run. A case fixes the environment: `customization`, `config_profile`, `fixture_pack`, `database_name`, and `suites`, plus optional `smoke_pages`, `crawl_plans`, and `tags`.
 
-The matrix defines which test environments the harness knows how to run.
+## Current Cases
 
-Each matrix entry is called a case. A case describes:
+| Case | Profile | Suites | Purpose |
+|---|---|---|---|
+| `baseline-default` | `baseline` | all seven | Default developer path and reference shape |
+| `customization-{bula,fpudd,gummis,slkl,wfdf,windmill}` | `baseline` | `smoke`, `crawl` (`public-follow-links` only) | Each `cust/*` `CUSTOMIZATIONS` value boots its header, stylesheet, and schedule includes |
+| `config-overrides` | `config-overrides` | `integration`, `smoke` | Non-default config constants and server settings (renders in `fi_FI`) |
 
-- which SUT customization is active
-- which test-only config profile is injected
-- which fixture pack is loaded
-- which suites are enabled
-- which smoke pages and crawl plans belong to that environment
+All cases use the `baseline` fixture pack with a unique database name.
 
-The matrix lives in `config/matrix.json`.
+Tests that pass on `baseline-default` can still fail on `config-overrides` (locale, overridden settings), so run `./test:matrix`, not just one case, before pushing.
 
-## Case Shape
+## When To Add A Case
 
-Each case typically defines:
+Add a case only when the environment changes: customization, config profile, fixture pack, or a meaningfully different suite set. For more route coverage, add `smoke_pages` or `crawl_plans` to an existing case instead.
 
-- `id`
-- `description`
-- `customization`
-- `config_profile`
-- `fixture_pack`
-- `database_name`
-- `suites`
+## Commands
 
-The default `baseline-default` case currently runs `lint`, `unit`, `integration`, `export`, `api`, `smoke`, and `crawl`.
-Customization runtime cases run the narrower `smoke` and `crawl` suite set so every `cust/*` directory boots without duplicating the full baseline contract suite.
-
-Optional runtime coverage data:
-
-- `smoke_pages`
-- `crawl_plans`
-- `tags`
-
-## Design Rule
-
-Use a new case when the environment changes.
-
-Examples:
-
-- different customization
-- different config profile
-- different fixture pack
-- different enabled suite set because the environment meaningfully differs
-
-Do not create a new case just to add more route coverage. In that situation:
-
-- add `smoke_pages` for deterministic public checks
-- add `crawl_plans` for broader runtime or security coverage
-
-## Execution
-
-- `./test:case <case-id>` runs one case
-- `./test:matrix` runs every declared case
-
-Each case run gets:
-
-- a fresh runtime SUT copy
-- a fresh disposable database
-- its own reports directory
-
-## Current State
-
-The repository has one full baseline case:
-
-- `baseline-default`
-
-That case is the default developer validation path and the current reference shape for adding more cases later.
-
-The repository also has lightweight runtime cases for the non-default SUT customizations:
-
-- `customization-bula`
-- `customization-fpudd`
-- `customization-gummis`
-- `customization-slkl`
-- `customization-wfdf`
-- `customization-windmill`
-
-These cases use the baseline profile and fixture pack with unique disposable database names.
-They verify that the selected `CUSTOMIZATIONS` value can render representative public pages and game pages, including customization-specific header, stylesheet, and schedule include paths.
-
-The repository also has a config override case:
-
-- `config-overrides`
-
-That case uses `config/profiles/config-overrides.json` to verify generated `config.inc.php` constants and database-backed server settings can differ from the baseline defaults while the app still boots.
+- `./test:case <case-id> [--suites a,b]`: one case, optionally a subset of suites
+- `./test:matrix`: every case, each with a fresh runtime copy, database, and report directory

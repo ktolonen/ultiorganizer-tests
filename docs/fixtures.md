@@ -1,61 +1,24 @@
 # Fixtures
 
-## Purpose
+A fixture pack is deterministic SQL loaded after the SUT's production schema, into a freshly recreated database. Each case picks one with `fixture_pack`, which loads `fixtures/<fixture_pack>.sql`. Packs assume the schema already exists.
 
-Fixture packs provide deterministic test data for the disposable MariaDB database.
+## Baseline Pack
 
-They are loaded after the production schema from the SUT. This lets the harness exercise real application code against a known dataset without modifying the production checkout.
+`fixtures/baseline.sql` is the only pack. It contains:
 
-Fixture SQL files live under `fixtures/`.
+- server settings (for example `CurrentSeason=HRN2026` and locale `en_GB`)
+- season `HRN2026`, which is public and API-public
+- series 100 and visible pool 200
+- teams 300 and 301
+- location 400 and reservations 500 and 501
+- games 700 (played, with players, goals, and events) and 701 (unplayed)
+- user `admin` / `harness-admin` with the superadmin role
+- API token `harness-api-token`, scoped to `HRN2026`
 
-## Loading Order
+## Rules
 
-For each case run, the harness:
-
-1. recreates the disposable database
-2. loads the production schema from the SUT SQL dump
-3. loads the selected fixture pack from this repository
-
-This means fixture packs should assume the schema already exists.
-
-## Selection
-
-Each matrix case chooses its fixture pack with `fixture_pack` in `config/matrix.json`.
-
-The harness then loads:
-
-- `fixtures/<fixture_pack>.sql`
-
-## Current Baseline Fixture
-
-The main fixture pack is `fixtures/baseline.sql`.
-
-It currently includes:
-
-- one current season
-- one valid series
-- one visible pool
-- two teams
-- reservations and one location
-- two pool games
-- minimal player and goal data
-- one deterministic superadmin account for authenticated crawl coverage
-- one deterministic API token, `harness-api-token`, scoped to `HRN2026`
-
-The goal is not to mirror a full production database. The goal is to create enough stable data for meaningful runtime and integration coverage.
-
-## Design Rules
-
-- Keep fixtures deterministic.
-- Prefer the smallest dataset that still supports the intended tests.
-- Put test-only accounts and test-only data here, not in the production repo.
-- Add a new fixture pack when the data shape needs to differ materially between cases.
-
-## When To Add Another Fixture Pack
-
-Add another pack when tests need:
-
-- a different season or competition shape
-- different permission data
-- different feature flags or content visibility behavior
-- a dataset too specialized to keep in the baseline pack
+- Keep data deterministic, with explicit ids.
+- Add the smallest row set a test needs.
+- Keep test-only accounts and data here, never in the SUT.
+- Tests that mutate fixture rows must restore them.
+- Add a new pack only when the data shape must differ materially: another competition shape, permission model, or visibility state.

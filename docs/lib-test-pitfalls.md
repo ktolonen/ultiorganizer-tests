@@ -1,189 +1,27 @@
 # Lib Test Pitfalls
 
-Concrete gotchas discovered while writing per-file lib tests for this harness.
-These are specific to the PHP process reuse model, the fixture pack, and the SUT's
-include graph. When a test fails in a surprising way, check here first.
+Gotchas specific to this harness's process-reuse model, fixture pack, and the SUT's include graph. Check these first when a lib test fails in a surprising way.
 
-## 1. Shim type hints must accept mixed input
+## Shims
 
-When a lib function passes a DB column value to a shimmed helper (such as `utf8entities()`),
-that value can be `null` even when the column is nominally a string. Using a strict `string`
-type hint on the shim causes a `TypeError` that surfaces in a completely different test
-and is hard to trace.
+1. **Type shims permissively.** PHPUnit runs a whole suite in one PHP process. The first file to define a shim, such as `utf8entities()`, fixes its signature for every later file, and the `function_exists()` guard hides the redefinition. A strict `string` hint then raises `TypeError` in an unrelated later test when a DB column is `null`. Use `mixed` and cast inside the shim.
+2. **Never shim a function owned by a lib file.** The shim collides with the real definition ("Cannot redeclare"), which kills the process. Shim only helpers outside `lib/`, such as those in `localization.php`. Load lib dependencies with `LegacyApp::loadLibFilesUsingProfile()`.
+3. **Includes are transitive.** For example, loading `game.functions.php` also loads `configuration.functions.php`. After that you cannot shim those functions, and they stay defined for the rest of the process. Check the SUT include chain before adding a shim or another load.
+4. **Set the session locale in `setUp()`.** Without `$_SESSION['userproperties']['locale'] = 'en_US';`, `getSessionLocale()` falls back to `GetDefaultLocale()`, which may not be loaded.
 
-**Wrong:**
-```php
-function utf8entities(string $s): string
-{
-    return htmlentities($s, ENT_QUOTES, 'UTF-8');
-}
-```
+## Caches
 
-**Right:**
-```php
-function utf8entities(mixed $s): string
-{
-    return htmlentities((string) $s, ENT_QUOTES, 'UTF-8');
-}
-```
+5. **Request cache.** `SeasonInfo()` and similar helpers wrap reads in `CacheRemember()`, which keeps results in `$GLOBALS['runtime_cache']`. After a DB `UPDATE`, call `CacheForgetNamespace('<ns>')`, for example `season_info`. Call it again in the `finally` block that restores the row.
+6. **Persistent query cache.** `DBQueryToValue`, `DBQueryToArray`, `DBQueryToRow`, and `DBQueryRowCount` also cache on disk, keyed by query string. After a write, flush all four namespaces (`db_query_value`, `db_query_array`, `db_query_row`, `db_query_rowcount`) before re-reading. Do not rely on toggling `PersistentCacheEnabled`. Many existing tests show the flush loop.
 
-Same rule applies to any shim whose argument flows from a DB row or user input.
+## Assertions
 
-## 2. Shims persist alphabetically across the entire suite run
+7. **Aggregate queries always return a row.** `SELECT COUNT(*) ... WHERE id = 99999` returns one row of `NULL`s, so a missing id is not falsy. Assert a specific field, such as `assertNull(ReservationInfo(99999)['id'])`.
+8. **`assertContains` is strict.** DB reads return strings, so `assertContains(300, $ids)` fails against `'300'`. Assert `'300'` or map the array through `intval` first.
+9. **Termination cannot be asserted in-process.** Calling a branch that ends in `exit()`, `die()`, or a redirect kills the runner. Test the decision predicate instead, for example `CanAccessSeason()` rather than an `Enforce*` wrapper. Record the gap in `triage_notes` (see [Deep Coverage Limits](lib-test-deep-coverage.md)).
+10. **Buffer functions that echo.** Some helpers, such as `UnscheduledTeams()`, echo while running. Wrap the call in `ob_start()` / `ob_end_clean()`, then assert on the return value (`assertSame`, `assertCount`), not just its type.
+11. **SQL errors may be SUT bugs.** A column-not-found `mysqli_sql_exception` usually means the SUT query is wrong, not the fixture. Do not add columns to fixtures to paper over it. Report the bug, and test only the paths that avoid it.
 
-PHPUnit reuses a single PHP process across all test files in a suite. A function defined
-in an early file (`CommentFunctionsLibTest.php`) is still registered when a later file
-(`SearchFunctionsLibTest.php`) runs. The `function_exists()` guard stops the second
-registration silently, but the *first* definition's type signature is the one that applies
-to all subsequent calls.
+## Session
 
-**Consequence:** a shim with a wrong type hint defined in file A can cause `TypeError`
-in file B, with no obvious connection in the failure output.
-
-**Rule:** treat every top-level shim as shared state for the whole integration suite.
-The shim must be permissive enough for all callers that appear later alphabetically.
-
-## 3. Never shim functions owned by the lib file under test
-
-A shim only works for functions that live outside `lib/` — typically `localization.php` or
-`translation.functions.php`. If you add a shim for a function that the target lib file also
-defines, PHP raises "Cannot redeclare function" and the test process dies before any
-assertion runs.
-
-**Rule:** shim only non-lib helpers. For lib-owned dependencies, load the real file using
-`LegacyApp::loadLibFilesUsingProfile()` or accept that the dependency chain must be loaded.
-
-## 4. Transitive includes add real functions — and constants
-
-Loading `game.functions.php` also loads `configuration.functions.php`, which defines
-`ShowDefenseStats()`, `GetDefaultLocale()`, and friends. This is usually the right outcome —
-you get the real implementation rather than a shim — but it means:
-
-- You cannot shim those functions after loading the file that defines them.
-- The transitive constants and functions are available in all tests in the same process,
-  even for tests that did not explicitly load that file.
-
-**Rule:** when a load unexpectedly makes a function available, check the include chain
-in the SUT source before adding a redundant shim or an extra `loadLibFilesUsingProfile` call.
-
-## 5. Aggregate SQL queries always return a row
-
-A query of the form `SELECT COUNT(*) ... WHERE id = 999` returns one row even when no
-matching record exists. Several SUT helpers (such as `ReservationInfo()`) use bare
-aggregate selects that always return a row with nullable columns.
-
-**Wrong:**
-```php
-$this->assertFalse((bool) ReservationInfo(99999));
-```
-
-**Right:**
-```php
-$info = ReservationInfo(99999);
-$this->assertNull($info['id']);
-```
-
-**Rule:** when testing a function against a non-existent ID, check a specific nullable
-field from the result rather than assuming the return value is falsy.
-
-## 6. Functions that call exit() or die() cannot be tested inline
-
-Any lib function that terminates the process — `DBRenderMaintenanceResponse()`,
-authorization guards, redirect-and-die patterns — cannot be covered by a normal PHPUnit
-test without process isolation. Calling them directly will abort the test runner.
-
-**Rule:** do not write tests that invoke these branches. Mark them as a coverage gap in
-triage notes (see `docs/lib-test-triage.md`) rather than attempting brittle output-buffering
-hacks. `docs/lib-test-deep-coverage.md` covers why these branches are a structural blocker
-and what the right long-term fix is.
-
-## 7. Functions that echo must be wrapped in output buffering
-
-Some lib functions (such as `UnscheduledTeams()`) echo diagnostic output mid-execution
-rather than returning it. Without buffering, that output contaminates PHPUnit's test
-report and may cause spurious failures.
-
-```php
-ob_start();
-$result = SomeFunctionThatEchoes($arg);
-ob_end_clean();
-$this->assertIsArray($result);
-```
-
-**Rule:** wrap any call that may echo with `ob_start() / ob_end_clean()` rather than
-asserting on the captured output unless the test specifically targets that output.
-
-## 8. Prevent getSessionLocale() from calling GetDefaultLocale()
-
-`getSessionLocale()` falls back to `GetDefaultLocale()` when the session locale is not
-set. `GetDefaultLocale()` is defined in `configuration.functions.php`, which is not always
-loaded. Without it, the test process dies with "undefined function".
-
-**Fix:** set the locale in `setUp` before loading any lib file that calls `getSessionLocale()`:
-
-```php
-$_SESSION['userproperties']['locale'] = 'en_US';
-```
-
-This short-circuits the fallback and makes the load profile irrelevant for locale resolution.
-
-## 9. Missing schema columns in the SUT
-
-Some SUT functions contain queries that reference columns which no longer exist (or never
-existed in the baseline fixture schema). `PlayerResults()`, for example, selects `email`
-from `uo_player`, but that column lives in `uo_player_profile`. The test will produce a
-fatal `mysqli_sql_exception` that looks like a harness problem but is actually a SUT bug.
-
-**Rule:** if a test path triggers an SQL column-not-found error, do not try to work around it
-by adding the column to the fixture. Record it as a triage note and test only the paths
-that do not reach the broken query. The affected branch is unreachable until the SUT is fixed.
-
-## 10. CacheRemember stores the first DB read — flush the cache before asserting stale data
-
-`SeasonInfo()` and several other SUT helpers wrap their DB query in `CacheRemember('season_info', ...)`, which stores the result in `$GLOBALS['runtime_cache']` for the lifetime of the PHP process. If an earlier test (or a prior call in the same test) loaded the season, a subsequent `DBQuery("UPDATE uo_season SET event_readonly=1 ...")` will not be visible to `isEventReadonly()` or any other function that calls `SeasonInfo()`.
-
-**Symptom:** a function that checks `isEventReadonly($season)` returns an unexpected value even though you updated the DB row immediately before the assertion.
-
-**Fix:** call `CacheForgetNamespace('season_info')` after the `DBQuery` UPDATE and again in the `finally` block when you restore the original value:
-
-```php
-DBQuery("UPDATE uo_season SET event_readonly=1 WHERE season_id='HRN2026'");
-CacheForgetNamespace('season_info');
-try {
-    $this->assertFalse(hasEditSeasonSeriesRight('HRN2026'));
-} finally {
-    DBQuery("UPDATE uo_season SET event_readonly=0 WHERE season_id='HRN2026'");
-    CacheForgetNamespace('season_info');
-}
-```
-
-`CacheForgetNamespace` is defined in `lib/cache.functions.php`, which is transitively loaded by `season.functions.php` (and therefore by any lib that loads season). It is always available in integration tests that load user, game, pool, or spirit functions.
-
-## 11. PHPUnit assertContains uses strict type comparison
-
-`assertContains(300, $array)` will fail if `$array` contains `'300'` (string), because PHPUnit 11 uses strict `===` by default. Database queries return all columns as strings via `mysqli_fetch_assoc`.
-
-**Symptom:** a test asserting that a team ID or similar integer appears in a returned array fails with "failed asserting that an array contains 300" even though the array visibly contains a `'300'` element.
-
-**Fix:** cast the array before asserting, or assert with a string literal:
-
-```php
-// Option A: cast the returned array
-$ids = array_map('intval', $result);
-$this->assertContains(300, $ids);
-
-// Option B: assert the string form
-$this->assertContains('300', $result);
-```
-
-## 12. Role management functions call SetUserSessionData when the target is the current user
-
-Several SUT functions (`AddUserRole`, `RemoveUserRole`, `AddEditSeason`, `RemoveEditSeason`, `AddSeasonUserRole`, `RemoveSeasonUserRole`, `AddPoolSelector`, `RemovePoolSelector`) contain a guard:
-
-```php
-if ($userid == $_SESSION['uid']) {
-    SetUserSessionData($userid);
-}
-```
-
-When tests call these functions for a test-user helper account (the common pattern), this branch is never hit. To cover it, call the function for `'admin'` (the value of `$_SESSION['uid']` set in `setUp`). The call refreshes the session, which is observable via `$_SESSION['userproperties']`. Always clean up DB residue in a `finally` block because the session refresh persists across test boundaries.
+12. **Cover the "target is the current user" branch.** Role functions (`AddUserRole`, `RemoveUserRole`, `AddEditSeason`, `AddSeasonUserRole`, `AddPoolSelector`, and their removers) call `SetUserSessionData()` when `$userid == $_SESSION['uid']`. To cover it, call them for `'admin'`, the `setUp()` uid, and check `$_SESSION['userproperties']`. Clean up in `finally`.
