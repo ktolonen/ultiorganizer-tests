@@ -33,6 +33,7 @@ Reaching a line is not testing it. A test that runs a function without pinning i
 - Guard negative assertions (`false`/`null`/`[]`/`0`) against false passes: add a positive precondition (the row exists with the expected flags) **and** an in-test contrast driving the same function to the opposite result.
 - Read the SUT function before asserting; it may read a different request key than expected (e.g. `GetTeamPlayers()` reads `$_GET['search']`, not `$_GET['team']`) and silently exercise the empty path.
 - `exit()`/`die()`/`header()` terminal branches cannot be asserted in-process (`runInSeparateProcess` records the child `exit()` as an error). Test the predicate the guard branches on (`CanAccessSeason()`, `IsSeasonPublicExternal()`), not the `Enforce*`/`Require*` wrapper.
+- Watch for tests that stay green on a broken line: only the non-triggering path tested with a comment explaining why, a weak assertion, `markTestSkipped`, or a test that works around the bug (comments like "to avoid", "SUT quirk"). To prove an assertion can fail, run it against a pre-change or mutated SUT worktree (see `docs/ai/write-phpunit-test/SKILL.md`).
 - Use coverage to find unasserted branches in the target file: `./libtest:coverage --lib-file <file>` (see `docs/ai/use-coverage-for-tests/SKILL.md`). `coverage/` is wiped every run, so rerun rather than trust an old one.
 
 ## Working rules

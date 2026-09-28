@@ -30,7 +30,24 @@ Broad route discovery belongs in `crawl_plans`, not PHPUnit.
 - Restore any row a test mutates, and flush caches after writes (see `docs/lib-test-pitfalls.md`).
 - HTTP tests must assert locale-independent output, because `config-overrides` renders in `fi_FI`.
 - Use specific value assertions with descriptive test names; follow the assertion-quality rules in `AGENTS.md`.
-- For a regression test, prove it fails against the pre-change SUT (for example, a git worktree passed with `--sut-path`).
+
+## Prove The Test Discriminates
+
+A passing test is not evidence that its assertion can fail. For a regression test or a strengthened assertion:
+
+1. **Pre-change run.** Check out the SUT at the commit before the change and run the test against it; it must fail.
+
+   ```sh
+   git -C ../ultiorganizer worktree add --detach <scratch>/sut-pre <commit-before-change>
+   ./test:<suite> --test-filter <pattern> --sut-path <scratch>/sut-pre
+   ```
+
+   One worktree before the earliest change covers several changes. This catches fixtures where old and new behavior coincide, for example an `ORDER BY` test whose rows are already in primary-key order.
+2. **Mutation run.** A pre-change failure proves little when the function did not exist before (`Call to undefined function` fails any assertion). In a worktree at the current commit, inject one realistic bug into the SUT function (drop a factor, make a condition unconditional, remove one `OR` branch, shift an offset) and confirm the test fails. Revert and try the next mutation. If the test still passes, the assertion is not doing its job. Typical culprits:
+   - A tautology: `mm * 60 + ss === elapsed` holds for any `elapsed` when the SUT derives `mm` and `ss` from it.
+   - A negative-only assertion (`[]`, `false`, `null`), which an over-strict gate satisfies. Add the row or flag that flips the result and assert it flips.
+   - Cases that all sit on one side of a branch. Add a case whose expected value differs from every other case.
+3. Confirm an unmodified copy passes, use a fresh `--sut-path` directory per round (see `docs/local-workflow.md`, Troubleshooting), and remove worktrees with `git worktree remove --force` when done.
 
 ## Validation
 

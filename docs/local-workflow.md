@@ -30,3 +30,9 @@ Every run command accepts `--sut-path` (default `../ultiorganizer`). The harness
   --pr-number 123 --pr-head-ref feature/my-change --pr-base-ref main
 ./report:case baseline-default --context-label pr-123
 ```
+
+## Troubleshooting
+
+- **SUT changed during a run.** The runtime copy is an rsync of the SUT, so a `git pull` or checkout in the SUT mid-run leaves a mix of old and new files. The tell is `Call to undefined function` for functions the new commit adds, plus unrelated failures. Compare the SUT file mtimes (local time) with the run's `started_at`/`finished_at` (UTC) in `reports/cases/<case>/latest-failed.json`, then rerun once the SUT is settled.
+- **Reused `--sut-path` directory.** Deleting a `--sut-path` directory and recreating it at the same path leaves the `php-test` container's `/sut-ro` bind on the deleted directory, so the next run fails at startup (`No such file or directory: '/sut-ro/sql/ultiorganizer.sql'`). A failed run does not update `latest.json`, so anything that reads results through it sees the previous run. Use a fresh directory name for each worktree.
+- **No JSON summary.** The first run after the SUT source changes has occasionally printed no JSON summary; rerun the same command before investigating.

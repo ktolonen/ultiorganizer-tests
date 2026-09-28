@@ -14,6 +14,8 @@ Per-file lib tests live under `tests/{Unit,Integration}/Lib/`; see [Lib Tests](l
 
 Each suite writes a raw log and JUnit XML; the summary records test and failure counts and the first failed test. Filter with `./test:<suite> --test-filter <pattern>`.
 
+An empty JUnit file (`JUnit XML file was empty`), with the log's progress dots stopping mid-run and no PHPUnit summary, means a test ran an `exit()` or `die()` in-process. A bare `exit()` returns 0, so the suite looks clean while every later test and every earlier failure is lost. Estimate the kill point from the last percentage shown, then run the neighbouring classes alone with `--test-filter <Class>`: the offender stops after a few dots on its own too. Test the predicate instead of the terminating wrapper (see [Pitfalls](lib-test-pitfalls.md) §9). Guards that compare `realpath()` results are a common trap: under `vendor/bin/phpunit`, `$_SERVER['SCRIPT_FILENAME']` is relative, so its `realpath()` is `false`, the same as for any missing file.
+
 ## Code Coverage
 
 Only the in-process `unit` and `integration` suites produce coverage; HTTP suites run the SUT under Apache and yield none.

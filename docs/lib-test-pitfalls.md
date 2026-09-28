@@ -25,3 +25,7 @@ Gotchas specific to this harness's process-reuse model, fixture pack, and the SU
 ## Session
 
 12. **Cover the "target is the current user" branch.** Role functions (`AddUserRole`, `RemoveUserRole`, `AddEditSeason`, `AddSeasonUserRole`, `AddPoolSelector`, and their removers) call `SetUserSessionData()` when `$userid == $_SESSION['uid']`. To cover it, call them for `'admin'`, the `setUp()` uid, and check `$_SESSION['userproperties']`. Clean up in `finally`.
+
+## Locale
+
+13. **In-process `_()` returns the msgid.** The PHPUnit bootstrap never calls `bindtextdomain`, so Unit and Integration tests see English msgids in every case, including `fi_FI` `config-overrides`. Exact English labels are assertable there, and are often the only way to catch two swapped labels. HTTP suites run the full app with gettext bound, so their output is translated (see [Smoke](smoke.md)). Locale-dependent formatting such as `FinalStandingLabel()` still follows the session locale, so pin `$_SESSION['userproperties']['locale']`.
