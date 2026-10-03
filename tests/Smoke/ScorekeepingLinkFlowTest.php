@@ -109,14 +109,22 @@ final class ScorekeepingLinkFlowTest extends TestCase
         $this->assertSame('anonymous', $row['user_id']);
         $this->assertSame((string) $row['token_id'], (string) $row['scorekeeper_token']);
 
-        // The other fixture game is not covered by this link.
-        [, $body] = $this->post('/scorekeeper/index.php?view=addresult&game=700', ['home' => '1', 'away' => '0', 'save' => '1']);
-        $this->assertStringContainsString('Insufficient rights', $body);
+        // The other fixture game is not covered by this link, neither for
+        // reading nor for writing.
+        foreach (['addplayerlists', 'gameplay', 'addscoresheet'] as $view) {
+            [$status, , $headers] = $this->get('/scorekeeper/index.php?view=' . $view . '&game=700');
+            $this->assertStringContainsString(' 302 ', $status, $view);
+            $this->assertStringContainsString('view=login', (string) self::header($headers, 'Location'), $view);
+        }
+        [$status] = $this->post('/scorekeeper/index.php?view=addresult&game=700', ['home' => '1', 'away' => '0', 'save' => '1']);
+        $this->assertStringContainsString(' 302 ', $status);
+        self::flushQueryCaches();
+        $this->assertSame('15', (string) DBQueryToValue("SELECT homescore FROM uo_game WHERE game_id=700"));
 
         DBQuery("UPDATE uo_season SET anonymous_scorekeeping=0 WHERE season_id='HRN2026'");
         self::flushQueryCaches();
-        [, $body] = $this->post('/scorekeeper/index.php?view=addresult&game=' . self::GAME, ['home' => '2', 'away' => '0', 'save' => '1']);
-        $this->assertStringContainsString('Insufficient rights', $body);
+        [$status] = $this->post('/scorekeeper/index.php?view=addresult&game=' . self::GAME, ['home' => '2', 'away' => '0', 'save' => '1']);
+        $this->assertStringContainsString(' 302 ', $status);
         self::flushQueryCaches();
         $this->assertSame(['13', '9'], self::score());
     }
