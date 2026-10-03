@@ -178,7 +178,10 @@ final class ScorekeeperFunctionsLibTest extends TestCase
         DBQuery("UPDATE uo_game SET time='" . self::day('+1 day') . " 14:00:00' WHERE game_id=701");
         self::flushCaches();
         $_SESSION['scorekeeper_notice'] = ['type' => 'granted', 'token' => self::tokenId($token)];
-        $this->assertStringContainsString("class='warning'", ScorekeeperTakeNoticeHtml());
+        $html = ScorekeeperTakeNoticeHtml();
+        // Only the warning: the link gives no access today.
+        $this->assertStringStartsWith("<p class='warning'>", $html);
+        $this->assertSame(1, substr_count($html, '<p'));
     }
 
     public function testRotatingReplacesTheTokenAndRevokesItsGrants(): void
