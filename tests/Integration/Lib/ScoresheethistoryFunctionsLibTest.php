@@ -195,30 +195,6 @@ final class ScoresheethistoryFunctionsLibTest extends TestCase
         $this->assertNull($row['snapshot']);
     }
 
-    public function testAddressIsOmittedForAnAnonymousRowWhileVisitorLoggingIsDisabled(): void
-    {
-        // The sharpest case: an ANONYMOUS_RESULT_INPUT row carries no
-        // registered user, so registered-user deletion can never reach it and
-        // it lives until the game is deleted. Retaining a visitor's raw
-        // address on it would outlast every other copy of that address.
-        if (!IsVisitorLoggingDisabled()) {
-            $this->markTestSkipped('This profile leaves visitor logging enabled.');
-        }
-        unset($_SESSION['uid']);
-
-        $id = (int) ScoresheetHistoryRecord(700, 'result', 'update', ['home' => 1, 'away' => 0], false, true);
-        $row = DBQueryToRow("SELECT user_id, ip FROM uo_scoresheet_history WHERE history_id=$id");
-
-        // user_id depends on the profile (see the ANONYMOUS_RESULT_INPUT note
-        // on the GameSetResult test below); the address must be absent either
-        // way, which is what this test is actually pinning.
-        $this->assertSame(
-            ANONYMOUS_RESULT_INPUT ? 'anonymous' : 'unknown',
-            $row['user_id'],
-        );
-        $this->assertSame('', $row['ip']);
-    }
-
     public function testSnapshotRowAlsoOmitsTheAddressWhileVisitorLoggingIsDisabled(): void
     {
         // The snapshot path builds its row separately from ScoresheetHistoryRecord(),
@@ -531,55 +507,6 @@ final class ScoresheethistoryFunctionsLibTest extends TestCase
             "SELECT COUNT(*) FROM uo_scoresheet_history WHERE game=701 AND has_snapshot=1",
         );
         $this->assertSame(1, $count);
-    }
-
-    public function testGameSetResultWithoutRightsRecordsHistoryOnlyWhenAnonymousResultInputIsEnabled(): void
-    {
-        // M1: GameSetResult(..., $checkRights=false) is the
-        // ANONYMOUS_RESULT_INPUT self-report route (result.php,
-        // scorekeeper/result.php). With no session rights at all, none of
-        // ScoresheetHistoryAuthorized()'s four ordinary rights can pass, so
-        // recording can only happen through the separately-validated
-        // $allowAnonymousResult signal GameSetResult() now passes through.
-        // The harness runs this same test file against two profiles (see
-        // ConfigurationFunctionsLibTest for the established pattern): the
-        // "config-overrides" case has ANONYMOUS_RESULT_INPUT=true, every
-        // other case (including the default this suite otherwise runs
-        // under) has it false -- so both branches of the fix are exercised
-        // across a full matrix run, and this one test asserts whichever
-        // behavior is correct for the profile actually running.
-        $_SESSION['userproperties']['userrole'] = [];
-        unset($_SESSION['uid']);
-        try {
-            GameSetResult(701, 13, 9, false, false);
-        } finally {
-            $_SESSION['uid'] = 'testuser';
-            $_SESSION['userproperties']['userrole'] = ['superadmin' => true];
-        }
-
-        $snapshotCount = (int) DBQueryToValue(
-            "SELECT COUNT(*) FROM uo_scoresheet_history WHERE game=701 AND has_snapshot=1",
-        );
-        $resultRow = DBQueryToRow(
-            "SELECT user_id FROM uo_scoresheet_history WHERE game=701 AND target='result' ORDER BY history_id DESC LIMIT 1",
-        );
-
-        if (getenv('UO_CONFIG_PROFILE') === 'config-overrides') {
-            // Enabled: the anonymous self-report route must still produce a
-            // restore point and an attributed history row, not silently
-            // lose both -- the exact regression this fix closes.
-            $this->assertSame(1, $snapshotCount);
-            $this->assertNotNull($resultRow);
-            $this->assertSame('anonymous', $resultRow['user_id']);
-        } else {
-            // Disabled: ScoresheetHistoryAuthorized() must still refuse a
-            // $checkRights=false caller with no session rights -- otherwise
-            // a future caller could pass $checkRights=false to bypass the
-            // guard on an installation where anonymous input is off,
-            // reopening the hole the previous round closed.
-            $this->assertSame(0, $snapshotCount);
-            $this->assertNull($resultRow);
-        }
     }
 
     public function testGameAddScoreEntryRecordsOneGoalRowPerPoint(): void
@@ -2101,29 +2028,29 @@ final class ScoresheethistoryFunctionsLibTest extends TestCase
         }
     }
 
-    public function testAnonymousResultAuthorizationDoesNotExtendBeyondTheResultTarget(): void
+    public function testSessionWithoutGameRightsCannotRecordAnyTargetIncludingResult(): void
     {
-        // $allowAnonymousResult is caller-controlled, and confirming
-        // ANONYMOUS_RESULT_INPUT only proves the installation allows anonymous
-        // SCORE reporting -- it says nothing about the caller. Unscoped, a
-        // direct caller could pass true and forge any row, or capture a whole
-        // snapshot, with no game right at all.
+        // The by-game-ID result pages once let a caller without game rights
+        // record a result row. No target may now be reached without a right,
+        // whether the session is missing or belongs to a user with no role.
         $_SESSION['userproperties']['userrole'] = [];
-        unset($_SESSION['uid']);
         try {
-            $this->assertFalse(ScoresheetHistoryRecord(700, 'goal', 'add', ['num' => 1], false, true));
-            $this->assertFalse(ScoresheetHistoryRecord(700, 'played', 'add', ['player' => 800], false, true));
-            $this->assertFalse(ScoresheetHistoryRecord(700, 'restore', 'restore', [], false, true));
-            $this->assertFalse(ScoresheetHistorySnapshotIfNeeded(700, false, true));
-
-            // The result target keeps whichever behavior this profile defines
-            // (see the ANONYMOUS_RESULT_INPUT note on the GameSetResult test).
-            $resultId = (int) ScoresheetHistoryRecord(700, 'result', 'update', ['home' => 1, 'away' => 0], false, true);
-            if (ANONYMOUS_RESULT_INPUT) {
-                $this->assertGreaterThan(0, $resultId);
-            } else {
-                $this->assertSame(0, $resultId);
+            foreach ([null, 'norights'] as $uid) {
+                if ($uid === null) {
+                    unset($_SESSION['uid']);
+                } else {
+                    $_SESSION['uid'] = $uid;
+                }
+                $this->assertFalse(ScoresheetHistoryRecord(700, 'goal', 'add', ['num' => 1]));
+                $this->assertFalse(ScoresheetHistoryRecord(700, 'played', 'add', ['player' => 800]));
+                $this->assertFalse(ScoresheetHistoryRecord(700, 'restore', 'restore', []));
+                $this->assertFalse(ScoresheetHistoryRecord(700, 'result', 'update', ['home' => 1, 'away' => 0]));
+                $this->assertFalse(ScoresheetHistorySnapshotIfNeeded(700, target: 'result'));
             }
+            $this->assertSame(
+                0,
+                (int) DBQueryToValue("SELECT COUNT(*) FROM uo_scoresheet_history WHERE game=700"),
+            );
         } finally {
             $_SESSION['uid'] = 'testuser';
             $_SESSION['userproperties']['userrole'] = ['superadmin' => true];
@@ -2701,7 +2628,7 @@ final class ScoresheethistoryFunctionsLibTest extends TestCase
                 ScoresheetHistoryRecord(700, 'comment', 'remove', []),
                 'A logged-in non-author must not write a comment history row.',
             );
-            $this->assertFalse(ScoresheetHistorySnapshotIfNeeded(700, false, false, 'comment'));
+            $this->assertFalse(ScoresheetHistorySnapshotIfNeeded(700, target: 'comment'));
             $this->assertSame(
                 0,
                 (int) DBQueryToValue("SELECT COUNT(*) FROM uo_scoresheet_history WHERE game=700"),

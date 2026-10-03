@@ -220,7 +220,6 @@ def write_test_config(
         f"define('ENABLE_ADMIN_DB_ACCESS', '{profile['enable_admin_db_access']}');",
         f"define('DISABLE_SELF_REGISTRATION', {'true' if profile['disable_self_registration'] else 'false'});",
         f"define('ALLOW_INSTALL', {'true' if profile['allow_install'] else 'false'});",
-        f"define('ANONYMOUS_RESULT_INPUT', {'true' if profile['anonymous_result_input'] else 'false'});",
         f"define('API_RATE_LIMIT', {int(profile['api_rate_limit'])});",
         f"define('API_RATE_WINDOW', {int(profile['api_rate_window'])});",
         "$locales = array(",

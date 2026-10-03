@@ -1942,58 +1942,6 @@ final class GameFunctionsLibTest extends TestCase
         $this->assertNull($res);
     }
 
-    // --- CheckGameResult ---
-
-    public function testCheckGameResultReturnsErrorForNegativeScores(): void
-    {
-        // gameId 700 has valid checksum '7003' (getChkNum('700') = 3)
-        $result = CheckGameResult('7003', -1, 5);
-        $this->assertStringContainsString('warning', $result);
-    }
-
-    public function testCheckGameResultReturnsErrorForInvalidChecksum(): void
-    {
-        // getChkNum('999') = 1, so '9990' has wrong check digit
-        $result = CheckGameResult('9990', 5, 3);
-        $this->assertStringContainsString('warning', $result);
-    }
-
-    public function testCheckGameResultReturnsErrorForZeroGoals(): void
-    {
-        // Game 700 in pool 200 (season HRN2026 has stats → "Event played" error also appears)
-        $result = CheckGameResult('7003', 0, 0);
-        $this->assertStringContainsString('warning', $result);
-    }
-
-    public function testCheckGameResultReturnsWarningForLockedPool(): void
-    {
-        // Game 701, valid checksum '7016' (getChkNum('701')=6), valid score 5:3.
-        // IsPoolLocked() reads uo_pool.played directly, but other tests in this suite call
-        // GameSetResult/GameClearResult against pool 200 (the createTempGame() default),
-        // which recalculate that flag via PoolResolvePlayed as a side effect — so its value
-        // can't be assumed from the static fixture insert. Set it explicitly for determinism.
-        DBQuery("UPDATE uo_pool SET played=1 WHERE pool_id=200");
-        try {
-            $result = CheckGameResult('7016', 5, 3);
-            $this->assertStringContainsString('Pool is locked.', $result);
-            $this->assertStringContainsString('Event played.', $result);
-            $this->assertStringNotContainsString('Erroneous scoresheet number', $result);
-            $this->assertStringNotContainsString('Points must be between', $result);
-            $this->assertStringNotContainsString('No goals.', $result);
-        } finally {
-            DBQuery("UPDATE uo_pool SET played=0 WHERE pool_id=200");
-        }
-    }
-
-    public function testCheckGameResultOmitsLockWarningWhenPoolUnlocked(): void
-    {
-        // Contrast: same call, but with the pool explicitly marked unlocked.
-        DBQuery("UPDATE uo_pool SET played=0 WHERE pool_id=200");
-        $result = CheckGameResult('7016', 5, 3);
-        $this->assertStringNotContainsString('Pool is locked.', $result);
-        $this->assertStringContainsString('Event played.', $result);
-    }
-
     // --- PoolDeleteAllGames ---
     // Non-superadmin branch calls die() — untestable in-process per docs/lib-test-deep-coverage.md.
 

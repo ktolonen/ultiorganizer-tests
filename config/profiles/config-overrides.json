@@ -6,7 +6,6 @@
   "timezone": "Europe/Helsinki",
   "allow_install": true,
   "disable_self_registration": false,
-  "anonymous_result_input": true,
   "enable_admin_db_access": "enabled",
   "api_rate_limit": 7,
   "api_rate_window": 11,

@@ -45,7 +45,6 @@ final class ConfigurationFunctionsLibTest extends TestCase
         $this->assertSame($expected['ENABLE_ADMIN_DB_ACCESS'], ENABLE_ADMIN_DB_ACCESS);
         $this->assertSame($expected['DISABLE_SELF_REGISTRATION'], DISABLE_SELF_REGISTRATION);
         $this->assertSame($expected['ALLOW_INSTALL'], ALLOW_INSTALL);
-        $this->assertSame($expected['ANONYMOUS_RESULT_INPUT'], ANONYMOUS_RESULT_INPUT);
         $this->assertSame($expected['API_RATE_LIMIT'], API_RATE_LIMIT);
         $this->assertSame($expected['API_RATE_WINDOW'], API_RATE_WINDOW);
     }
@@ -285,7 +284,6 @@ final class ConfigurationFunctionsLibTest extends TestCase
                 'ENABLE_ADMIN_DB_ACCESS' => 'enabled',
                 'DISABLE_SELF_REGISTRATION' => false,
                 'ALLOW_INSTALL' => true,
-                'ANONYMOUS_RESULT_INPUT' => true,
                 'API_RATE_LIMIT' => 7,
                 'API_RATE_WINDOW' => 11,
                 'PageTitle' => 'Ultiorganizer Override Harness - ',
@@ -303,7 +301,6 @@ final class ConfigurationFunctionsLibTest extends TestCase
             'ENABLE_ADMIN_DB_ACCESS' => 'disabled',
             'DISABLE_SELF_REGISTRATION' => true,
             'ALLOW_INSTALL' => true,
-            'ANONYMOUS_RESULT_INPUT' => false,
             'API_RATE_LIMIT' => 120,
             'API_RATE_WINDOW' => 60,
             'PageTitle' => 'Ultiorganizer Test Harness - ',
