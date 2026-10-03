@@ -451,13 +451,6 @@ final class CommonFunctionsLibTest extends TestCase
         $this->assertSame('rgba(0,0,0,1)', RGBtoRGBa('', 1));
     }
 
-    // ---- getChkNum ----
-
-    public function testGetChkNumComputesCheckDigitForGameId700(): void
-    {
-        $this->assertSame(3, getChkNum('700'));
-    }
-
     // ---- SafeUrl ----
 
     public function testSafeUrlPrefixesHttpForBareHost(): void

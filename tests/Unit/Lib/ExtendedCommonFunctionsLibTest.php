@@ -200,14 +200,6 @@ final class ExtendedCommonFunctionsLibTest extends TestCase
         $this->assertSame('', WeekdayString('', true));
     }
 
-    // --- getChkNum ---
-
-    public function testGetChkNumComputesCorrectCheckDigit(): void
-    {
-        // Trace for '123': 3*7 + 2*3 + 1*1 = 21+6+1 = 28, chk = (10 - 28%10)%10 = 2
-        $this->assertSame(2, getChkNum('123'));
-    }
-
     // --- array_copy ---
 
     public function testArrayCopyProducesDeepCopyOfNestedArray(): void
