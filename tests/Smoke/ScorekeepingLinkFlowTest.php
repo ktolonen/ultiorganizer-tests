@@ -199,6 +199,47 @@ final class ScorekeepingLinkFlowTest extends TestCase
         $this->assertStringContainsString('view=login', (string) self::header($headers, 'Location'));
     }
 
+    public function testEventLinkListIsForEventAdminsAndRevokingEndsTheGrants(): void
+    {
+        $page = '/index.php?view=admin/scorekeepinglinks&season=HRN2026';
+        $revoke = ['revoke' => '1', 'scope' => 'game', 'id' => (string) self::GAME];
+
+        // The keeper opens the link logged in, which stores a grant.
+        $this->post('/index.php?view=frontpage', ['myusername' => self::KEEPER, 'mypassword' => self::PASSWORD]);
+        $this->get('/scorekeeper/index.php?t=' . $this->token);
+        $this->assertSame(1, (int) DBQueryToValue("SELECT COUNT(*) FROM uo_scorekeeper_grant"));
+        $keeper = $this->cookies;
+
+        // An account without a role sees no list and cannot revoke.
+        [, $body] = $this->get($page);
+        $this->assertStringNotContainsString("<td>Link Keeper</td>", $body);
+        $this->assertStringNotContainsString("name='revoke'", $body);
+        $this->post($page, $revoke);
+        self::flushQueryCaches();
+        $this->assertSame($this->token, self::currentToken());
+
+        // The admin sees who opened the link; listing creates no links.
+        $this->cookies = [];
+        $this->post('/index.php?view=frontpage', ['myusername' => 'admin', 'mypassword' => 'harness-admin']);
+        [, $body, $headers] = $this->get($page);
+        $this->assertStringContainsString("<td>Link Keeper</td>", $body);
+        $this->assertStringContainsString("name='revoke'", $body);
+        $this->assertSame('no-store', self::header($headers, 'Cache-Control'));
+        $this->assertSame(1, (int) DBQueryToValue("SELECT COUNT(*) FROM uo_scorekeeper_token"));
+
+        [$status, , $headers] = $this->post($page, $revoke);
+        $this->assertStringContainsString(' 302 ', $status);
+        $this->assertStringContainsString('view=admin/scorekeepinglinks&season=HRN2026', (string) self::header($headers, 'Location'));
+        self::flushQueryCaches();
+        $this->assertSame('', self::currentToken());
+        $this->assertSame(0, (int) DBQueryToValue("SELECT COUNT(*) FROM uo_scorekeeper_grant"));
+
+        $this->cookies = $keeper;
+        $this->post('/scorekeeper/index.php?view=addresult&game=' . self::GAME, ['home' => '13', 'away' => '9', 'save' => '1']);
+        self::flushQueryCaches();
+        $this->assertSame(['', ''], self::score());
+    }
+
     private static function currentToken(): string
     {
         return (string) DBQueryToValue(sprintf("SELECT token FROM uo_scorekeeper_token WHERE game=%d", self::GAME));
