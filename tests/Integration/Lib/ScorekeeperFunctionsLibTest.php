@@ -12,12 +12,14 @@ use UltiorganizerHarness\Support\LegacyApp;
  * the live coverage check behind ScorekeeperGrantCovers().
  *
  * Fixture game 700 is in reservation 500 and game 701 in reservation 501,
- * both in event HRN2026. Tests that need "today" move a reservation's start
- * time and restore it.
+ * both in event HRN2026 (Europe/Helsinki). A link works only on its game day,
+ * so setUp() moves both games to today in the event's timezone; tests that
+ * need another day move a game or reservation and tearDown() restores them.
  */
 final class ScorekeeperFunctionsLibTest extends TestCase
 {
     private const KEEPER = 'linkkeeper';
+    private const OTHER_SEASON = 'SKX2026';
 
     protected function setUp(): void
     {
@@ -35,6 +37,9 @@ final class ScorekeeperFunctionsLibTest extends TestCase
         DBQuery("DELETE FROM uo_scorekeeper_token");
         DBQuery("DELETE FROM uo_scorekeeper_grant");
         DBQuery("UPDATE uo_season SET anonymous_scorekeeping=0 WHERE season_id='HRN2026'");
+        self::removeExtraGames();
+        DBQuery("UPDATE uo_game SET time='" . self::today() . " 10:00:00' WHERE game_id=700");
+        DBQuery("UPDATE uo_game SET time='" . self::today() . " 14:00:00' WHERE game_id=701");
         self::asSuperadmin();
     }
 
@@ -46,7 +51,10 @@ final class ScorekeeperFunctionsLibTest extends TestCase
         DBQuery("UPDATE uo_season SET anonymous_scorekeeping=0 WHERE season_id='HRN2026'");
         DBQuery("UPDATE uo_reservation SET starttime='2026-06-01 10:00:00' WHERE id=500");
         DBQuery("UPDATE uo_reservation SET starttime='2026-06-01 14:00:00' WHERE id=501");
-        DBQuery("UPDATE uo_game SET reservation=500 WHERE game_id=700");
+        DBQuery("UPDATE uo_game SET reservation=500, time='2026-06-01 10:00:00' WHERE game_id=700");
+        DBQuery("UPDATE uo_game SET time='2026-06-01 14:00:00' WHERE game_id=701");
+        DBQuery("UPDATE uo_season SET timezone='Europe/Helsinki' WHERE season_id='HRN2026'");
+        self::removeExtraGames();
         DBQuery("UPDATE uo_game SET homescore=NULL, visitorscore=NULL, isongoing=0, hasstarted=0 WHERE game_id=701");
         DBQuery("DELETE FROM uo_scoresheet_history WHERE game=701");
         LegacyApp::closeDatabaseConnection();
@@ -82,6 +90,95 @@ final class ScorekeeperFunctionsLibTest extends TestCase
         // A grant does not let its holder see or replace the link.
         self::asUser(self::KEEPER, ['gameadmin' => [701 => 1]]);
         $this->assertNull(ScorekeeperToken('game', 701));
+        $this->assertNull(ScorekeeperRotateToken('game', 701));
+        $this->assertSame(0, (int) DBQueryToValueUncached("SELECT COUNT(*) FROM uo_scorekeeper_token WHERE game=701"));
+    }
+
+    public function testDivisionAdminIssuesAFieldLinkOnlyWhenTheFieldHoldsOnlyTheirGames(): void
+    {
+        // A second division with a game on reservation 501, next to game 701.
+        self::addGame(790, 501, 'HRN2026', 190, 290);
+
+        self::asUser(self::KEEPER, ['seriesadmin' => [100 => 1]]);
+        $this->assertNull(ScorekeeperToken('reservation', 501));
+        $this->assertNull(ScorekeeperRotateToken('reservation', 501));
+        $this->assertIsString(ScorekeeperToken('game', 701));
+
+        self::asUser(self::KEEPER, ['seriesadmin' => [100 => 1, 190 => 1]]);
+        $this->assertIsString(ScorekeeperToken('reservation', 501));
+    }
+
+    public function testFieldLinkCoversOnlyTheGamesOfItsOwnEvent(): void
+    {
+        self::addGame(791, 500, self::OTHER_SEASON, 191, 291);
+        DBQuery("UPDATE uo_season SET anonymous_scorekeeping=1 WHERE season_id IN ('HRN2026', '" . self::OTHER_SEASON . "')");
+        DBQuery("UPDATE uo_reservation SET starttime='" . self::today() . " 10:00:00' WHERE id=500");
+        $token = ScorekeeperToken('reservation', 500);
+        self::asUser(self::KEEPER, []);
+        ScorekeeperRedeemToken($token);
+
+        $this->assertSame(self::tokenId($token), ScorekeeperGrantTokenId(700));
+        $this->assertSame(0, ScorekeeperGrantTokenId(791));
+        $this->assertSame([], ScorekeeperGrantedGameIds(self::OTHER_SEASON));
+    }
+
+    public function testGameLinkWorksOnlyOnTheGameDay(): void
+    {
+        $token = ScorekeeperToken('game', 701);
+        self::asUser(self::KEEPER, []);
+        ScorekeeperRedeemToken($token);
+        $this->assertSame(self::tokenId($token), ScorekeeperGrantTokenId(701));
+        $this->assertSame([701], ScorekeeperGrantedGameIds('HRN2026'));
+
+        // Two days back is outside the grace hours after midnight whenever
+        // the test runs.
+        foreach (['+1 day', '-2 days'] as $offset) {
+            DBQuery("UPDATE uo_game SET time='" . self::day($offset) . " 14:00:00' WHERE game_id=701");
+            self::flushCaches();
+            $this->assertSame(0, ScorekeeperGrantTokenId(701), $offset);
+            $this->assertSame([], ScorekeeperGrantedGameIds('HRN2026'), $offset);
+        }
+
+        // A game without a time yet has no day to check.
+        DBQuery("UPDATE uo_game SET time=NULL WHERE game_id=701");
+        self::flushCaches();
+        $this->assertSame(self::tokenId($token), ScorekeeperGrantTokenId(701));
+    }
+
+    public function testLinkDayFollowsTheEventTimezone(): void
+    {
+        // Kiritimati (UTC+14) is always a day or two ahead of Pago Pago (UTC-11).
+        $kiritimatiToday = (new DateTimeImmutable('now', new DateTimeZone('Pacific/Kiritimati')))->format('Y-m-d');
+        DBQuery("UPDATE uo_reservation SET starttime='" . $kiritimatiToday . " 10:00:00' WHERE id=500");
+        $token = ScorekeeperToken('reservation', 500);
+        self::asUser(self::KEEPER, []);
+        ScorekeeperRedeemToken($token);
+
+        DBQuery("UPDATE uo_season SET timezone='Pacific/Kiritimati' WHERE season_id='HRN2026'");
+        self::flushCaches();
+        $this->assertSame(self::tokenId($token), ScorekeeperGrantTokenId(700));
+
+        DBQuery("UPDATE uo_season SET timezone='Pacific/Pago_Pago' WHERE season_id='HRN2026'");
+        self::flushCaches();
+        $this->assertSame(0, ScorekeeperGrantTokenId(700));
+
+        // An unknown timezone falls back to the server's instead of failing.
+        DBQuery("UPDATE uo_season SET timezone='Not/AZone' WHERE season_id='HRN2026'");
+        self::flushCaches();
+        $default = new DateTimeZone(date_default_timezone_get());
+        $this->assertSame((new DateTimeImmutable('now', $default))->format('Y-m-d'), ScorekeeperOpenDays('HRN2026')[1]);
+    }
+
+    public function testNoticeSaysWhenALinkOpenedOnAnotherDayWorks(): void
+    {
+        $token = ScorekeeperToken('game', 701);
+        $_SESSION['scorekeeper_notice'] = ['type' => 'granted', 'token' => self::tokenId($token)];
+        $this->assertStringNotContainsString("class='warning'", ScorekeeperTakeNoticeHtml());
+
+        DBQuery("UPDATE uo_game SET time='" . self::day('+1 day') . " 14:00:00' WHERE game_id=701");
+        self::flushCaches();
+        $_SESSION['scorekeeper_notice'] = ['type' => 'granted', 'token' => self::tokenId($token)];
+        $this->assertStringContainsString("class='warning'", ScorekeeperTakeNoticeHtml());
     }
 
     public function testRotatingReplacesTheTokenAndRevokesItsGrants(): void
@@ -150,7 +247,8 @@ final class ScorekeeperFunctionsLibTest extends TestCase
 
         $this->assertSame('granted', $result['status']);
         $this->assertSame([self::tokenId($token)], $_SESSION['scorekeeper_tokens']);
-        $this->assertTrue(ScorekeeperSessionHasAnonymousAccess());
+        // The session only admits the visitor inside Scorekeeper.
+        $this->assertFalse(ScorekeeperSessionHasAnonymousAccess());
         $this->assertSame(self::tokenId($token), ScorekeeperGrantTokenId(701));
         $this->assertSame([701], ScorekeeperGrantedGameIds('HRN2026'));
         $this->assertSame(0, (int) DBQueryToValueUncached("SELECT COUNT(*) FROM uo_scorekeeper_grant"));
@@ -184,14 +282,14 @@ final class ScorekeeperFunctionsLibTest extends TestCase
         self::asUser(self::KEEPER, []);
         ScorekeeperRedeemToken($token);
 
-        DBQuery("UPDATE uo_reservation SET starttime=CONCAT(DATE('" . date('Y-m-d') . "'), ' 10:00:00') WHERE id=500");
+        DBQuery("UPDATE uo_reservation SET starttime='" . self::today() . " 10:00:00' WHERE id=500");
         self::flushCaches();
         $this->assertSame(self::tokenId($token), ScorekeeperGrantTokenId(700));
         $this->assertSame(0, ScorekeeperGrantTokenId(701));
         $this->assertSame([700], ScorekeeperGrantedGameIds('HRN2026'));
         $this->assertSame(['HRN2026'], ScorekeeperGrantedSeasonIds());
 
-        DBQuery("UPDATE uo_reservation SET starttime='" . date('Y-m-d', strtotime('+1 day')) . " 10:00:00' WHERE id=500");
+        DBQuery("UPDATE uo_reservation SET starttime='" . self::day('+1 day') . " 10:00:00' WHERE id=500");
         self::flushCaches();
         $this->assertSame(0, ScorekeeperGrantTokenId(700));
         $this->assertSame([], ScorekeeperGrantedGameIds('HRN2026'));
@@ -204,7 +302,7 @@ final class ScorekeeperFunctionsLibTest extends TestCase
         $token = ScorekeeperToken('reservation', 500);
         self::asUser(self::KEEPER, []);
         ScorekeeperRedeemToken($token);
-        DBQuery("UPDATE uo_reservation SET starttime='" . date('Y-m-d') . " 10:00:00' WHERE id=500");
+        DBQuery("UPDATE uo_reservation SET starttime='" . self::today() . " 10:00:00' WHERE id=500");
         self::flushCaches();
         $this->assertSame(self::tokenId($token), ScorekeeperGrantTokenId(700));
 
@@ -284,6 +382,70 @@ final class ScorekeeperFunctionsLibTest extends TestCase
         DeleteUser(self::KEEPER);
 
         $this->assertSame(0, (int) DBQueryToValueUncached("SELECT COUNT(*) FROM uo_scorekeeper_grant"));
+    }
+
+    private static function today(): string
+    {
+        return self::day('now');
+    }
+
+    /** A date relative to now in the fixture event's timezone. */
+    private static function day(string $modifier): string
+    {
+        return (new DateTimeImmutable('now', new DateTimeZone('Europe/Helsinki')))->modify($modifier)->format('Y-m-d');
+    }
+
+    /**
+     * A game between the fixture teams in a new division (and pool) of the
+     * given event, scheduled today on the given reservation.
+     */
+    private static function addGame(int $gameId, int $reservation, string $season, int $series, int $pool): void
+    {
+        if ($season !== 'HRN2026') {
+            DBQuery(sprintf(
+                "INSERT INTO uo_season (season_id, name, starttime, endtime, iscurrent, enrollopen, type,
+                    istournament, isinternational, isnationalteams, organizer, category, showspiritpoints,
+                    use_season_points, hide_time_on_scoresheet, event_readonly, api_public, public_event,
+                    timezone, spiritmode)
+                 VALUES ('%s', 'Other Cup', '2026-06-01 09:00:00', '2026-06-02 18:00:00', 0, 0, 'outdoor',
+                    1, 0, 0, 'Harness Org', 'test', 0, 0, 0, 0, 0, 1, 'Europe/Helsinki', 1003)",
+                $season,
+            ));
+        }
+        DBQuery(sprintf(
+            "INSERT INTO uo_series (series_id, name, ordering, season, valid, type, color, pool_template)
+             VALUES (%d, 'Women', 'B', '%s', 1, 'women', '993366', NULL)",
+            $series,
+            $season,
+        ));
+        DBQuery(sprintf(
+            "INSERT INTO uo_pool (pool_id, name, ordering, visible, continuingpool, placementpool, teams, mvgames,
+                timeoutlen, halftime, winningscore, timecap, scorecap, played, addscore, halftimescore, timeouts,
+                timeoutsper, timeoutsovertime, timeoutstimecap, betweenpointslen, series, type, timeslot, color,
+                forfeitscore, forfeitagainst, follower, drawsallowed, playoff_template)
+             VALUES (%d, 'Pool W', '1', 1, 0, 0, 2, 0, 70, 35, 15, NULL, NULL, 0, NULL, NULL, 2, 'half',
+                1, 'soft', 90, %d, 1, 60, '993366', 15, 0, NULL, 0, NULL)",
+            $pool,
+            $series,
+        ));
+        DBQuery(sprintf(
+            "INSERT INTO uo_game (game_id, hometeam, visitorteam, reservation, time, valid, isongoing, hasstarted)
+             VALUES (%d, 300, 301, %d, '%s 12:00:00', 1, 0, 0)",
+            $gameId,
+            $reservation,
+            self::today(),
+        ));
+        DBQuery(sprintf("INSERT INTO uo_game_pool (game, pool, timetable) VALUES (%d, %d, 1)", $gameId, $pool));
+        self::flushCaches();
+    }
+
+    private static function removeExtraGames(): void
+    {
+        DBQuery("DELETE FROM uo_game_pool WHERE game IN (790, 791)");
+        DBQuery("DELETE FROM uo_game WHERE game_id IN (790, 791)");
+        DBQuery("DELETE FROM uo_pool WHERE pool_id IN (290, 291)");
+        DBQuery("DELETE FROM uo_series WHERE series_id IN (190, 191)");
+        DBQuery("DELETE FROM uo_season WHERE season_id='" . self::OTHER_SEASON . "'");
     }
 
     private static function tokenId(?string $token): int

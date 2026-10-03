@@ -10,9 +10,9 @@ use UltiorganizerHarness\Support\LegacyApp;
  * saving in Scorekeeper, and the desktop editor refusing the same session.
  * The app-source gate behind the grant only exists in a real request.
  *
- * Uses fixture game 701 and a throwaway account with no roles, both restored
- * afterwards. Assertions avoid translated text, because config-overrides
- * renders in fi_FI.
+ * Uses fixture game 701, moved to today because a link works only on its
+ * game day, and a throwaway account with no roles, both restored afterwards.
+ * Assertions avoid translated text, because config-overrides renders in fi_FI.
  */
 final class ScorekeepingLinkFlowTest extends TestCase
 {
@@ -43,6 +43,8 @@ final class ScorekeepingLinkFlowTest extends TestCase
         ));
         DBQuery("DELETE FROM uo_setting WHERE name='DisableScoresheetHistory'");
         DBQuery("INSERT INTO uo_setting (name, value) VALUES ('DisableScoresheetHistory', 'false')");
+        $today = (new DateTimeImmutable('now', new DateTimeZone('Europe/Helsinki')))->format('Y-m-d');
+        DBQuery(sprintf("UPDATE uo_game SET time='%s 14:00:00' WHERE game_id=%d", $today, self::GAME));
         self::flushQueryCaches();
     }
 
@@ -71,6 +73,11 @@ final class ScorekeepingLinkFlowTest extends TestCase
 
         [, $body] = $this->get('/scorekeeper/index.php?view=respgames');
         $this->assertStringContainsString('game=' . self::GAME, $body);
+
+        // A team that does not play in the game is refused for every session.
+        [$status, , $headers] = $this->get('/scorekeeper/index.php?view=addplayerlists&game=' . self::GAME . '&team=9999');
+        $this->assertStringContainsString(' 302 ', $status);
+        $this->assertStringContainsString('view=respgames', (string) self::header($headers, 'Location'));
 
         $this->post('/scorekeeper/index.php?view=addresult&game=' . self::GAME, ['home' => '13', 'away' => '9', 'save' => '1']);
         self::flushQueryCaches();
@@ -110,12 +117,18 @@ final class ScorekeepingLinkFlowTest extends TestCase
         $this->assertSame((string) $row['token_id'], (string) $row['scorekeeper_token']);
 
         // The other fixture game is not covered by this link, neither for
-        // reading nor for writing.
-        foreach (['addplayerlists', 'gameplay', 'addscoresheet'] as $view) {
+        // reading nor for writing, also when the body names the covered game
+        // and the URL the other one.
+        foreach (['addplayerlists', 'gameplay', 'addscoresheet', 'scoreboard', 'endgame'] as $view) {
             [$status, , $headers] = $this->get('/scorekeeper/index.php?view=' . $view . '&game=700');
             $this->assertStringContainsString(' 302 ', $status, $view);
             $this->assertStringContainsString('view=login', (string) self::header($headers, 'Location'), $view);
+            [$status, , $headers] = $this->post('/scorekeeper/index.php?view=' . $view . '&game=700', ['game' => (string) self::GAME]);
+            $this->assertStringContainsString(' 302 ', $status, $view . ' with the covered game in the body');
+            $this->assertStringContainsString('view=login', (string) self::header($headers, 'Location'), $view);
         }
+        [$status] = $this->get('/scorekeeper/index.php?view=addplayerlists&game=' . self::GAME . '&team=9999');
+        $this->assertStringContainsString(' 302 ', $status);
         [$status] = $this->post('/scorekeeper/index.php?view=addresult&game=700', ['home' => '1', 'away' => '0', 'save' => '1']);
         $this->assertStringContainsString(' 302 ', $status);
         self::flushQueryCaches();
@@ -127,6 +140,68 @@ final class ScorekeepingLinkFlowTest extends TestCase
         $this->assertStringContainsString(' 302 ', $status);
         self::flushQueryCaches();
         $this->assertSame(['13', '9'], self::score());
+    }
+
+    public function testAnonymousLinkSessionCanLogOut(): void
+    {
+        DBQuery("UPDATE uo_season SET anonymous_scorekeeping=1 WHERE season_id='HRN2026'");
+        self::flushQueryCaches();
+        $this->get('/scorekeeper/index.php?view=login');
+        $this->get('/scorekeeper/index.php?t=' . $this->token);
+
+        [, $body] = $this->get('/scorekeeper/index.php?view=respgames');
+        $this->assertStringContainsString('view=logout', $body);
+        [$status] = $this->get('/scorekeeper/index.php?view=addresult&game=' . self::GAME);
+        $this->assertStringContainsString(' 200 ', $status);
+
+        $this->get('/scorekeeper/index.php?view=logout');
+        [$status, , $headers] = $this->get('/scorekeeper/index.php?view=addresult&game=' . self::GAME);
+        $this->assertStringContainsString(' 302 ', $status);
+        $this->assertStringContainsString('view=login', (string) self::header($headers, 'Location'));
+    }
+
+    public function testLinkPageIsForIssuersAndReplacingTheLinkEndsAnonymousSessions(): void
+    {
+        DBQuery("UPDATE uo_season SET anonymous_scorekeeping=1 WHERE season_id='HRN2026'");
+        self::flushQueryCaches();
+        $page = '/index.php?view=user/scorekeepinglink&game=' . self::GAME;
+
+        // The visitor's session, admitted by the link.
+        $this->get('/scorekeeper/index.php?view=login');
+        $this->get('/scorekeeper/index.php?t=' . $this->token);
+        $visitor = $this->cookies;
+
+        // An account without a role cannot see the link.
+        $this->cookies = [];
+        $this->post('/index.php?view=frontpage', ['myusername' => self::KEEPER, 'mypassword' => self::PASSWORD]);
+        [, $body] = $this->get($page);
+        $this->assertStringNotContainsString($this->token, $body);
+        $this->assertStringNotContainsString('?t=', $body);
+        [$status] = $this->post($page, ['rotate' => '1']);
+        self::flushQueryCaches();
+        $this->assertSame($this->token, self::currentToken());
+
+        // The admin sees it, and replacing it redirects back to the page.
+        $this->cookies = [];
+        $this->post('/index.php?view=frontpage', ['myusername' => 'admin', 'mypassword' => 'harness-admin']);
+        [$status, $body, $headers] = $this->get($page);
+        $this->assertStringContainsString($this->token, $body);
+        $this->assertSame('no-store', self::header($headers, 'Cache-Control'));
+        [$status, , $headers] = $this->post($page, ['rotate' => '1']);
+        $this->assertStringContainsString(' 302 ', $status);
+        $this->assertStringContainsString('view=user/scorekeepinglink&game=' . self::GAME, (string) self::header($headers, 'Location'));
+        self::flushQueryCaches();
+        $this->assertNotSame($this->token, self::currentToken());
+
+        $this->cookies = $visitor;
+        [$status, , $headers] = $this->get('/scorekeeper/index.php?view=addresult&game=' . self::GAME);
+        $this->assertStringContainsString(' 302 ', $status);
+        $this->assertStringContainsString('view=login', (string) self::header($headers, 'Location'));
+    }
+
+    private static function currentToken(): string
+    {
+        return (string) DBQueryToValue(sprintf("SELECT token FROM uo_scorekeeper_token WHERE game=%d", self::GAME));
     }
 
     public function testUnknownLinkIsRefusedWithoutAGrant(): void
@@ -155,7 +230,7 @@ final class ScorekeepingLinkFlowTest extends TestCase
         DBQuery("UPDATE uo_season SET anonymous_scorekeeping=0 WHERE season_id='HRN2026'");
         DBQuery(sprintf("DELETE FROM uo_scoresheet_history WHERE game=%d", self::GAME));
         DBQuery(sprintf(
-            "UPDATE uo_game SET homescore=NULL, visitorscore=NULL, isongoing=0, hasstarted=0,
+            "UPDATE uo_game SET homescore=NULL, visitorscore=NULL, isongoing=0, hasstarted=0, time='2026-06-01 14:00:00',
                 timer_start=NULL, timer_pause_start=NULL, timer_paused_duration=0 WHERE game_id=%d",
             self::GAME,
         ));
