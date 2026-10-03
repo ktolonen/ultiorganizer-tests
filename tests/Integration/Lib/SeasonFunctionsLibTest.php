@@ -449,6 +449,7 @@ final class SeasonFunctionsLibTest extends TestCase
             'maintenance_mode' => 0,
             'api_public' => 0,
             'showgamecomments' => 0,
+            'anonymous_scorekeeping' => 0,
             'require_accreditation' => 0,
             'timezone' => 'Europe/Helsinki',
         ];
