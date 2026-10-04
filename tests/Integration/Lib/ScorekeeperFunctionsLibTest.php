@@ -78,13 +78,13 @@ final class ScorekeeperFunctionsLibTest extends TestCase
         $this->assertNull(ScorekeeperToken('reservation', 500));
         $this->assertNull(ScorekeeperToken('field', 500));
 
-        self::asUser(self::KEEPER, ['resgameadmin' => [500 => 1]]);
-        $this->assertIsString(ScorekeeperToken('game', 700));
-        $this->assertIsString(ScorekeeperToken('reservation', 500));
-        // The reservation right does not reach a game in another reservation.
-        $this->assertNull(ScorekeeperToken('game', 701));
+        // Division and reservation game admins keep score through their roles.
+        self::asUser(self::KEEPER, ['resgameadmin' => [500 => 1], 'seriesadmin' => [100 => 1]]);
+        $this->assertNull(ScorekeeperToken('game', 700));
+        $this->assertNull(ScorekeeperToken('reservation', 500));
 
-        self::asUser(self::KEEPER, ['seriesadmin' => [100 => 1]]);
+        self::asUser(self::KEEPER, ['seasonadmin' => ['HRN2026' => 1]]);
+        $this->assertIsString(ScorekeeperToken('game', 700));
         $this->assertIsString(ScorekeeperToken('reservation', 501));
 
         // A grant does not let its holder see or replace the link.
@@ -92,20 +92,6 @@ final class ScorekeeperFunctionsLibTest extends TestCase
         $this->assertNull(ScorekeeperToken('game', 701));
         $this->assertNull(ScorekeeperRotateToken('game', 701));
         $this->assertSame(0, (int) DBQueryToValueUncached("SELECT COUNT(*) FROM uo_scorekeeper_token WHERE game=701"));
-    }
-
-    public function testDivisionAdminIssuesAFieldLinkOnlyWhenTheFieldHoldsOnlyTheirGames(): void
-    {
-        // A second division with a game on reservation 501, next to game 701.
-        self::addGame(790, 501, 'HRN2026', 190, 290);
-
-        self::asUser(self::KEEPER, ['seriesadmin' => [100 => 1]]);
-        $this->assertNull(ScorekeeperToken('reservation', 501));
-        $this->assertNull(ScorekeeperRotateToken('reservation', 501));
-        $this->assertIsString(ScorekeeperToken('game', 701));
-
-        self::asUser(self::KEEPER, ['seriesadmin' => [100 => 1, 190 => 1]]);
-        $this->assertIsString(ScorekeeperToken('reservation', 501));
     }
 
     public function testFieldLinkCoversOnlyTheGamesOfItsOwnEvent(): void
