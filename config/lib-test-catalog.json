@@ -454,8 +454,8 @@
       "load_profile": "bootstrap_only",
       "test_path_exists": true,
       "status": "covered",
-      "triage_status": "untriaged",
-      "triage_notes": "",
+      "triage_status": "triaged",
+      "triage_notes": "Meets \u226590% line and 100% fn targets (98%/100%). Tests cover record/snapshot/restore, list paging, event history deletion, and every FormatDetail target. The fixture-move branch of FormatDetail is not asserted: it lazy-requires translation.functions.php, which redeclares U_() stubbed by SearchFunctionsLibTest.",
       "notes": "",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/scoresheethistory.functions.php"
     },

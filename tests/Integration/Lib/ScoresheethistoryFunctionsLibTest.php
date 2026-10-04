@@ -682,6 +682,209 @@ final class ScoresheethistoryFunctionsLibTest extends TestCase
         $this->assertSame(1, $detail['created']);
     }
 
+    public function testIsScoresheetHistoryDisabledReadsEveryAcceptedSpellingAndTreatsAMissingSettingAsEnabled(): void
+    {
+        try {
+            foreach (['1', 'true', 'YES', ' on ', 'Enabled'] as $value) {
+                DBQuery("UPDATE uo_setting SET value='" . $value . "' WHERE name='DisableScoresheetHistory'");
+                $this->assertTrue(IsScoresheetHistoryDisabled(), $value);
+            }
+            foreach (['0', 'false', 'no', ''] as $value) {
+                DBQuery("UPDATE uo_setting SET value='" . $value . "' WHERE name='DisableScoresheetHistory'");
+                $this->assertFalse(IsScoresheetHistoryDisabled(), $value);
+            }
+
+            DBQuery("DELETE FROM uo_setting WHERE name='DisableScoresheetHistory'");
+            $this->assertFalse(IsScoresheetHistoryDisabled());
+        } finally {
+            DBQuery("DELETE FROM uo_setting WHERE name='DisableScoresheetHistory'");
+            DBQuery("INSERT INTO uo_setting (name, value) VALUES ('DisableScoresheetHistory', 'false')");
+        }
+    }
+
+    public function testSourceFollowsTheScriptDirectoryWhenNoEntryPointIsDeclared(): void
+    {
+        $this->assertFalse(defined('UO_APP_SOURCE'));
+        $script = $_SERVER['SCRIPT_NAME'] ?? null;
+        try {
+            foreach (['api', 'scorekeeper', 'spiritkeeper', 'admin'] as $app) {
+                $_SERVER['SCRIPT_NAME'] = "/ultiorganizer/$app/index.php";
+                $this->assertSame($app, ScoresheetHistorySource());
+            }
+            $_SERVER['SCRIPT_NAME'] = '/ultiorganizer/index.php';
+            $this->assertSame('user', ScoresheetHistorySource());
+            unset($_SERVER['SCRIPT_NAME']);
+            $this->assertSame('user', ScoresheetHistorySource());
+        } finally {
+            if ($script === null) {
+                unset($_SERVER['SCRIPT_NAME']);
+            } else {
+                $_SERVER['SCRIPT_NAME'] = $script;
+            }
+        }
+    }
+
+    #[RunInSeparateProcess]
+    #[PreserveGlobalState(false)]
+    public function testDeclaredEntryPointWinsOverTheScriptAndIsCutToTwentyCharacters(): void
+    {
+        define('UO_APP_SOURCE', 'a-very-long-entry-point-name');
+        $_SERVER['SCRIPT_NAME'] = '/ultiorganizer/admin/index.php';
+
+        $this->assertSame('a-very-long-entry-po', ScoresheetHistorySource());
+        $this->assertSame(20, strlen(ScoresheetHistorySource()));
+    }
+
+    public function testListPagesNewestFirstWithLimitAndOffset(): void
+    {
+        foreach ([1, 2, 3, 4] as $num) {
+            ScoresheetHistoryRecord(700, 'goal', 'add', ['num' => $num]);
+        }
+        $nums = fn(array $rows) => array_map(fn($r) => json_decode($r['detail'], true)['num'], $rows);
+
+        $this->assertSame([4, 3, 2, 1], $nums(ScoresheetHistoryList(700)));
+        $this->assertSame([4, 3], $nums(ScoresheetHistoryList(700, 2)));
+        $this->assertSame([2, 1], $nums(ScoresheetHistoryList(700, 2, 2)));
+        // An offset without a limit is ignored rather than breaking the query.
+        $this->assertSame([4, 3, 2, 1], $nums(ScoresheetHistoryList(700, null, 2)));
+    }
+
+    public function testDeleteEventHistoryRemovesOnlyThatEventsGamesAndReturnsTheCount(): void
+    {
+        DBQuery("DELETE FROM uo_game_pool WHERE game IN (790, 791)");
+        DBQuery("DELETE FROM uo_game WHERE game_id IN (790, 791)");
+        DBQuery("DELETE FROM uo_pool WHERE pool_id=290");
+        DBQuery("DELETE FROM uo_series WHERE series_id=190");
+        DBQuery("DELETE FROM uo_season WHERE season_id='DEL2026'");
+        try {
+            DBQuery("INSERT INTO uo_season (season_id, name, starttime, endtime, iscurrent, enrollopen, type,
+                    istournament, isinternational, isnationalteams, organizer, category, showspiritpoints,
+                    use_season_points, hide_time_on_scoresheet, event_readonly, api_public, timezone, spiritmode)
+                 VALUES ('DEL2026', 'Other Cup', '2026-06-01 09:00:00', '2026-06-02 18:00:00', 0, 0, 'outdoor',
+                    1, 0, 0, 'Harness Org', 'test', 0, 0, 0, 0, 0, 'Europe/Helsinki', 1003)");
+            DBQuery("INSERT INTO uo_series (series_id, name, ordering, season, valid, type, color, pool_template)
+                 VALUES (190, 'Mixed', 'C', 'DEL2026', 1, 'mixed', '993366', NULL)");
+            DBQuery("INSERT INTO uo_pool (pool_id, name, ordering, visible, continuingpool, placementpool, teams, mvgames,
+                    timeoutlen, halftime, winningscore, timecap, scorecap, played, addscore, halftimescore, timeouts,
+                    timeoutsper, timeoutsovertime, timeoutstimecap, betweenpointslen, series, type, timeslot, color,
+                    forfeitscore, forfeitagainst, follower, drawsallowed, playoff_template)
+                 VALUES (290, 'Pool X', '1', 1, 0, 0, 2, 0, 70, 35, 15, NULL, NULL, 0, NULL, NULL, 2, 'half',
+                    1, 'soft', 90, 190, 1, 60, '993366', 15, 0, NULL, 0, NULL)");
+            DBQuery("INSERT INTO uo_game (game_id, hometeam, visitorteam, reservation, time, valid, isongoing, hasstarted)
+                 VALUES (790, 300, 301, 500, '2026-06-01 12:00:00', 1, 0, 0)");
+            // Game 791 is owned by the other event but still has a carryover
+            // (timetable=0) row in this event's pool, as after SetGamePool().
+            DBQuery("INSERT INTO uo_game (game_id, hometeam, visitorteam, reservation, time, valid, isongoing, hasstarted)
+                 VALUES (791, 300, 301, 500, '2026-06-01 13:00:00', 1, 0, 0)");
+            DBQuery("INSERT INTO uo_game_pool (game, pool, timetable) VALUES (790, 290, 1), (791, 290, 1), (791, 200, 0)");
+
+            ScoresheetHistoryRecord(700, 'goal', 'add', ['num' => 1]);
+            ScoresheetHistoryRecord(700, 'goal', 'add', ['num' => 2]);
+            ScoresheetHistoryRecord(701, 'goal', 'add', ['num' => 1]);
+            ScoresheetHistoryRecord(790, 'goal', 'add', ['num' => 1]);
+            ScoresheetHistoryRecord(791, 'goal', 'add', ['num' => 1]);
+
+            $this->assertSame(3, DeleteEventScoresheetHistory('HRN2026'));
+
+            $this->assertSame(0, ScoresheetHistoryCount(700));
+            $this->assertSame(0, ScoresheetHistoryCount(701));
+            // Contrast: the other event's games, carryover row included, are kept.
+            $this->assertSame(1, ScoresheetHistoryCount(790));
+            $this->assertSame(1, ScoresheetHistoryCount(791));
+
+            $this->assertSame(0, DeleteEventScoresheetHistory('HRN2026'));
+            $this->assertSame(2, DeleteEventScoresheetHistory('DEL2026'));
+        } finally {
+            DBQuery("DELETE FROM uo_scoresheet_history WHERE game IN (790, 791)");
+            DBQuery("DELETE FROM uo_game_pool WHERE game IN (790, 791)");
+            DBQuery("DELETE FROM uo_game WHERE game_id IN (790, 791)");
+            DBQuery("DELETE FROM uo_pool WHERE pool_id=290");
+            DBQuery("DELETE FROM uo_series WHERE series_id=190");
+            DBQuery("DELETE FROM uo_season WHERE season_id='DEL2026'");
+        }
+    }
+
+    public function testDeleteEventHistoryLogsTheCountOutsideTheTableItEmpties(): void
+    {
+        DBQuery("DELETE FROM uo_event_log WHERE source='history-cleanup'");
+        ScoresheetHistoryRecord(700, 'goal', 'add', ['num' => 1]);
+        try {
+            $this->assertSame(1, DeleteEventScoresheetHistory('HRN2026'));
+
+            $log = DBQueryToRow("SELECT * FROM uo_event_log WHERE source='history-cleanup'");
+            $this->assertIsArray($log);
+            $this->assertSame('game', $log['category']);
+            $this->assertSame('delete', $log['type']);
+            $this->assertSame('HRN2026', $log['id1']);
+            $this->assertSame('scoresheet history rows: 1', $log['description']);
+            $this->assertSame(0, ScoresheetHistoryCount(700));
+        } finally {
+            DBQuery("DELETE FROM uo_event_log WHERE source='history-cleanup'");
+        }
+    }
+
+    /**
+     * @return array<string, array{0: array<string, mixed>, 1: string}>
+     */
+    public static function formatDetailCases(): array
+    {
+        $r = fn(string $target, string $action, array $detail = []) => ['target' => $target, 'action' => $action, 'detail' => json_encode($detail)];
+        return [
+            'result cleared' => [$r('result', 'clear'), 'Result cleared'],
+            'result ongoing' => [$r('result', 'update', ['home' => 3, 'away' => 2, 'state' => 'ongoing']), 'Result 3-2 (Ongoing)'],
+            'result recalculated' => [$r('result', 'update', ['home' => 4, 'away' => 1, 'state' => 'from_goals']), 'Result 4-1 (Recalculated)'],
+            'result unknown state' => [$r('result', 'update', ['home' => 1, 'away' => 0, 'state' => 'odd']), 'Result 1-0 (odd)'],
+            'result empty detail' => [$r('result', 'update'), 'Result 0-0 ()'],
+            'goal removed' => [$r('goal', 'remove', ['num' => 5]), 'Point 5'],
+            'players cleared' => [$r('played', 'clear', ['removed' => 8]), 'Players removed: 8'],
+            'captains' => [$r('played', 'update', ['role' => 'captain', 'players' => [1, 2]]), 'Captain: 2'],
+            'spirit captains' => [$r('played', 'update', ['role' => 'spirit_captain', 'players' => [3]]), 'Spirit captain: 1'],
+            'unknown role' => [$r('played', 'update', ['role' => 'coach', 'players' => 'x']), 'coach: 0'],
+            'snapshot' => [$r('snapshot', 'add'), 'Saved state'],
+            'restore' => [$r('restore', 'update'), 'Restored'],
+            'official' => [$r('official', 'update', ['name' => 'Sam Keeper']), 'Scorekeeper Sam Keeper'],
+            'forfeit none' => [$r('forfeit', 'update', ['forfeit' => 'none']), 'Forfeit: None'],
+            'forfeit away' => [$r('forfeit', 'update', ['forfeit' => 'away']), 'Forfeit: Away team forfeited'],
+            'forfeit both' => [$r('forfeit', 'update', ['forfeit' => 'both']), 'Forfeit: Both teams forfeited'],
+            'forfeit unknown' => [$r('forfeit', 'update', ['forfeit' => 'x']), 'Forfeit: x'],
+            'fixture teams' => [$r('fixture', 'update', ['home' => 300, 'away' => 301]), 'Teams: Helsinki Heat - Tampere Tempest'],
+            'fixture swapped' => [$r('fixture', 'swap', ['home' => 301, 'away' => 300]), 'Home and away teams swapped: Tampere Tempest - Helsinki Heat'],
+            'defences updated' => [$r('defense', 'update', ['home' => 4, 'away' => 6]), 'Defences: 4-6'],
+            'defence added' => [$r('defense', 'add', ['num' => 7]), 'Defence 7'],
+            'timeouts cleared' => [$r('timeout', 'clear', ['removed' => 2]), 'Timeouts removed: 2'],
+            'spirit stoppages cleared' => [$r('spirit_timeout', 'clear', ['removed' => 1]), 'Spirit stoppages removed: 1'],
+            'spirit stoppage' => [$r('spirit_timeout', 'add', ['num' => 3]), 'Spirit stoppage 3'],
+            'note added' => [$r('comment', 'add'), 'Game note'],
+            'media added' => [$r('mediaevent', 'add'), 'Media added'],
+            'media removed' => [$r('mediaevent', 'remove'), 'Media removed'],
+            'game events cleared' => [$r('gameevent', 'clear', ['removed' => 3]), 'Game events removed: 3'],
+            'starting offence removed' => [$r('gameevent', 'remove', ['type' => 'start']), 'Starting offence removed'],
+            'starting offence away' => [$r('gameevent', 'update', ['type' => 'start', 'home' => 0]), 'Starting offence: Away team'],
+            'cap removed' => [$r('gameevent', 'remove', ['type' => 'time_cap']), 'Time cap removed'],
+            'cap with point cap' => [$r('gameevent', 'update', ['type' => 'half_cap', 'time' => 900, 'info' => 9]), 'Halftime cap 15.00 - new point cap 9'],
+            'unknown cap type' => [$r('gameevent', 'update', ['type' => 'zzz']), 'Cap event'],
+            'unknown target' => [$r('bogus', 'update'), 'bogus'],
+        ];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('formatDetailCases')]
+    public function testFormatDetailRendersEveryTargetAndAction(array $row, string $expected): void
+    {
+        $this->assertSame($expected, ScoresheetHistoryFormatDetail($row));
+    }
+
+    public function testFormatDetailToleratesArrayMissingAndMalformedDetail(): void
+    {
+        $this->assertSame('Point 2: 1-1', ScoresheetHistoryFormatDetail([
+            'target' => 'goal', 'action' => 'add', 'detail' => ['num' => 2, 'score' => '1-1'],
+        ]));
+        $this->assertSame('Point 0: ', ScoresheetHistoryFormatDetail(['target' => 'goal', 'action' => 'add']));
+        $this->assertSame('Point 0: ', ScoresheetHistoryFormatDetail([
+            'target' => 'goal', 'action' => 'add', 'detail' => '{not json',
+        ]));
+        $this->assertSame('', ScoresheetHistoryFormatDetail([]));
+    }
+
     public function testListReturnsNewestFirstAndOmitsTheSnapshotPayload(): void
     {
         ScoresheetHistoryRecord(700, 'result', 'update', ['home' => 1, 'away' => 0, 'state' => 'ongoing']);
