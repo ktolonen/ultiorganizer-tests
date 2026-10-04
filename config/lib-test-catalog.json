@@ -236,22 +236,6 @@
       "sut_path": "/home/kari/dev/ultiorganizer/lib/game.functions.php"
     },
     {
-      "lib_file": "scoresheethistory.functions.php",
-      "lib_path": "lib/scoresheethistory.functions.php",
-      "subject_id": "scoresheethistory.functions",
-      "test_suite": "integration",
-      "test_path": "tests/Integration/Lib/ScoresheethistoryFunctionsLibTest.php",
-      "test_class": "ScoresheethistoryFunctionsLibTest",
-      "strategy": "direct_helper",
-      "load_profile": "bootstrap_only",
-      "test_path_exists": true,
-      "status": "covered",
-      "triage_status": "untriaged",
-      "triage_notes": "",
-      "notes": "",
-      "sut_path": "/home/kari/dev/ultiorganizer/lib/scoresheethistory.functions.php"
-    },
-    {
       "lib_file": "image.functions.php",
       "lib_path": "lib/image.functions.php",
       "subject_id": "image.functions",
@@ -442,6 +426,38 @@
       "triage_notes": "Meets \u226580% line and 100% fn targets (86%/100%). Tests cover reservation CRUD, field/season queries, game attachment, and ReservationSeason lookup.",
       "notes": "",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/reservation.functions.php"
+    },
+    {
+      "lib_file": "scorekeeper.functions.php",
+      "lib_path": "lib/scorekeeper.functions.php",
+      "subject_id": "scorekeeper.functions",
+      "test_suite": "integration",
+      "test_path": "tests/Integration/Lib/ScorekeeperFunctionsLibTest.php",
+      "test_class": "ScorekeeperFunctionsLibTest",
+      "strategy": "direct_helper",
+      "load_profile": "bootstrap_only",
+      "test_path_exists": true,
+      "status": "covered",
+      "triage_status": "triaged",
+      "triage_notes": "Meets \u226590% line and 100% fn targets (93%/100%). Tests cover token issue/rotate/revoke, redeem and grant coverage by game day, the event link list, link sheet/QR output.",
+      "notes": "",
+      "sut_path": "/home/kari/dev/ultiorganizer/lib/scorekeeper.functions.php"
+    },
+    {
+      "lib_file": "scoresheethistory.functions.php",
+      "lib_path": "lib/scoresheethistory.functions.php",
+      "subject_id": "scoresheethistory.functions",
+      "test_suite": "integration",
+      "test_path": "tests/Integration/Lib/ScoresheethistoryFunctionsLibTest.php",
+      "test_class": "ScoresheethistoryFunctionsLibTest",
+      "strategy": "direct_helper",
+      "load_profile": "bootstrap_only",
+      "test_path_exists": true,
+      "status": "covered",
+      "triage_status": "untriaged",
+      "triage_notes": "",
+      "notes": "",
+      "sut_path": "/home/kari/dev/ultiorganizer/lib/scoresheethistory.functions.php"
     },
     {
       "lib_file": "search.functions.php",

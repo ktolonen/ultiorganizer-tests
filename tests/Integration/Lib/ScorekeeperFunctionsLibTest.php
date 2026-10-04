@@ -373,6 +373,134 @@ final class ScorekeeperFunctionsLibTest extends TestCase
         $this->assertSame(0, (int) DBQueryToValueUncached("SELECT COUNT(*) FROM uo_scorekeeper_grant"));
     }
 
+    public function testTokenUrlPointsAtScorekeeperAndEncodesTheToken(): void
+    {
+        $this->assertSame(BASEURL . '/scorekeeper/?t=abc123', ScorekeeperTokenUrl('abc123'));
+        $this->assertSame(BASEURL . '/scorekeeper/?t=a%2Fb%26c', ScorekeeperTokenUrl('a/b&c'));
+    }
+
+    public function testEventLinkListShowsOnlyThisEventsTokensToItsAdmins(): void
+    {
+        self::addGame(791, 500, self::OTHER_SEASON, 191, 291);
+        DBQuery("INSERT INTO uo_users (userid, name) VALUES ('" . self::KEEPER . "', 'Keeper')");
+        $gameToken = self::tokenId(ScorekeeperToken('game', 700));
+        $fieldToken = self::tokenId(ScorekeeperToken('reservation', 501));
+        $otherToken = self::tokenId(ScorekeeperToken('game', 791));
+        ScorekeeperAddGrant($gameToken, self::KEEPER);
+
+        $tokens = SeasonScorekeeperTokens('HRN2026');
+
+        $this->assertSame(['game:700', 'reservation:501'], array_keys($tokens));
+        $this->assertSame($gameToken, $tokens['game:700']['token_id']);
+        $this->assertSame([['userid' => self::KEEPER, 'name' => 'Keeper']], $tokens['game:700']['users']);
+        $this->assertSame($fieldToken, $tokens['reservation:501']['token_id']);
+        $this->assertSame([], $tokens['reservation:501']['users']);
+        $this->assertSame(['game:791'], array_keys(SeasonScorekeeperTokens(self::OTHER_SEASON)));
+        $this->assertSame($otherToken, SeasonScorekeeperTokens(self::OTHER_SEASON)['game:791']['token_id']);
+
+        // The same tokens exist for a user who is not an admin of the event.
+        self::asUser(self::KEEPER, ['seasonadmin' => [self::OTHER_SEASON => 1]]);
+        $this->assertSame([], SeasonScorekeeperTokens('HRN2026'));
+        $this->assertSame(['game:791'], array_keys(SeasonScorekeeperTokens(self::OTHER_SEASON)));
+    }
+
+    public function testLinkTargetNamesTheGameOrTheFieldAndItsGames(): void
+    {
+        $game = ScorekeeperLinkTarget('game', 700);
+        $this->assertSame('HRN2026', $game['season']);
+        $this->assertStringEndsWith('Helsinki Heat-Tampere Tempest', $game['subject']);
+        $this->assertSame([700], array_map('intval', array_column($game['games'], 'game_id')));
+
+        // A field link covers its own event's games only, even when a game of
+        // another event is booked on the same reservation.
+        self::addGame(791, 500, self::OTHER_SEASON, 191, 291);
+        $field = ScorekeeperLinkTarget('reservation', 500);
+        $this->assertSame('HRN2026', $field['season']);
+        $this->assertStringStartsWith('Harness Field Complex Field 1, ', $field['subject']);
+        $this->assertSame([700], array_map('intval', array_column($field['games'], 'game_id')));
+
+        $this->assertNull(ScorekeeperLinkTarget('game', 99999));
+        $this->assertNull(ScorekeeperLinkTarget('reservation', 99999));
+    }
+
+    public function testLinkGamesTableEscapesNamesAndFallsBackToSchedulingNames(): void
+    {
+        $html = ScorekeeperLinkGamesHtml([
+            [
+                'hometeam' => 300, 'hometeamname' => 'Heat <b>', 'phometeamname' => 'W1',
+                'visitorteam' => 301, 'visitorteamname' => 'Tempest', 'pvisitorteamname' => 'L1',
+                'time' => self::today() . ' 10:00:00', 'seriesname' => 'Open', 'poolname' => 'Pool A',
+            ],
+            [
+                'hometeam' => 0, 'hometeamname' => null, 'phometeamname' => 'Winner 1',
+                'visitorteam' => 0, 'visitorteamname' => null, 'pvisitorteamname' => 'Loser 1',
+                'time' => self::today() . ' 14:00:00', 'seriesname' => 'Open', 'poolname' => 'Pool A',
+            ],
+        ]);
+
+        $this->assertSame(2, substr_count($html, '<tr>'));
+        $this->assertStringContainsString('<td>Heat &lt;b&gt; - Tempest</td>', $html);
+        $this->assertStringNotContainsString('<b>', $html);
+        $this->assertStringContainsString('<td>Winner 1 - Loser 1</td>', $html);
+        $this->assertStringNotContainsString('W1', $html);
+        $this->assertSame(2, substr_count($html, '<td>Open, Pool A</td>'));
+        $this->assertSame("<table class='scorekeeping-link-games'></table>", ScorekeeperLinkGamesHtml([]));
+    }
+
+    public function testLinkSheetHoldsTheEventTheGamesAndAWorkingQrLink(): void
+    {
+        $html = ScorekeeperLinkSheetHtml('game', 700);
+        $token = DBQueryToValueUncached("SELECT token FROM uo_scorekeeper_token WHERE game=700");
+
+        $this->assertMatchesRegularExpression('/^[0-9a-f]{32}$/', (string) $token);
+        $this->assertStringContainsString('<h1>Harness Invitational 2026</h1>', $html);
+        $this->assertStringContainsString('Helsinki Heat-Tampere Tempest</h2>', $html);
+        $this->assertStringContainsString('<td>Helsinki Heat - Tampere Tempest</td>', $html);
+        $this->assertStringContainsString("<p class='scorekeeping-url'>" . BASEURL . "/scorekeeper/?t=$token</p>", $html);
+        $this->assertStringContainsString("<div class='scorekeeping-qr'><svg", $html);
+        // Showing the sheet again keeps the same link.
+        $this->assertSame($html, ScorekeeperLinkSheetHtml('game', 700));
+
+        $field = ScorekeeperLinkSheetHtml('reservation', 501);
+        $this->assertStringContainsString('<h2>Harness Field Complex Field 2, ', $field);
+        $this->assertStringContainsString('<td>Tampere Tempest - Helsinki Heat</td>', $field);
+    }
+
+    public function testLinkSheetIsEmptyForUnknownTargetsAndNonIssuers(): void
+    {
+        $this->assertSame('', ScorekeeperLinkSheetHtml('game', 99999));
+        $this->assertSame('', ScorekeeperLinkSheetHtml('reservation', 99999));
+        $this->assertSame(0, (int) DBQueryToValueUncached("SELECT COUNT(*) FROM uo_scorekeeper_token"));
+
+        self::asUser(self::KEEPER, ['gameadmin' => [700 => 1]]);
+        $this->assertSame('', ScorekeeperLinkSheetHtml('game', 700));
+        $this->assertSame(0, (int) DBQueryToValueUncached("SELECT COUNT(*) FROM uo_scorekeeper_token"));
+
+        // Contrast: the same game gets a sheet for an event admin.
+        self::asUser(self::KEEPER, ['seasonadmin' => ['HRN2026' => 1]]);
+        $this->assertNotSame('', ScorekeeperLinkSheetHtml('game', 700));
+    }
+
+    public function testQrSvgScalesWithTheModuleSizeAndEncodesTheText(): void
+    {
+        $small = ScorekeeperQrSvg('https://example.test/a', 6);
+        $large = ScorekeeperQrSvg('https://example.test/a', 12);
+
+        $this->assertSame(1, preg_match("/width='(\d+)' height='(\d+)' viewBox='0 0 (\d+) (\d+)'/", $small, $s));
+        $this->assertSame(1, preg_match("/width='(\d+)' height='(\d+)' viewBox='0 0 (\d+) (\d+)'/", $large, $l));
+        $this->assertSame($s[1], $s[2]);
+        $this->assertSame($s[1], $s[3]);
+        // Same module count: the side is (modules + 2 * 4 margin) * module size.
+        $this->assertSame(0, (int) $s[1] % 6);
+        $this->assertSame((int) $s[1] * 2, (int) $l[1]);
+        $this->assertGreaterThanOrEqual(25 + 8, (int) $s[1] / 6);
+        $this->assertStringContainsString("<path d='M", $small);
+        // Every dark module is one square of the module size.
+        $this->assertSame(substr_count($small, 'M'), substr_count($small, 'h6v6h-6z'));
+        $this->assertNotSame($small, ScorekeeperQrSvg('https://example.test/b', 6));
+        $this->assertSame($small, ScorekeeperQrSvg('https://example.test/a'));
+    }
+
     private static function today(): string
     {
         return self::day('now');
