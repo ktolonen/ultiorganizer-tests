@@ -11,7 +11,7 @@ final class PublicPagesSmokeTest extends TestCase
     public function testPublicPageRendersWithoutRuntimeErrors(string $pageId, string $query): void
     {
         $baseUrl = getenv('UO_BASE_URL') ?: 'http://127.0.0.1';
-        $errorLog = getenv('UO_APACHE_ERROR_LOG') ?: '/var/log/apache2/error.log';
+        $errorLog = getenv('UO_APACHE_ERROR_LOG') ?: '/var/log/php/error.log';
         $beforeSize = is_file($errorLog) ? filesize($errorLog) : 0;
 
         $context = stream_context_create([
@@ -39,8 +39,8 @@ final class PublicPagesSmokeTest extends TestCase
             }
         }
 
-        $runtimeIssue = preg_match('/Fatal error|Parse error|Warning|Notice/i', $body) === 1;
-        $logIssue = preg_match('/PHP (Fatal error|Parse error|Warning|Notice)/i', $logExcerpt) === 1;
+        $runtimeIssue = \UltiorganizerHarness\Support\PhpIssue::inBody($body);
+        $logIssue = \UltiorganizerHarness\Support\PhpIssue::inLog($logExcerpt);
         if ($response === false || $statusCode !== 200 || $runtimeIssue || $logIssue) {
             $payload = [
                 'page_id' => $pageId,

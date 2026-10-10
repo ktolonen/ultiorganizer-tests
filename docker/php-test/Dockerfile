@@ -36,5 +36,8 @@ COPY --from=composer:2 /usr/bin/composer /usr/local/bin/composer
 COPY docker/php-test/workspace.conf /etc/apache2/conf-available/workspace.conf
 COPY docker/php-test/disable-path-caches.ini /usr/local/etc/php/conf.d/zz-disable-path-caches.ini
 COPY docker/php-test/pcov.ini /usr/local/etc/php/conf.d/zz-pcov.ini
+COPY docker/php-test/logging.ini /usr/local/etc/php/conf.d/zz-logging.ini
+
+RUN mkdir -p /var/log/php && touch /var/log/php/error.log && chmod 777 /var/log/php && chmod 666 /var/log/php/error.log
 
 RUN a2enconf workspace

@@ -28,14 +28,17 @@ REPORTS_ROOT = WORKSPACE / "reports"
 MATRIX_CONFIG = WORKSPACE / "config" / "matrix.json"
 PROFILE_DIR = WORKSPACE / "config" / "profiles"
 FIXTURE_DIR = WORKSPACE / "fixtures"
-APACHE_ERROR_LOG = Path("/var/log/apache2/error.log")
+# Dedicated PHP error_log shared by Apache workers and the CLI runner
+# (docker/php-test/logging.ini). Apache's own error.log no longer receives PHP output.
+APACHE_ERROR_LOG = Path("/var/log/php/error.log")
 PHPUNIT_SUITES = {"unit", "integration", "export", "api", "smoke"}
 # Suites that run the SUT in-process and can therefore yield PHP code coverage.
 # export/api/smoke are HTTP-driven, so the PHPUnit process never loads SUT code.
 COVERAGE_SUITES = {"unit", "integration"}
 LINT_EXCLUDED_DIRS = {".git", ".runtime", "node_modules", "reports", "vendor"}
 CrawlFailure = dict[str, object]
-PHP_ERROR_LOG_ISSUE_PATTERN = re.compile(r"PHP (Fatal error|Parse error|Warning|Notice)", re.IGNORECASE)
+# Single source of truth, also read by tests/Support/PhpIssue.php.
+PHP_ERROR_LOG_ISSUE_PATTERN = re.compile((WORKSPACE / "config" / "php-issue-pattern.txt").read_text().strip(), re.IGNORECASE)
 
 
 class RunnerFailure(RuntimeError):
@@ -124,6 +127,23 @@ def text_excerpt(value: str, *, lines: int = 40, limit: int = 1200) -> str:
     return excerpt[:limit]
 
 
+KNOWN_PHP_ISSUES_FILE = WORKSPACE / "config" / "known-php-issues.json"
+
+
+def known_php_issue_patterns() -> list[re.Pattern]:
+    if not KNOWN_PHP_ISSUES_FILE.is_file():
+        return []
+    entries = json.loads(KNOWN_PHP_ISSUES_FILE.read_text()).get("known", [])
+    return [re.compile(entry["pattern"]) for entry in entries]
+
+
+def php_issue_lines(log_text: str, *, known: bool = False) -> list[str]:
+    """Issue lines in the log; known=True returns only the tolerated ones, else only new ones."""
+    patterns = known_php_issue_patterns()
+    lines = [line for line in log_text.splitlines() if PHP_ERROR_LOG_ISSUE_PATTERN.search(line)]
+    return [line for line in lines if any(p.search(line) for p in patterns) == known]
+
+
 def capture_apache_error_log_artifact(run_root: Path, offset: int) -> dict:
     artifact_path = run_root / "logs" / "apache-error.log"
     delta = read_apache_error_log_delta(offset)
@@ -133,7 +153,9 @@ def capture_apache_error_log_artifact(run_root: Path, offset: int) -> dict:
         "source_path": str(APACHE_ERROR_LOG),
         "artifact_path": str(artifact_path),
         "detected": bool(delta.strip()),
-        "php_issue_detected": bool(PHP_ERROR_LOG_ISSUE_PATTERN.search(delta)),
+        "php_issue_detected": bool(php_issue_lines(delta)),
+        "php_issue_lines": php_issue_lines(delta)[:50],
+        "php_known_issue_count": len(php_issue_lines(delta, known=True)),
         "excerpt": text_excerpt(delta),
     }
 
@@ -1135,6 +1157,14 @@ def detect_overall_failure(setup_result: dict, suite_results: list[dict]) -> tup
     return (None, None, None)
 
 
+def detect_php_log_failure(runtime_logs: dict) -> tuple[str | None, str | None]:
+    log = runtime_logs.get("apache_error_log") or {}
+    lines = log.get("php_issue_lines") or []
+    if not lines:
+        return (None, None)
+    return ("php_runtime_issue", f"{len(lines)} PHP issue(s) logged during the run; first: {lines[0][:300]}")
+
+
 def git_value(args: list[str]) -> str:
     result = subprocess.run(args, text=True, capture_output=True, check=False)
     return result.stdout.strip()
@@ -1194,6 +1224,12 @@ def write_markdown(path: Path, summary: dict) -> None:
         lines.append(f"- apache/php error artifact: `{apache_error_log.get('artifact_path', '')}`")
         lines.append(f"- new log content detected: `{apache_error_log.get('detected', False)}`")
         lines.append(f"- php issue pattern detected: `{apache_error_log.get('php_issue_detected', False)}`")
+        if apache_error_log.get("php_known_issue_count"):
+            lines.append(f"- known PHP issues tolerated (config/known-php-issues.json): `{apache_error_log['php_known_issue_count']}`")
+        if apache_error_log.get("php_issue_lines"):
+            lines.extend(["", "PHP issues logged during the run:", "", "```text"])
+            lines.extend(apache_error_log["php_issue_lines"])
+            lines.append("```")
         if apache_error_log.get("excerpt"):
             lines.append("")
             lines.append("```text")
@@ -1278,6 +1314,8 @@ def merge_case_coverage(run_root: Path) -> dict | None:
     result = run(
         [
             "php",
+            "-d",
+            "memory_limit=-1",
             "vendor/bin/phpcov",
             "merge",
             "--html",
@@ -1330,6 +1368,8 @@ def finalize_summary(
         finished = max([finished] + [result["finished_at"] for result in suite_results])
 
     failure_classification, failure_reason, failing_suite = detect_overall_failure(setup_result, suite_results)
+    if failure_classification is None:
+        failure_classification, failure_reason = detect_php_log_failure(runtime_logs)
     overall = "passed" if failure_classification is None else "failed"
 
     summary = {

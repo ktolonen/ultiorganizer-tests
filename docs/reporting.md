@@ -42,3 +42,7 @@ When a smoke or crawl failure is unclear, check the Apache error log from `./log
 
 - `./report:html [--output PATH]`: build the index from every `summary.json`
 - `./report:clean --keep N` (default 20): delete older run directories, prune stale pointers, rebuild the index. Flags: `--dry-run`, `--case-id`, `--all`, `--no-html`.
+
+## PHP Error-Log Gate
+
+The test image logs PHP like a dev setup (`log_errors=On`, `error_reporting=E_ALL`, `error_log=/var/log/php/error.log`; `docker/php-test/logging.ini`). `UO_APACHE_ERROR_LOG` and the runner both point at that file. If a run is otherwise green but a line matching `config/php-issue-pattern.txt` (Fatal error, Parse error, Warning, Notice, Deprecated, Uncaught) was logged, the run fails with classification `php_runtime_issue`, and the matching lines appear in `summary.md` and `runtime_logs.apache_error_log.php_issue_lines`. The same pattern file feeds `tests/Support/PhpIssue.php` for the API, export and smoke tests. Rebuild the image after changing `logging.ini`.

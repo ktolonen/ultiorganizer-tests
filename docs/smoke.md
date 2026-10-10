@@ -7,8 +7,8 @@ The `smoke` suite is every PHPUnit test under `tests/Smoke/`, run over HTTP agai
 `PublicPagesSmokeTest` requests each `smoke_pages` entry (`id`, `query`) of the case through `index.php`. A page fails on:
 
 - a non-`200` status
-- a PHP fatal error, parse error, warning, or notice in the response
-- a PHP warning or notice newly written to the Apache error log
+- a PHP fatal error, parse error, warning, notice, or deprecation in the response
+- a PHP issue newly written to the PHP error log (`/var/log/php/error.log`)
 
 A failure is reported with the page id, query, status, a response snippet, and an Apache log excerpt.
 

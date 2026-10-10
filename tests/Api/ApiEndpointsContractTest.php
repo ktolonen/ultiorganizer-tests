@@ -202,7 +202,7 @@ final class ApiEndpointsContractTest extends TestCase
     private static function apiGet(string $path, ?string $token = null): array
     {
         $baseUrl = getenv('UO_BASE_URL') ?: 'http://127.0.0.1';
-        $errorLog = getenv('UO_APACHE_ERROR_LOG') ?: '/var/log/apache2/error.log';
+        $errorLog = getenv('UO_APACHE_ERROR_LOG') ?: '/var/log/php/error.log';
         $beforeSize = is_file($errorLog) ? filesize($errorLog) : 0;
 
         if ($token !== null) {
@@ -246,8 +246,8 @@ final class ApiEndpointsContractTest extends TestCase
 
     private static function assertJsonResponse(string $id, array $response, int $expectedStatus): void
     {
-        $bodyIssue = preg_match('/Fatal error|Parse error|Warning|Notice/i', $response['body']) === 1;
-        $logIssue = preg_match('/PHP (Fatal error|Parse error|Warning|Notice)/i', $response['log_excerpt']) === 1;
+        $bodyIssue = \UltiorganizerHarness\Support\PhpIssue::inBody($response['body']);
+        $logIssue = \UltiorganizerHarness\Support\PhpIssue::inLog($response['log_excerpt']);
 
         if ($response['response_failed'] || $response['status_code'] !== $expectedStatus || $bodyIssue || $logIssue) {
             self::fail('API_FAILURE: ' . json_encode([
