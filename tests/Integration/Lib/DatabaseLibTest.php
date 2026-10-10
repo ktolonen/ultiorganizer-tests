@@ -479,9 +479,9 @@ final class DatabaseLibTest extends TestCase
 
     public function testDBServerInfoReturnsString(): void
     {
-        // MariaDB 10.11.x per docker-compose.yml's pinned image tag; assert the major.minor
+        // MariaDB 12.3.x per docker-compose.yml's pinned image tag; assert the major.minor
         // series and vendor rather than the exact patch/build suffix.
-        $this->assertMatchesRegularExpression('/^10\.11\.\d+-MariaDB/', DBServerInfo());
+        $this->assertMatchesRegularExpression('/^12\.3\.\d+-MariaDB/', DBServerInfo());
     }
 
     // --- DBProtocolInfo ---

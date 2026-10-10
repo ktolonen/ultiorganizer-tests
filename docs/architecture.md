@@ -12,7 +12,7 @@ This repository is a Dockerized test harness for the Ultiorganizer codebase (def
 - `fixtures/*.sql`: fixture packs loaded after the SUT schema.
 - `tests/{Unit,Integration,Export,Api,Smoke}`: PHPUnit suites; `tests/Support/LegacyApp.php` loads SUT lib files.
 - `tests/Js`: host Node tests (not part of the Docker flow).
-- `docker-compose.yml`, `docker/php-test/`: `php-test` (PHP 8.3 + Apache + PCOV + Node) and `mariadb`.
+- `docker-compose.yml`, `docker/php-test/`: `php-test` (PHP 8.5 + Apache + PCOV + Node) and `mariadb`.
 - `mcp/server.py`: thin MCP wrapper over `harness.py`.
 
 ## Run Flow

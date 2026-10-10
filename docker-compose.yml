@@ -1,12 +1,13 @@
 services:
   mariadb:
-    image: mariadb:10.11
+    image: mariadb:12.3
     environment:
       MARIADB_ROOT_PASSWORD: root
       MARIADB_ROOT_HOST: "%"
       MARIADB_USER: ultiorganizer
       MARIADB_PASSWORD: ultiorganizer
       MARIADB_DATABASE: ultiorganizer_test
+      MARIADB_AUTO_UPGRADE: "1"
     healthcheck:
       test: ["CMD-SHELL", "mariadb-admin ping -h 127.0.0.1 -uroot -proot --silent"]
       interval: 3s

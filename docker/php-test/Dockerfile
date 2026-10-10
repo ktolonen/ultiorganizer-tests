@@ -1,4 +1,4 @@
-FROM php:8.3-apache
+FROM php:8.5-apache
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV APACHE_DOCUMENT_ROOT=/workspace/.runtime/webroot

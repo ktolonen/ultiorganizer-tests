@@ -4,7 +4,7 @@ Dockerized test harness for the Ultiorganizer codebase (the SUT, default `../ult
 
 ## How it works
 
-- `scripts/harness.py` (host CLI behind every wrapper) drives `scripts/container_runner.py` inside `php-test` (PHP 8.3 + Apache + PCOV + Node) alongside `mariadb`.
+- `scripts/harness.py` (host CLI behind every wrapper) drives `scripts/container_runner.py` inside `php-test` (PHP 8.5 + Apache + PCOV + Node) alongside `mariadb`.
 - Each run copies the read-only SUT mount to `.runtime/cases/<case-id>/sut`, injects test config (`ALLOW_INSTALL=true`), recreates the case DB, loads the SUT schema then `fixtures/<pack>.sql`, runs suites, and writes `reports/cases/<case-id>/<run-id>/`.
 - Suites: `lint`, `unit`, `integration`, `export`, `api`, `smoke`, `crawl`. Only `unit`/`integration` run in-process and yield coverage (`lib/` tree only). `tests/Js` is separate host-Node tests (`./test:js`).
 - `config/matrix.json` has 8 cases: `baseline-default` (all suites), six `customization-*` (smoke + crawl), `config-overrides` (integration + smoke, renders `fi_FI`).
