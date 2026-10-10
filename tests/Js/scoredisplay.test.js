@@ -87,7 +87,8 @@ var windowHandlers = {};
 var wakeRequests = [];
 var lockReleased = 0;
 
-global.navigator = {
+// Node 21+ defines navigator as a getter-only global, so plain assignment throws.
+Object.defineProperty(global, "navigator", { configurable: true, writable: true, value: {
   wakeLock: {
     request: function () {
       var p = {
@@ -98,7 +99,7 @@ global.navigator = {
       return p;
     }
   }
-};
+} });
 
 global.window = {
   SCOREDISPLAY_I18N: { ongoing: "Ongoing", upcoming: "Upcoming", noGames: "No games" },
