@@ -209,6 +209,8 @@ check("maintenance empties the list", byId["sd-list"].children[0].textContent, "
 
 /* --- Choosing a game switches to the board --------------------------------- */
 
+fireTimeouts();
+check("a list poll is in flight when the view changes", pending("?json=list").length, 1);
 upcomingButton.onclick();
 check("game button sets the hash", window.location.hash, "#game=8");
 check("board shown", byId["sd-board"].hidden, false);
@@ -217,11 +219,7 @@ check("wake lock requested", wakeRequests.length, 1);
 check("game feed requested", pending("?json=game&game=8").length, 1);
 
 // A reply for the list that was in flight when the view changed is dropped.
-var staleList = pending("?json=list")[0];
-if (staleList && !staleList.done) {
-  staleList.done = true;
-  reply(staleList, 200, LIST);
-}
+answer("?json=list", 200, LIST);
 check("a late list reply does not touch the board", byId["sd-list"].children.length, 1);
 
 /* --- Game feed: names, scores, flash --------------------------------------- */
@@ -271,7 +269,7 @@ check("clock advances with the wall clock", byId["sd-clock"].textContent, "2:15"
 
 fakeNow += 3000;
 fireTimeouts();
-answer("?json=game&game=7", 200, game({ homescore: 4, clock: { elapsed: 138, paused: false } }));
+answer("?json=game&game=7", 200, game({ homescore: 4, clock: { elapsed: 137, paused: false } }));
 check("a poll within a second of the local clock keeps it", byId["sd-clock"].textContent, "2:18");
 
 fakeNow += 3000;
@@ -283,11 +281,14 @@ fireTimeouts();
 answer("?json=game&game=7", 200, game({ homescore: 4, clock: { elapsed: 301, paused: true } }));
 check("paused clock stops ticking", intervalCount(), 0);
 check("paused clock is marked", byId["sd-clock"].className, "sd-paused");
-fakeNow += 20000;
-check("paused clock shows the paused reading", byId["sd-clock"].textContent, "5:01");
+
+// Setting a paused clock moves it by any amount, even within a second.
+fireTimeouts();
+answer("?json=game&game=7", 200, game({ homescore: 4, clock: { elapsed: 302, paused: true } }));
+check("a paused clock takes every server reading", byId["sd-clock"].textContent, "5:02");
 
 fireTimeouts();
-answer("?json=game&game=7", 200, game({ homescore: 4, clock: { elapsed: 301, paused: false } }));
+answer("?json=game&game=7", 200, game({ homescore: 4, clock: { elapsed: 302, paused: false } }));
 check("resumed clock ticks again", intervalCount(), 1);
 check("resumed clock is no longer marked paused", byId["sd-clock"].className, "");
 

@@ -32,8 +32,7 @@ final class ScoreTapFlowTest extends TestCase
         DBQuery("UPDATE uo_season SET anonymous_scorekeeping=1 WHERE season_id='HRN2026'");
         DBQuery("DELETE FROM uo_setting WHERE name='DisableScoresheetHistory'");
         DBQuery("INSERT INTO uo_setting (name, value) VALUES ('DisableScoresheetHistory', 'false')");
-        $today = (new DateTimeImmutable('now', new DateTimeZone('Europe/Helsinki')))->format('Y-m-d');
-        DBQuery(sprintf("UPDATE uo_game SET time='%s 14:00:00' WHERE game_id=%d", $today, self::GAME));
+        DBQuery(sprintf("UPDATE uo_game SET time='%s 14:00:00' WHERE game_id=%d", self::today(), self::GAME));
         self::flushQueryCaches();
 
         $this->get('/scorekeeper/index.php?view=login');
@@ -224,6 +223,15 @@ final class ScoreTapFlowTest extends TestCase
 
     public function testRequestNamingTwoGamesIsRefused(): void
     {
+        // Cover game 700 too, so only the two-game rule can refuse the request.
+        $token = bin2hex(random_bytes(16));
+        DBQuery(sprintf("INSERT INTO uo_scorekeeper_token (token, game) VALUES ('%s', 700)", $token));
+        DBQuery(sprintf("UPDATE uo_game SET time='%s 10:00:00' WHERE game_id=700", self::today()));
+        self::flushQueryCaches();
+        $this->get('/scorekeeper/index.php?t=' . $token);
+        [$status] = $this->get('/scorekeeper/index.php?view=addresult&game=700');
+        $this->assertStringContainsString(' 200 ', $status);
+
         [$status, , $headers] = $this->post('/scorekeeper/index.php?view=addresult&game=700', ['game' => (string) self::GAME, 'homeplus' => '1']);
 
         $this->assertStringContainsString(' 302 ', $status);
@@ -361,7 +369,13 @@ final class ScoreTapFlowTest extends TestCase
                 timer_start=NULL, timer_pause_start=NULL, timer_paused_duration=0 WHERE game_id=%d",
             self::GAME,
         ));
+        DBQuery("UPDATE uo_game SET time='2026-06-01 10:00:00' WHERE game_id=700");
         self::flushQueryCaches();
+    }
+
+    private static function today(): string
+    {
+        return (new DateTimeImmutable('now', new DateTimeZone('Europe/Helsinki')))->format('Y-m-d');
     }
 
     private static function flushQueryCaches(): void
