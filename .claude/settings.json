@@ -19,5 +19,20 @@
       "Bash(./libtest:scaffold *)",
       "Bash(./test:js *)"
     ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.file_path // empty' | { read -r f; case \"$f\" in \"$CLAUDE_PROJECT_DIR\"/*.php) out=$(php -l \"$f\" 2>&1) || { printf '%s\\n' \"$out\" >&2; exit 2; };; esac; }",
+            "timeout": 30,
+            "statusMessage": "Checking PHP syntax"
+          }
+        ]
+      }
+    ]
   }
 }
