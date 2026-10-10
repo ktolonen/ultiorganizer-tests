@@ -1,17 +1,4 @@
 {
   "_comment": "PHP log lines the gate tolerates. Each entry is a regex matched against one log line plus the reason it is tolerated. Fix in the SUT, then delete the entry. Matches are listed in the summary as known, never silently dropped.",
-  "known": [
-    {
-      "pattern": "Trying to access array offset on null in .*/admin/(editgame|editstanding|poolgames)\\.php",
-      "reason": "SUT: admin editors dereference the lookup result without checking it when the crawler opens them with a missing or invalid game/pool id."
-    },
-    {
-      "pattern": "Trying to access array offset on null in .*/lib/game\\.functions\\.php on line 1240",
-      "reason": "SUT: GameHasStarted() reads $gameInfo['hasstarted'] without a null check; reached through admin/editgame.php with an invalid game id."
-    },
-    {
-      "pattern": "Undefined array key \"backurl\" in .*/admin/serieteams\\.php",
-      "reason": "SUT: serieteams.php reads $_POST['backurl'] unguarded on save."
-    }
-  ]
+  "known": []
 }
