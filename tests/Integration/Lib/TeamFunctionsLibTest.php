@@ -755,7 +755,6 @@ final class TeamFunctionsLibTest extends TestCase
         $tmp = tempnam(sys_get_temp_dir(), 'uo_upl_') . '.jpg';
         $img = imagecreatetruecolor(60, 40);
         imagejpeg($img, $tmp);
-        imagedestroy($img);
         $_FILES['picture'] = ['name' => 'p.jpg', 'type' => 'image/jpeg', 'tmp_name' => $tmp, 'error' => 0, 'size' => filesize($tmp)];
 
         $teamDir = LegacyApp::sutRoot() . '/images/uploads/teams/300';

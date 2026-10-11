@@ -47,7 +47,6 @@ final class ImageFunctionsLibTest extends TestCase
             'png' => imagepng($img, $path),
             'gif' => imagegif($img, $path),
         };
-        imagedestroy($img);
         return $path;
     }
 
@@ -97,7 +96,6 @@ final class ImageFunctionsLibTest extends TestCase
         $dest = $this->tmp('.jpg');
         @unlink($dest); // start clean
         $result = WriteJpegImage($img, $dest);
-        imagedestroy($img);
         $this->assertTrue($result);
         $this->assertFileExists($dest);
         $info = getimagesize($dest);
@@ -108,7 +106,6 @@ final class ImageFunctionsLibTest extends TestCase
     {
         $img = imagecreatetruecolor(10, 10);
         $result = WriteJpegImage($img, '/tmp/uo_nonexistent_dir_xyz/out.jpg');
-        imagedestroy($img);
         $this->assertFalse($result);
     }
 
@@ -212,7 +209,6 @@ final class ImageFunctionsLibTest extends TestCase
         $src = $this->tmp('.bmp');
         $img = imagecreatetruecolor(4, 4);
         imagebmp($img, $src);
-        imagedestroy($img);
         $this->assertFalse(ConvertToJpeg($src, $this->tmp('.jpg')));
     }
 
@@ -222,7 +218,6 @@ final class ImageFunctionsLibTest extends TestCase
         $src = $this->tmp('.bmp');
         $img = imagecreatetruecolor(4, 4);
         imagebmp($img, $src);
-        imagedestroy($img);
         $this->assertFalse(CreateThumb($src, $this->tmp('.jpg'), 20, 20));
     }
 

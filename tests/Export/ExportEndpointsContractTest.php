@@ -224,7 +224,7 @@ final class ExportEndpointsContractTest extends TestCase
             if (trim($line) === '') {
                 continue;
             }
-            $rows[] = str_getcsv($line);
+            $rows[] = str_getcsv($line, ',', '"', '\\');
         }
         return $rows;
     }

@@ -455,7 +455,6 @@ final class ClubFunctionsLibTest extends TestCase
         $tmpFile = tempnam(sys_get_temp_dir(), 'uo_harness_club_');
         $img = imagecreatetruecolor(10, 10);
         imagejpeg($img, $tmpFile);
-        imagedestroy($img);
 
         $_FILES['picture'] = [
             'size'     => filesize($tmpFile),

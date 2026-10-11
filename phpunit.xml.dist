@@ -3,6 +3,8 @@
   bootstrap="tests/bootstrap.php"
   cacheDirectory=".runtime/phpunit-cache"
   colors="true"
+  failOnDeprecation="true"
+  failOnPhpunitDeprecation="true"
 >
   <testsuites>
     <testsuite name="Unit">

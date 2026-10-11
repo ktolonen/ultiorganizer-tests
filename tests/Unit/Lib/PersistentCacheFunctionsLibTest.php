@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use PHPUnit\Framework\Attributes\RunInSeparateProcess;
 use PHPUnit\Framework\TestCase;
 use UltiorganizerHarness\Support\LegacyApp;
 
@@ -558,9 +559,7 @@ final class PersistentCacheFunctionsLibTest extends TestCase
     // --- PERSISTENT_CACHE_DIR constant paths (lines 173, 176) ---
     // Must run in a separate process so we can define the constant fresh.
 
-    /**
-     * @runInSeparateProcess
-     */
+    #[RunInSeparateProcess]
     public function testCacheDirRespectsEmptyPersistentCacheDirConstant(): void
     {
         LegacyApp::loadLibFileUsingProfile('persistent-cache.functions.php', 'bootstrap_only');
