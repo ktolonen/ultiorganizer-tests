@@ -1176,6 +1176,9 @@ final class SeasonFunctionsLibTest extends TestCase
         DBQuery("INSERT INTO uo_userproperties (userid, name, value) VALUES ('admin', 'userrole', 'teamadmin:99300')");
         DBQuery("INSERT INTO uo_userproperties (userid, name, value) VALUES ('admin', 'editseason', 'SIMT01')");
         DBQuery("INSERT INTO uo_userproperties (userid, name, value) VALUES ('admin', 'userrole', 'playeradmin:99700')");
+        DBQuery("INSERT INTO uo_userproperties (userid, name, value)
+            VALUES ('admin', 'poolselector', 'season:SIMT01'), ('admin', 'poolselector', 'series:99100'),
+            ('admin', 'poolselector', 'team:99300')");
         DBQuery("INSERT INTO uo_accreditationlog (player, team, userid, source, value) VALUES (99800, 99300, 'admin', 'test', 1)");
         DBQuery("INSERT INTO uo_api_token (token_hash, scope_type, scope_id)
             VALUES ('" . str_repeat('e', 64) . "', 'season', 'SIMT01')");
@@ -1230,6 +1233,8 @@ final class SeasonFunctionsLibTest extends TestCase
             $this->assertDirectoryDoesNotExist($playerDir);
             $this->assertEquals(0, DBQueryToValue("SELECT COUNT(*) FROM uo_accreditationlog WHERE player=99800 OR team=99300"));
             $this->assertEquals(0, DBQueryToValue("SELECT COUNT(*) FROM uo_userproperties WHERE value='playeradmin:99700'"));
+            $this->assertEquals(0, DBQueryToValue("SELECT COUNT(*) FROM uo_userproperties WHERE name='poolselector'
+                AND value IN ('season:SIMT01', 'series:99100', 'team:99300')"));
         } finally {
             @unlink("$bannerDir/$banner");
             @unlink("$teamDir/thumbs/team.jpg");
@@ -1249,6 +1254,8 @@ final class SeasonFunctionsLibTest extends TestCase
             DBQuery("DELETE FROM uo_player WHERE player_id=99800");
             DBQuery("DELETE FROM uo_accreditationlog WHERE player=99800 OR team=99300");
             DBQuery("DELETE FROM uo_userproperties WHERE value='playeradmin:99700'");
+            DBQuery("DELETE FROM uo_userproperties WHERE name='poolselector'
+                AND value IN ('season:SIMT01', 'series:99100', 'team:99300')");
             DBQuery("DELETE FROM uo_player_profile WHERE profile_id=99700");
             DBQuery("DELETE FROM uo_api_token WHERE scope_type='season' AND scope_id='SIMT01'");
             DBQuery("DELETE FROM uo_userproperties WHERE (name='userrole' AND value='teamadmin:99300')
