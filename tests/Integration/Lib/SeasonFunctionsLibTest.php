@@ -1174,6 +1174,9 @@ final class SeasonFunctionsLibTest extends TestCase
         DBQuery("INSERT INTO uo_userproperties (userid, name, value) VALUES ('admin', 'editseason', 'SIMT01')");
         DBQuery("INSERT INTO uo_api_token (token_hash, scope_type, scope_id)
             VALUES ('" . str_repeat('e', 64) . "', 'season', 'SIMT01')");
+        DBQuery("INSERT INTO uo_comment (type, id, comment) VALUES (1, 'SIMT01', 'Event'), (2, '99100', 'Division')");
+        DBQuery("INSERT INTO uo_urls (owner, owner_id, name, url)
+            VALUES ('ultiorganizer', 'SIMT01', 'Event', 'https://example.com/'), ('team', '99300', 'Team', 'https://example.com/')");
         $bannerDir = LegacyApp::sutRoot() . '/images/uploads/banners';
         if (!is_dir($bannerDir)) {
             mkdir($bannerDir, 0775, true);
@@ -1196,8 +1199,14 @@ final class SeasonFunctionsLibTest extends TestCase
             $this->assertEquals(0, DBQueryToValue("SELECT COUNT(*) FROM uo_api_token
                 WHERE scope_type='season' AND scope_id='SIMT01'"));
             $this->assertFileDoesNotExist("$bannerDir/$banner");
+            $this->assertEquals(0, DBQueryToValue("SELECT COUNT(*) FROM uo_comment
+                WHERE (type=1 AND id='SIMT01') OR (type=2 AND id='99100')"));
+            $this->assertEquals(0, DBQueryToValue("SELECT COUNT(*) FROM uo_urls
+                WHERE (owner='ultiorganizer' AND owner_id='SIMT01') OR (owner='team' AND owner_id='99300')"));
         } finally {
             @unlink("$bannerDir/$banner");
+            DBQuery("DELETE FROM uo_comment WHERE (type=1 AND id='SIMT01') OR (type=2 AND id='99100')");
+            DBQuery("DELETE FROM uo_urls WHERE (owner='ultiorganizer' AND owner_id='SIMT01') OR (owner='team' AND owner_id='99300')");
             DBQuery("DELETE FROM uo_api_token WHERE scope_type='season' AND scope_id='SIMT01'");
             DBQuery("DELETE FROM uo_userproperties WHERE (name='userrole' AND value='teamadmin:99300')
                 OR (name='editseason' AND value='SIMT01')");
