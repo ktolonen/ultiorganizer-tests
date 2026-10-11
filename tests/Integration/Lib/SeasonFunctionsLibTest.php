@@ -1196,4 +1196,32 @@ final class SeasonFunctionsLibTest extends TestCase
             $_SESSION = [];
         }
     }
+
+    public function testDeleteSeasonWithDataKeepsGamesOwnedByAnotherEvent(): void
+    {
+        LegacyApp::loadLibFilesUsingProfile(['statistical.functions.php'], 'database_only');
+        LegacyApp::loginAsAdmin();
+        DBQuery("INSERT INTO uo_season (season_id, name) VALUES ('SIMT02', 'Simulated test')");
+        DBQuery("INSERT INTO uo_series (series_id, season, name, valid) VALUES (99101, 'SIMT02', 'Open', 1)");
+        DBQuery("INSERT INTO uo_pool (pool_id, series, name, visible, continuingpool, played)
+            VALUES (99201, 99101, 'Pool A', 1, 0, 0)");
+        // Game 700 is owned by HRN2026 and only carried over into the deleted event's pool.
+        DBQuery("INSERT INTO uo_game_pool (game, pool, timetable) VALUES (700, 99201, 0)");
+        ClearSeasonRuntimeCache();
+
+        try {
+            $this->assertTrue(DeleteSeasonWithData('SIMT02'));
+            $this->assertEquals(1, DBQueryToValue("SELECT COUNT(*) FROM uo_game WHERE game_id=700"));
+            $this->assertEquals(1, DBQueryToValue("SELECT COUNT(*) FROM uo_game_pool
+                WHERE game=700 AND pool=200 AND timetable=1"));
+            $this->assertEquals(0, DBQueryToValue("SELECT COUNT(*) FROM uo_game_pool WHERE pool=99201"));
+        } finally {
+            DBQuery("DELETE FROM uo_game_pool WHERE pool=99201");
+            DBQuery("DELETE FROM uo_pool WHERE pool_id=99201");
+            DBQuery("DELETE FROM uo_series WHERE series_id=99101");
+            DBQuery("DELETE FROM uo_season WHERE season_id='SIMT02'");
+            ClearSeasonRuntimeCache();
+            $_SESSION = [];
+        }
+    }
 }
