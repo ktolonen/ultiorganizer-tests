@@ -1184,6 +1184,15 @@ final class SeasonFunctionsLibTest extends TestCase
         $banner = 'test-simt01-' . uniqid() . '.jpg';
         file_put_contents("$bannerDir/$banner", 'fake image bytes');
         DBQuery("UPDATE uo_season SET banner_image='$banner' WHERE season_id='SIMT01'");
+        $teamDir = LegacyApp::sutRoot() . '/images/uploads/teams/99300';
+        mkdir("$teamDir/thumbs", 0775, true);
+        file_put_contents("$teamDir/team.jpg", 'fake image bytes');
+        file_put_contents("$teamDir/thumbs/team.jpg", 'fake image bytes');
+        // The location's only reservation is in the deleted event, but HRN2026 has transfer times for it.
+        DBQuery("INSERT INTO uo_location (id, name) VALUES (99500, 'Field A')");
+        DBQuery("INSERT INTO uo_reservation (location, season) VALUES (99500, 'SIMT01')");
+        DBQuery("INSERT INTO uo_movingtime (season, fromlocation, fromfield, tolocation, tofield)
+            VALUES ('HRN2026', 99500, '1', 99500, '2')");
         SetUserSessionData('admin');
         ClearSeasonRuntimeCache();
 
@@ -1199,12 +1208,21 @@ final class SeasonFunctionsLibTest extends TestCase
             $this->assertEquals(0, DBQueryToValue("SELECT COUNT(*) FROM uo_api_token
                 WHERE scope_type='season' AND scope_id='SIMT01'"));
             $this->assertFileDoesNotExist("$bannerDir/$banner");
+            $this->assertDirectoryDoesNotExist($teamDir);
+            $this->assertEquals(1, DBQueryToValue("SELECT COUNT(*) FROM uo_location WHERE id=99500"));
             $this->assertEquals(0, DBQueryToValue("SELECT COUNT(*) FROM uo_comment
                 WHERE (type=1 AND id='SIMT01') OR (type=2 AND id='99100')"));
             $this->assertEquals(0, DBQueryToValue("SELECT COUNT(*) FROM uo_urls
                 WHERE (owner='ultiorganizer' AND owner_id='SIMT01') OR (owner='team' AND owner_id='99300')"));
         } finally {
             @unlink("$bannerDir/$banner");
+            @unlink("$teamDir/thumbs/team.jpg");
+            @unlink("$teamDir/team.jpg");
+            @rmdir("$teamDir/thumbs");
+            @rmdir($teamDir);
+            DBQuery("DELETE FROM uo_movingtime WHERE fromlocation=99500");
+            DBQuery("DELETE FROM uo_reservation WHERE location=99500");
+            DBQuery("DELETE FROM uo_location WHERE id=99500");
             DBQuery("DELETE FROM uo_comment WHERE (type=1 AND id='SIMT01') OR (type=2 AND id='99100')");
             DBQuery("DELETE FROM uo_urls WHERE (owner='ultiorganizer' AND owner_id='SIMT01') OR (owner='team' AND owner_id='99300')");
             DBQuery("DELETE FROM uo_api_token WHERE scope_type='season' AND scope_id='SIMT01'");
@@ -1269,6 +1287,42 @@ final class SeasonFunctionsLibTest extends TestCase
             DBQuery("DELETE FROM uo_team WHERE team_id=99303");
             DBQuery("DELETE FROM uo_series WHERE series_id=99103");
             DBQuery("DELETE FROM uo_season WHERE season_id='SIMT03'");
+            ClearSeasonRuntimeCache();
+            $_SESSION = [];
+        }
+    }
+
+    public function testDeleteSeasonWithDataKeepsSchedulingNameUsedAsAnotherEventsRespTeam(): void
+    {
+        LegacyApp::loadLibFilesUsingProfile(['statistical.functions.php'], 'database_only');
+        LegacyApp::loginAsAdmin();
+        DBQuery("INSERT INTO uo_season (season_id, name) VALUES ('SIMT04', 'Simulated test')");
+        DBQuery("INSERT INTO uo_series (series_id, season, name, valid) VALUES (99104, 'SIMT04', 'Open', 1)");
+        DBQuery("INSERT INTO uo_pool (pool_id, series, name, visible, continuingpool, played)
+            VALUES (99204, 99104, 'Pool A', 1, 0, 0), (99205, 99104, 'Final', 1, 1, 0)");
+        DBQuery("INSERT INTO uo_team (team_id, series, name, valid) VALUES (99304, 99104, 'Team A', 1)");
+        DBQuery("INSERT INTO uo_scheduling_name (scheduling_id, name) VALUES (99304, 'Winner A')");
+        DBQuery("INSERT INTO uo_moveteams (frompool, topool, fromplacing, torank, scheduling_id)
+            VALUES (99204, 99205, 1, 1, 99304)");
+        $game = DBQueryToRow("SELECT hometeam, respteam FROM uo_game WHERE game_id=701");
+        // Game 701 is owned by HRN2026 and, with no home team, its respteam is the
+        // scheduling name 99304, numerically equal to the deleted event's team.
+        DBQuery("UPDATE uo_game SET hometeam=NULL, respteam=99304 WHERE game_id=701");
+        ClearSeasonRuntimeCache();
+
+        try {
+            $this->assertTrue(DeleteSeasonWithData('SIMT04'));
+            $this->assertEquals(1, DBQueryToValue("SELECT COUNT(*) FROM uo_scheduling_name WHERE scheduling_id=99304"));
+        } finally {
+            $nullable = fn($v) => $v === null ? "NULL" : (int) $v;
+            DBQuery("UPDATE uo_game SET hometeam=" . $nullable($game['hometeam']) . ",
+                respteam=" . $nullable($game['respteam']) . " WHERE game_id=701");
+            DBQuery("DELETE FROM uo_moveteams WHERE frompool=99204");
+            DBQuery("DELETE FROM uo_scheduling_name WHERE scheduling_id=99304");
+            DBQuery("DELETE FROM uo_team WHERE team_id=99304");
+            DBQuery("DELETE FROM uo_pool WHERE pool_id IN (99204, 99205)");
+            DBQuery("DELETE FROM uo_series WHERE series_id=99104");
+            DBQuery("DELETE FROM uo_season WHERE season_id='SIMT04'");
             ClearSeasonRuntimeCache();
             $_SESSION = [];
         }
