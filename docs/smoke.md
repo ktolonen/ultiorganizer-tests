@@ -20,6 +20,7 @@ The remaining classes pin logic that lives in page files rather than `lib/`, so 
 - cross-event checks, where an id from another event must be refused
 - rights checks before a page acts
 - page content: gameplay replay, standings, team cards, series status
+- plugins and admin pages run as the fixture superadmin: `SimulateEventPluginTest` generates and deletes a small event (its token, range and delete-guard rules), `SelectTeamsPageTest` pins the team editor's unknown-division warning and list markup
 - login-gated editors such as `ScoresheetPageTest` and `ScoresheetHistoryPageTest`, which log in as the fixture superadmin and restore any rows they change
 
 Rules for these tests:
