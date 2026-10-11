@@ -1172,6 +1172,15 @@ final class SeasonFunctionsLibTest extends TestCase
         DBQuery("INSERT INTO uo_series_stats (series_id, season) VALUES (99100, 'SIMT01')");
         DBQuery("INSERT INTO uo_userproperties (userid, name, value) VALUES ('admin', 'userrole', 'teamadmin:99300')");
         DBQuery("INSERT INTO uo_userproperties (userid, name, value) VALUES ('admin', 'editseason', 'SIMT01')");
+        DBQuery("INSERT INTO uo_api_token (token_hash, scope_type, scope_id)
+            VALUES ('" . str_repeat('e', 64) . "', 'season', 'SIMT01')");
+        $bannerDir = LegacyApp::sutRoot() . '/images/uploads/banners';
+        if (!is_dir($bannerDir)) {
+            mkdir($bannerDir, 0775, true);
+        }
+        $banner = 'test-simt01-' . uniqid() . '.jpg';
+        file_put_contents("$bannerDir/$banner", 'fake image bytes');
+        DBQuery("UPDATE uo_season SET banner_image='$banner' WHERE season_id='SIMT01'");
         SetUserSessionData('admin');
         ClearSeasonRuntimeCache();
 
@@ -1184,7 +1193,12 @@ final class SeasonFunctionsLibTest extends TestCase
                 WHERE (name='userrole' AND value='teamadmin:99300') OR (name='editseason' AND value='SIMT01')"));
             $this->assertArrayNotHasKey(99300, $_SESSION['userproperties']['userrole']['teamadmin'] ?? []);
             $this->assertArrayNotHasKey('SIMT01', $_SESSION['userproperties']['editseason'] ?? []);
+            $this->assertEquals(0, DBQueryToValue("SELECT COUNT(*) FROM uo_api_token
+                WHERE scope_type='season' AND scope_id='SIMT01'"));
+            $this->assertFileDoesNotExist("$bannerDir/$banner");
         } finally {
+            @unlink("$bannerDir/$banner");
+            DBQuery("DELETE FROM uo_api_token WHERE scope_type='season' AND scope_id='SIMT01'");
             DBQuery("DELETE FROM uo_userproperties WHERE (name='userrole' AND value='teamadmin:99300')
                 OR (name='editseason' AND value='SIMT01')");
             DBQuery("DELETE FROM uo_series_stats WHERE season='SIMT01'");
