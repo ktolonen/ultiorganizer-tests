@@ -1247,4 +1247,30 @@ final class SeasonFunctionsLibTest extends TestCase
             $_SESSION = [];
         }
     }
+
+    public function testDeleteSeasonWithDataRefusesWhenAnotherEventsGameUsesItsTeam(): void
+    {
+        LegacyApp::loadLibFilesUsingProfile(['statistical.functions.php'], 'database_only');
+        LegacyApp::loginAsAdmin();
+        DBQuery("INSERT INTO uo_season (season_id, name) VALUES ('SIMT03', 'Simulated test')");
+        DBQuery("INSERT INTO uo_series (series_id, season, name, valid) VALUES (99103, 'SIMT03', 'Open', 1)");
+        DBQuery("INSERT INTO uo_team (team_id, series, name, valid) VALUES (99303, 99103, 'Team A', 1)");
+        $respTeam = DBQueryToValue("SELECT respteam FROM uo_game WHERE game_id=701");
+        // Game 701 is owned by HRN2026 but, as after a move between events, uses the team.
+        DBQuery("UPDATE uo_game SET respteam=99303 WHERE game_id=701");
+        ClearSeasonRuntimeCache();
+
+        try {
+            $this->assertFalse(DeleteSeasonWithData('SIMT03'));
+            $this->assertTrue(SeasonExists('SIMT03'));
+            $this->assertEquals(1, DBQueryToValue("SELECT COUNT(*) FROM uo_team WHERE team_id=99303"));
+        } finally {
+            DBQuery("UPDATE uo_game SET respteam=" . ($respTeam === null ? "NULL" : (int) $respTeam) . " WHERE game_id=701");
+            DBQuery("DELETE FROM uo_team WHERE team_id=99303");
+            DBQuery("DELETE FROM uo_series WHERE series_id=99103");
+            DBQuery("DELETE FROM uo_season WHERE season_id='SIMT03'");
+            ClearSeasonRuntimeCache();
+            $_SESSION = [];
+        }
+    }
 }

@@ -319,6 +319,18 @@ final class SpiritFunctionsLibTest extends TestCase
         $this->assertSame(5, $count);
     }
 
+    public function testSpiritScoreDeleteByGameRemovesScoresOfEveryTeam(): void
+    {
+        $this->submitHomeSpirit();
+        $this->submitVisitorSpirit();
+        SpiritScoreReplaceByGameTeam(701, 300, [1009 => 2]);
+
+        SpiritScoreDeleteByGame(700);
+
+        $this->assertSame(0, (int) DBQueryToValue("SELECT COUNT(*) FROM uo_spirit_score WHERE game_id=700"));
+        $this->assertSame(1, (int) DBQueryToValue("SELECT COUNT(*) FROM uo_spirit_score WHERE game_id=701"));
+    }
+
     public function testSpiritScoreReplaceByGameTeamOverwritesPrevious(): void
     {
         $this->submitHomeSpirit();
