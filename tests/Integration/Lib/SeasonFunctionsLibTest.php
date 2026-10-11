@@ -1160,4 +1160,40 @@ final class SeasonFunctionsLibTest extends TestCase
             $_SESSION = [];
         }
     }
+
+    public function testDeleteSeasonWithDataRemovesArchivedStatsAndEventAccess(): void
+    {
+        LegacyApp::loadLibFilesUsingProfile(['statistical.functions.php'], 'database_only');
+        LegacyApp::loginAsAdmin();
+        DBQuery("INSERT INTO uo_season (season_id, name) VALUES ('SIMT01', 'Simulated test')");
+        DBQuery("INSERT INTO uo_series (series_id, season, name, valid) VALUES (99100, 'SIMT01', 'Open', 1)");
+        DBQuery("INSERT INTO uo_team (team_id, series, name, valid) VALUES (99300, 99100, 'Team A', 1)");
+        DBQuery("INSERT INTO uo_season_stats (season) VALUES ('SIMT01')");
+        DBQuery("INSERT INTO uo_series_stats (series_id, season) VALUES (99100, 'SIMT01')");
+        DBQuery("INSERT INTO uo_userproperties (userid, name, value) VALUES ('admin', 'userrole', 'teamadmin:99300')");
+        DBQuery("INSERT INTO uo_userproperties (userid, name, value) VALUES ('admin', 'editseason', 'SIMT01')");
+        SetUserSessionData('admin');
+        ClearSeasonRuntimeCache();
+
+        try {
+            $this->assertTrue(DeleteSeasonWithData('SIMT01'));
+            $this->assertFalse(SeasonExists('SIMT01'));
+            $this->assertEquals(0, DBQueryToValue("SELECT COUNT(*) FROM uo_season_stats WHERE season='SIMT01'"));
+            $this->assertEquals(0, DBQueryToValue("SELECT COUNT(*) FROM uo_series_stats WHERE season='SIMT01'"));
+            $this->assertEquals(0, DBQueryToValue("SELECT COUNT(*) FROM uo_userproperties
+                WHERE (name='userrole' AND value='teamadmin:99300') OR (name='editseason' AND value='SIMT01')"));
+            $this->assertArrayNotHasKey(99300, $_SESSION['userproperties']['userrole']['teamadmin'] ?? []);
+            $this->assertArrayNotHasKey('SIMT01', $_SESSION['userproperties']['editseason'] ?? []);
+        } finally {
+            DBQuery("DELETE FROM uo_userproperties WHERE (name='userrole' AND value='teamadmin:99300')
+                OR (name='editseason' AND value='SIMT01')");
+            DBQuery("DELETE FROM uo_series_stats WHERE season='SIMT01'");
+            DBQuery("DELETE FROM uo_season_stats WHERE season='SIMT01'");
+            DBQuery("DELETE FROM uo_team WHERE team_id=99300");
+            DBQuery("DELETE FROM uo_series WHERE series_id=99100");
+            DBQuery("DELETE FROM uo_season WHERE season_id='SIMT01'");
+            ClearSeasonRuntimeCache();
+            $_SESSION = [];
+        }
+    }
 }
