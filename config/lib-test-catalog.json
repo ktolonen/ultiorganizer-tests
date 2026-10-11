@@ -730,22 +730,6 @@
       "triage_notes": "51.7% line / 100% fn \u2014 ceiling. requireRoutedView() calls header(Location)+exit() in the redirect branch; routedViewFromScript() return paths are covered. The redirect+exit path is die-blocked and cannot be tested in-process.",
       "notes": "",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/view.guard.php"
-    },
-    {
-      "lib_file": "yui.functions.php",
-      "lib_path": "lib/yui.functions.php",
-      "subject_id": "yui.functions",
-      "test_suite": "unit",
-      "test_path": "tests/Unit/Lib/YuiFunctionsLibTest.php",
-      "test_class": "YuiFunctionsLibTest",
-      "strategy": "direct_helper",
-      "load_profile": "bootstrap_only",
-      "test_path_exists": true,
-      "status": "covered",
-      "triage_status": "triaged",
-      "triage_notes": "Meets \u226580% line and 100% fn targets. Tests cover YUI asset URL generation helpers.",
-      "notes": "",
-      "sut_path": "/home/kari/dev/ultiorganizer/lib/yui.functions.php"
     }
   ]
 }

@@ -37,7 +37,6 @@
     </include>
     <exclude>
       <directory>.runtime/webroot/lib/tfpdf</directory>
-      <directory>.runtime/webroot/lib/yuiloader</directory>
       <directory>.runtime/webroot/lib/phpqrcode</directory>
       <directory>.runtime/webroot/lib/feed_generator</directory>
       <directory>.runtime/webroot/lib/hsvclass</directory>
