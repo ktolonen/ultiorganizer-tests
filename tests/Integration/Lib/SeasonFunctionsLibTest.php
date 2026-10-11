@@ -1167,7 +1167,10 @@ final class SeasonFunctionsLibTest extends TestCase
         LegacyApp::loginAsAdmin();
         DBQuery("INSERT INTO uo_season (season_id, name) VALUES ('SIMT01', 'Simulated test')");
         DBQuery("INSERT INTO uo_series (series_id, season, name, valid) VALUES (99100, 'SIMT01', 'Open', 1)");
-        DBQuery("INSERT INTO uo_team (team_id, series, name, valid) VALUES (99300, 99100, 'Team A', 1)");
+        DBQuery("INSERT INTO uo_club (club_id, name) VALUES (99600, 'Club A')");
+        DBQuery("INSERT INTO uo_team (team_id, series, name, valid, club) VALUES (99300, 99100, 'Team A', 1, 99600)");
+        DBQuery("INSERT INTO uo_player_profile (profile_id, firstname) VALUES (99700, 'Player 1')");
+        DBQuery("INSERT INTO uo_player (player_id, team, profile_id, firstname) VALUES (99800, 99300, 99700, 'Player 1')");
         DBQuery("INSERT INTO uo_season_stats (season) VALUES ('SIMT01')");
         DBQuery("INSERT INTO uo_series_stats (series_id, season) VALUES (99100, 'SIMT01')");
         DBQuery("INSERT INTO uo_userproperties (userid, name, value) VALUES ('admin', 'userrole', 'teamadmin:99300')");
@@ -1176,7 +1179,8 @@ final class SeasonFunctionsLibTest extends TestCase
             VALUES ('" . str_repeat('e', 64) . "', 'season', 'SIMT01')");
         DBQuery("INSERT INTO uo_comment (type, id, comment) VALUES (1, 'SIMT01', 'Event'), (2, '99100', 'Division')");
         DBQuery("INSERT INTO uo_urls (owner, owner_id, name, url)
-            VALUES ('ultiorganizer', 'SIMT01', 'Event', 'https://example.com/'), ('team', '99300', 'Team', 'https://example.com/')");
+            VALUES ('ultiorganizer', 'SIMT01', 'Event', 'https://example.com/'), ('team', '99300', 'Team', 'https://example.com/'),
+            ('player', '99700', 'Player', 'https://example.com/'), ('club', '99600', 'Club', 'https://example.com/')");
         $bannerDir = LegacyApp::sutRoot() . '/images/uploads/banners';
         if (!is_dir($bannerDir)) {
             mkdir($bannerDir, 0775, true);
@@ -1188,6 +1192,10 @@ final class SeasonFunctionsLibTest extends TestCase
         mkdir("$teamDir/thumbs", 0775, true);
         file_put_contents("$teamDir/team.jpg", 'fake image bytes');
         file_put_contents("$teamDir/thumbs/team.jpg", 'fake image bytes');
+        $playerDir = LegacyApp::sutRoot() . '/images/uploads/players/99700';
+        mkdir("$playerDir/thumbs", 0775, true);
+        file_put_contents("$playerDir/player.jpg", 'fake image bytes');
+        file_put_contents("$playerDir/thumbs/player.jpg", 'fake image bytes');
         // The location's only reservation is in the deleted event, but HRN2026 has transfer times for it.
         DBQuery("INSERT INTO uo_location (id, name) VALUES (99500, 'Field A')");
         DBQuery("INSERT INTO uo_reservation (location, season) VALUES (99500, 'SIMT01')");
@@ -1213,7 +1221,11 @@ final class SeasonFunctionsLibTest extends TestCase
             $this->assertEquals(0, DBQueryToValue("SELECT COUNT(*) FROM uo_comment
                 WHERE (type=1 AND id='SIMT01') OR (type=2 AND id='99100')"));
             $this->assertEquals(0, DBQueryToValue("SELECT COUNT(*) FROM uo_urls
-                WHERE (owner='ultiorganizer' AND owner_id='SIMT01') OR (owner='team' AND owner_id='99300')"));
+                WHERE (owner='ultiorganizer' AND owner_id='SIMT01') OR (owner='team' AND owner_id='99300')
+                OR (owner='player' AND owner_id='99700') OR (owner='club' AND owner_id='99600')"));
+            $this->assertEquals(0, DBQueryToValue("SELECT COUNT(*) FROM uo_player_profile WHERE profile_id=99700"));
+            $this->assertEquals(0, DBQueryToValue("SELECT COUNT(*) FROM uo_club WHERE club_id=99600"));
+            $this->assertDirectoryDoesNotExist($playerDir);
         } finally {
             @unlink("$bannerDir/$banner");
             @unlink("$teamDir/thumbs/team.jpg");
@@ -1224,13 +1236,21 @@ final class SeasonFunctionsLibTest extends TestCase
             DBQuery("DELETE FROM uo_reservation WHERE location=99500");
             DBQuery("DELETE FROM uo_location WHERE id=99500");
             DBQuery("DELETE FROM uo_comment WHERE (type=1 AND id='SIMT01') OR (type=2 AND id='99100')");
-            DBQuery("DELETE FROM uo_urls WHERE (owner='ultiorganizer' AND owner_id='SIMT01') OR (owner='team' AND owner_id='99300')");
+            DBQuery("DELETE FROM uo_urls WHERE (owner='ultiorganizer' AND owner_id='SIMT01') OR (owner='team' AND owner_id='99300')
+                OR (owner='player' AND owner_id='99700') OR (owner='club' AND owner_id='99600')");
+            @unlink("$playerDir/thumbs/player.jpg");
+            @unlink("$playerDir/player.jpg");
+            @rmdir("$playerDir/thumbs");
+            @rmdir($playerDir);
+            DBQuery("DELETE FROM uo_player WHERE player_id=99800");
+            DBQuery("DELETE FROM uo_player_profile WHERE profile_id=99700");
             DBQuery("DELETE FROM uo_api_token WHERE scope_type='season' AND scope_id='SIMT01'");
             DBQuery("DELETE FROM uo_userproperties WHERE (name='userrole' AND value='teamadmin:99300')
                 OR (name='editseason' AND value='SIMT01')");
             DBQuery("DELETE FROM uo_series_stats WHERE season='SIMT01'");
             DBQuery("DELETE FROM uo_season_stats WHERE season='SIMT01'");
             DBQuery("DELETE FROM uo_team WHERE team_id=99300");
+            DBQuery("DELETE FROM uo_club WHERE club_id=99600");
             DBQuery("DELETE FROM uo_series WHERE series_id=99100");
             DBQuery("DELETE FROM uo_season WHERE season_id='SIMT01'");
             ClearSeasonRuntimeCache();
