@@ -4,7 +4,7 @@ A fixture pack is deterministic SQL loaded after the SUT's production schema, in
 
 ## Baseline Pack
 
-`fixtures/baseline.sql` is the only pack. It contains:
+`fixtures/baseline.sql` is the main pack. It contains:
 
 - server settings (for example `CurrentSeason=HRN2026` and locale `en_GB`)
 - season `HRN2026`, which is public and API-public
@@ -14,6 +14,10 @@ A fixture pack is deterministic SQL loaded after the SUT's production schema, in
 - games 700 (played, with players, goals, and events) and 701 (unplayed)
 - user `admin` / `harness-admin` with the superadmin role
 - API token `harness-api-token`, scoped to `HRN2026`
+
+## Pool Template Pack
+
+`fixtures/pool-template.sql` adds one pool template, which the event simulator plugin builds every pool from. Cases opt in with `extra_fixture_packs`; it loads after the main pack.
 
 ## Rules
 

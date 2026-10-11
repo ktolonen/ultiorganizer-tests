@@ -1,1 +1,1 @@
-PHP (Fatal error|Parse error|Warning|Notice|Deprecated|Uncaught)
+PHP (Fatal error|Parse error|Compile error|Compile warning|Core error|Core warning|Warning|Notice|Deprecated|Strict Standards|Unknown error|Uncaught)

@@ -272,6 +272,52 @@
         {"id": "gameplay-game-700", "query": "view=gameplay&game=700"}
       ],
       "tags": ["config-profile", "overrides"]
+    },
+    {
+      "id": "generated-event",
+      "description": "Crawls a generated, played event with playoff pools and spirit scores; any PHP log issue fails the run",
+      "customization": "default",
+      "config_profile": "baseline",
+      "fixture_pack": "baseline",
+      "extra_fixture_packs": ["pool-template"],
+      "database_name": "ultiorganizer_test_generated",
+      "suites": ["crawl"],
+      "crawl_plans": [
+        {
+          "id": "generate-and-play-event",
+          "type": "simulate_event",
+          "auth_user": "admin",
+          "auth_pass": "harness-admin",
+          "event": {
+            "name": "Generated crawl event",
+            "divisions": "3",
+            "teamsMin": "8",
+            "teamsMax": "12",
+            "playersMin": "8",
+            "playersMax": "12",
+            "poolsMin": "2",
+            "poolsMax": "3",
+            "days": "3",
+            "fields": "4",
+            "playoffs": "1",
+            "seed": "11"
+          },
+          "play": {"winner_mode": "rank", "spirit": true}
+        },
+        {
+          "id": "generated-event-follow-links",
+          "type": "follow_links",
+          "start_url_or_path": "?view=teams&season=SIM001&list=bystandings",
+          "auth_user": "admin",
+          "auth_pass": "harness-admin",
+          "max_depth": 5,
+          "max_pages": 800,
+          "max_pages_per_view": 10,
+          "max_visits_per_url": 1,
+          "reject_regex": "([?&]view=(login|logout|register|resultinput|api|admin/(dbadmin|dbbackup|dbequalize|dbrestore|executesql))([&#]|$))"
+        }
+      ],
+      "tags": ["generated", "crawl"]
     }
   ]
 }

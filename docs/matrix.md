@@ -1,6 +1,6 @@
 # Matrix
 
-`config/matrix.json` declares the cases the harness can run. A case fixes the environment: `customization`, `config_profile`, `fixture_pack`, `database_name`, and `suites`, plus optional `smoke_pages`, `crawl_plans`, and `tags`.
+`config/matrix.json` declares the cases the harness can run. A case fixes the environment: `customization`, `config_profile`, `fixture_pack`, `database_name`, and `suites`, plus optional `smoke_pages`, `crawl_plans`, `extra_fixture_packs` (more `fixtures/*.sql` loaded after the main pack), and `tags`.
 
 ## Current Cases
 
@@ -9,8 +9,9 @@
 | `baseline-default` | `baseline` | all seven | Default developer path and reference shape |
 | `customization-{bula,fpudd,gummis,slkl,wfdf,windmill}` | `baseline` | `smoke`, `crawl` (`public-follow-links` only) | Each `cust/*` `CUSTOMIZATIONS` value boots its header, stylesheet, and schedule includes |
 | `config-overrides` | `config-overrides` | `integration`, `smoke` | Non-default config constants and server settings (renders in `fi_FI`) |
+| `generated-event` | `baseline` | `crawl` | Crawls an event generated and played by the simulator plugins, so the PHP log is checked over a realistic event (see `docs/crawl.md`) |
 
-All cases use the `baseline` fixture pack with a unique database name.
+All cases use the `baseline` fixture pack (`generated-event` adds `pool-template`) with a unique database name.
 
 Tests that pass on `baseline-default` can still fail on `config-overrides` (locale, overridden settings), so run `./test:matrix`, not just one case, before pushing.
 

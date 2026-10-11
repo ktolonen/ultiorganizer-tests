@@ -389,15 +389,16 @@ def initialize_database(case: dict, profile: dict, setup_log_path: Path) -> None
             {"output": command_output(schema_result), "schema_path": str(schema_path)},
         )
 
-    fixture_path = FIXTURE_DIR / f"{case['fixture_pack']}.sql"
-    fixture_result = run(base_cmd + [db_name], stdin=fixture_path.read_text(encoding="utf-8"))
-    append_log(setup_log_path, "database_fixture", command_output(fixture_result) or f"Loaded fixture {fixture_path}")
-    if fixture_result.returncode != 0:
-        raise RunnerFailure(
-            "fixture_load_failure",
-            "Loading the harness fixture pack failed",
-            {"output": command_output(fixture_result), "fixture_path": str(fixture_path)},
-        )
+    for pack in [case["fixture_pack"], *case.get("extra_fixture_packs", [])]:
+        fixture_path = FIXTURE_DIR / f"{pack}.sql"
+        fixture_result = run(base_cmd + [db_name], stdin=fixture_path.read_text(encoding="utf-8"))
+        append_log(setup_log_path, "database_fixture", command_output(fixture_result) or f"Loaded fixture {fixture_path}")
+        if fixture_result.returncode != 0:
+            raise RunnerFailure(
+                "fixture_load_failure",
+                "Loading the harness fixture pack failed",
+                {"output": command_output(fixture_result), "fixture_path": str(fixture_path)},
+            )
 
     server_settings = profile.get("server_settings", {})
     if server_settings:
@@ -780,6 +781,115 @@ def run_path_probes_plan(plan: dict, plan_dir: Path) -> tuple[subprocess.Complet
     return subprocess.CompletedProcess(args=["path_probes"], returncode=status_code, stdout="", stderr=""), details
 
 
+SIMULATE_CREATED_PATTERN = re.compile(r"Event <a [^>]*>(SIM\d{3})</a> created\.")
+SIMULATE_POOL_PATTERN = re.compile(r"<input type='checkbox'( checked='checked')? name='pools\[\]' value='(\d+)'")
+SIMULATE_TOKEN_PATTERN = re.compile(r"name='token' value='([0-9a-f]{32})'")
+
+
+class HttpSession:
+    """Cookie-keeping HTTP client for the plugin pages the simulate_event plan drives."""
+
+    def __init__(self, base_url: str, timeout: int) -> None:
+        self.base_url = base_url
+        self.timeout = timeout
+        self.opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor())
+
+    def request(self, path: str, fields: dict[str, str | list[str]] | None = None) -> tuple[int, str]:
+        data = None
+        if fields is not None:
+            data = urllib.parse.urlencode(fields, doseq=True).encode()
+        request = urllib.request.Request(self.base_url + path, data=data, headers={"User-Agent": "ultiorganizer-harness-simulate/1.0"})
+        try:
+            with self.opener.open(request, timeout=self.timeout) as response:
+                return response.getcode(), response.read().decode("utf-8", errors="replace")
+        except urllib.error.HTTPError as exc:
+            return exc.code, exc.read().decode("utf-8", errors="replace")
+
+
+def run_simulate_event_plan(plan: dict, plan_dir: Path) -> tuple[subprocess.CompletedProcess[str], dict]:
+    """Generate an event with plugins/simulate_event.php, then play every pool with plugins/simulate_games.php.
+
+    Pools are played in rounds: a playoff pool only offers itself for play once the pools feeding it
+    are played, so the loop repeats until no pool is offered or a round makes no progress.
+    """
+    base_url = str(plan.get("base_url", "http://127.0.0.1")).rstrip("/")
+    session = HttpSession(base_url, int(plan.get("timeout", 900)))
+    log_path = plan_dir / "simulate_event.log"
+    failures: list[str] = []
+    details: dict = {"type": "simulate_event", "log_path": str(log_path), "failed_steps": failures}
+
+    with log_path.open("w", encoding="utf-8") as log:
+        def step(label: str, status: int, body: str) -> bool:
+            log.write(f"[{'OK' if status == 200 else 'FAIL'}] {label}: status={status}\n")
+            if status != 200:
+                failures.append(f"{label}: HTTP {status}")
+                log.write(text_excerpt(re.sub(r"<[^>]+>", " ", body)) + "\n")
+            return status == 200
+
+        status, body = session.request(
+            "/index.php?view=frontpage",
+            {"myusername": str(plan.get("auth_user", "admin")), "mypassword": str(plan.get("auth_pass", ""))},
+        )
+        if not step("login", status, body):
+            return subprocess.CompletedProcess(["simulate_event"], 1, "", ""), details
+
+        status, body = session.request("/index.php?view=plugins/simulate_event")
+        token = SIMULATE_TOKEN_PATTERN.search(body)
+        if not step("open event simulator", status, body) or not token:
+            failures.append("event simulator form has no token")
+            return subprocess.CompletedProcess(["simulate_event"], 1, "", ""), details
+
+        form = {str(key): str(value) for key, value in (plan.get("event") or {}).items()}
+        form.update({"simulate": "1", "token": token.group(1)})
+        status, body = session.request("/index.php?view=plugins/simulate_event", form)
+        created = SIMULATE_CREATED_PATTERN.search(body)
+        if not step("generate event", status, body):
+            return subprocess.CompletedProcess(["simulate_event"], 1, "", ""), details
+        if not created:
+            failures.append("generate event: no 'created' message")
+            log.write(text_excerpt(re.sub(r"<[^>]+>", " ", body)) + "\n")
+            return subprocess.CompletedProcess(["simulate_event"], 1, "", ""), details
+        season = created.group(1)
+        details["season"] = season
+        log.write(f"generated {season}\n")
+        games = re.search(r"Games: (\d+), scheduled: (\d+)\.", body)
+        if games:
+            details["games"], details["scheduled"] = int(games.group(1)), int(games.group(2))
+        if "class='warning'" in body:
+            failures.append("generate event: the page reported a warning")
+
+        play = plan.get("play")
+        played_rounds = 0
+        previous: list[str] = []
+        if play:
+            play_path = "/index.php?view=plugins/simulate_games"
+            for round_number in range(1, int(plan.get("max_play_rounds", 10)) + 1):
+                status, body = session.request(play_path, {"season": season, "select": "1"})
+                if not step(f"list pools, round {round_number}", status, body):
+                    break
+                due = [pool for checked, pool in SIMULATE_POOL_PATTERN.findall(body) if checked]
+                if not due or due == previous:
+                    break
+                previous = due
+                fields: dict[str, str | list[str]] = {
+                    "season": season,
+                    "simulate": "1",
+                    "pools[]": due,
+                    "winner_mode": str(play.get("winner_mode", "rank")),
+                }
+                if play.get("spirit", True):
+                    fields["spirit"] = "1"
+                status, body = session.request(play_path, fields)
+                if not step(f"play pools {','.join(due)}", status, body):
+                    break
+                played_rounds += 1
+            details["played_rounds"] = played_rounds
+            if played_rounds == 0:
+                failures.append("play: no pool was offered for play")
+
+    return subprocess.CompletedProcess(["simulate_event"], 1 if failures else 0, "", ""), details
+
+
 def execute_crawl_plan(case: dict, plan: dict, runtime_sut: Path, crawl_root: Path) -> dict:
     plan_id = sanitize(str(plan.get("id", "")).strip() or "crawl-plan")
     plan_type = str(plan.get("type", "")).strip()
@@ -797,6 +907,9 @@ def execute_crawl_plan(case: dict, plan: dict, runtime_sut: Path, crawl_root: Pa
     elif plan_type == "path_probes":
         result, details = run_path_probes_plan(plan, plan_dir)
         log_name = "path_probes.log"
+    elif plan_type == "simulate_event":
+        result, details = run_simulate_event_plan(plan, plan_dir)
+        log_name = "simulate_event.log"
     else:
         raise RunnerFailure(
             "crawl_runtime_failure",
@@ -810,7 +923,7 @@ def execute_crawl_plan(case: dict, plan: dict, runtime_sut: Path, crawl_root: Pa
     if result.returncode not in (0, 1):
         status = "error"
 
-    failure_items = details.get("failed_urls") or details.get("failed_files") or details.get("failed_probes") or []
+    failure_items = details.get("failed_urls") or details.get("failed_files") or details.get("failed_probes") or details.get("failed_steps") or []
     failure_reason = ""
     if status != "passed":
         if failure_items:

@@ -25,6 +25,6 @@ final class PhpIssue
     /** Matches an issue rendered into a response body. */
     public static function inBody(string $body): bool
     {
-        return preg_match('/(Fatal error|Parse error|Warning|Notice|Deprecated)<\/b>:|Uncaught /i', $body) === 1;
+        return preg_match('/(Fatal error|Parse error|Compile error|Compile warning|Core error|Core warning|Warning|Notice|Deprecated|Strict Standards|Unknown error)<\/b>:|Uncaught /i', $body) === 1;
     }
 }
