@@ -199,7 +199,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "90%+ line / 100% fn. Remaining: die() paths (GetServerName, FindIncludePrefix miss, DBConnectionUnavailable, OpenConnection failures, DBSetRow validators, DBStat/Info helpers), CheckDB's two `continue` branches (no upgradeNN gap exists and rows above max(version) cannot), and DBFieldType's 'char'/'enum' (aliased to 'tinyint'/'string' by mysqli) and unmapped types. SUT BUG: DBFieldType() references MYSQLI_TYPE_INTERVAL, which is undefined on PHP 8.5, so any column type that falls through to that case (GEOMETRY, SET, NEWDATE, JSON, ...) raises Error: Undefined constant instead of returning 'unknown'; latent because the schema uses none of them.",
+      "triage_notes": "90%+ line / 100% fn. Remaining: die() paths (GetServerName, FindIncludePrefix miss, DBConnectionUnavailable, OpenConnection failures, DBSetRow validators, DBStat/Info helpers), CheckDB's two `continue` branches (no upgradeNN gap exists and rows above max(version) cannot), and DBFieldType's 'char'/'enum' (aliased to 'tinyint'/'string' by mysqli) and unmapped types. DBFieldType no longer references the undefined MYSQLI_TYPE_INTERVAL (SUT branch fix-dbfieldtype-interval); GEOMETRY/SET report "unknown".",
       "notes": "Treat as bootstrap/runtime coverage first; avoid deep DB side effects until a dedicated checkpoint.",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/database.php"
     },

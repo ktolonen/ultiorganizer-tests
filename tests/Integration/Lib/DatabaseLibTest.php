@@ -827,6 +827,21 @@ final class DatabaseLibTest extends TestCase
         }
     }
 
+    public function testDBFieldTypeReportsUnknownForColumnTypesWithoutALabel(): void
+    {
+        // GEOMETRY and SET have no label, so they must come back as 'unknown' rather than
+        // tripping over a constant this PHP build does not define.
+        DBQuery("CREATE TEMPORARY TABLE tmp_unlabelled_types (g POINT, n INT)");
+        try {
+            DBQuery("INSERT INTO tmp_unlabelled_types VALUES (POINT(1, 2), 3)");
+            $result = DBQuery("SELECT * FROM tmp_unlabelled_types");
+            $this->assertSame('unknown', DBFieldType($result, 0));
+            $this->assertSame('int', DBFieldType($result, 1));
+        } finally {
+            DBQuery("DROP TEMPORARY TABLE tmp_unlabelled_types");
+        }
+    }
+
     // --- DBAffectedRows ---
 
     public function testDBAffectedRowsCountsOnlyRowsTheLastStatementChanged(): void
