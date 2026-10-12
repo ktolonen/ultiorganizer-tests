@@ -508,6 +508,43 @@ final class SeasonFunctionsLibTest extends TestCase
         }
     }
 
+    public function testAddSeasonRefusesDuplicateSeasonIdAndKeepsTheExistingEvent(): void
+    {
+        LegacyApp::loadUserFunctions();
+        LegacyApp::loginAsAdmin();
+        try {
+            $this->assertFalse(AddSeason('HRN2026', self::minimalSeasonParams('Imposter')));
+
+            ClearSeasonRuntimeCache();
+            $this->assertSame('Harness Invitational 2026', SeasonInfo('HRN2026')['name']);
+            // Contrast: a fresh id is accepted by the same call.
+            $newId = 'TST' . substr(uniqid(), -7);
+            try {
+                $this->assertNotFalse(AddSeason($newId, self::minimalSeasonParams('Fresh')));
+                $this->assertTrue(SeasonExists($newId));
+            } finally {
+                if (SeasonExists($newId)) {
+                    DeleteSeason($newId);
+                }
+            }
+        } finally {
+            ClearSeasonRuntimeCache();
+            $_SESSION = [];
+        }
+    }
+
+    public function testDeleteSeasonWithDataReturnsFalseForUnknownSeason(): void
+    {
+        LegacyApp::loadUserFunctions();
+        LegacyApp::loginAsAdmin();
+        try {
+            $this->assertFalse(DeleteSeasonWithData('NO-SUCH-SEASON'));
+            $this->assertTrue(SeasonExists('HRN2026'));
+        } finally {
+            $_SESSION = [];
+        }
+    }
+
     public function testAddSeasonPersistsRequireAccreditationFlag(): void
     {
         LegacyApp::loadUserFunctions();
@@ -677,6 +714,95 @@ final class SeasonFunctionsLibTest extends TestCase
             $this->assertTrue(CanAccessSeason('HRN2026'));
         } finally {
             $this->dropPrivateSeason();
+        }
+    }
+
+    private function withScopedUser(string $userid, string $role, callable $body): void
+    {
+        LegacyApp::loadUserFunctions();
+        DBQuery(sprintf(
+            "INSERT INTO uo_userproperties (userid, name, value) VALUES ('%s', 'userrole', '%s')",
+            DBEscapeString($userid),
+            DBEscapeString($role)
+        ));
+        $_SESSION = ['uid' => $userid, 'userproperties' => ['locale' => 'en_GB.utf8']];
+        try {
+            $body();
+        } finally {
+            DBQuery(sprintf("DELETE FROM uo_userproperties WHERE userid='%s'", DBEscapeString($userid)));
+            $_SESSION = [];
+        }
+    }
+
+    public function testCanAccessSeasonAllowsUserHoldingARoleInThePrivateEventOnly(): void
+    {
+        $this->insertPrivateSeason();
+        try {
+            $this->withScopedUser('ctest_scoped', 'seasonadmin:' . self::PRIVATE_SEASON, function () {
+                $this->assertTrue(CanAccessSeason(self::PRIVATE_SEASON));
+            });
+            // Contrast: a logged-in user with a role in another event gets no access.
+            $this->withScopedUser('ctest_other', 'seasonadmin:HRN2026', function () {
+                $this->assertFalse(CanAccessSeason(self::PRIVATE_SEASON));
+            });
+        } finally {
+            $this->dropPrivateSeason();
+        }
+    }
+
+    public function testFilterAccessibleSeasonsKeepsPublicEventsAndTheUsersOwnPrivateOnes(): void
+    {
+        $this->insertPrivateSeason();
+        $rows = [['season_id' => 'HRN2026'], ['season_id' => self::PRIVATE_SEASON], ['season_id' => '']];
+        try {
+            $_SESSION = [];
+            $this->assertSame(
+                ['HRN2026', ''],
+                array_column(FilterAccessibleSeasons($rows), 'season_id'),
+                'anonymous: public events and rows without an event id'
+            );
+
+            $this->withScopedUser('ctest_scoped', 'seasonadmin:' . self::PRIVATE_SEASON, function () use ($rows) {
+                $this->assertSame(
+                    ['HRN2026', self::PRIVATE_SEASON, ''],
+                    array_column(FilterAccessibleSeasons($rows), 'season_id')
+                );
+            });
+
+            LegacyApp::loadUserFunctions();
+            LegacyApp::loginAsAdmin();
+            $this->assertSame(
+                ['HRN2026', self::PRIVATE_SEASON, ''],
+                array_column(FilterAccessibleSeasons($rows), 'season_id'),
+                'superadmin sees everything'
+            );
+        } finally {
+            $this->dropPrivateSeason();
+            $_SESSION = [];
+        }
+    }
+
+    public function testAccessibleSeasonIdListSqlFollowsWhatTheViewerMayAccess(): void
+    {
+        $this->insertPrivateSeason();
+        try {
+            $_SESSION = [];
+            $anonymous = AccessibleSeasonIdListSql();
+            $this->assertStringContainsString("'HRN2026'", $anonymous);
+            $this->assertStringNotContainsString(self::PRIVATE_SEASON, $anonymous);
+
+            $this->withScopedUser('ctest_scoped', 'seasonadmin:' . self::PRIVATE_SEASON, function () {
+                $list = AccessibleSeasonIdListSql();
+                $this->assertStringContainsString("'HRN2026'", $list);
+                $this->assertStringContainsString("'" . self::PRIVATE_SEASON . "'", $list);
+            });
+
+            LegacyApp::loadUserFunctions();
+            LegacyApp::loginAsAdmin();
+            $this->assertStringContainsString("'" . self::PRIVATE_SEASON . "'", AccessibleSeasonIdListSql());
+        } finally {
+            $this->dropPrivateSeason();
+            $_SESSION = [];
         }
     }
 

@@ -745,11 +745,121 @@ final class DatabaseLibTest extends TestCase
 
     // --- CheckDB ---
 
-    public function testCheckDBRunsWithoutErrorOnUpToDateSchema(): void
+    private function upgradeLogCount(int $version): int
     {
-        // The fixture DB schema is current; CheckDB scans for missing upgrades and finds none.
+        return (int) DBQueryToValueUncached(
+            "SELECT COUNT(*) FROM uo_event_log WHERE category='database' AND type='change' AND id1='$version'"
+        );
+    }
+
+    public function testCheckDBRunsNoUpgradeOnUpToDateSchema(): void
+    {
+        $versions = DBQueryToValueUncached("SELECT COUNT(*) FROM uo_database");
+        $logged = $this->upgradeLogCount(DB_VERSION);
+
         CheckDB();
-        $this->assertTrue(true);
+
+        $this->assertSame($versions, DBQueryToValueUncached("SELECT COUNT(*) FROM uo_database"));
+        $this->assertSame($logged, $this->upgradeLogCount(DB_VERSION), 'no upgrade is started when every version is recorded');
+    }
+
+    public function testCheckDBReRunsAndRecordsAMissingUpgradeOnce(): void
+    {
+        // The current step (sql/upgrade_db.php, loaded by database.php) is written to be re-runnable on
+        // an already-upgraded schema, so dropping its record makes CheckDB run it for real.
+        $version = DB_VERSION;
+        DBQuery("DELETE FROM uo_event_log WHERE category='database' AND type='change' AND id1='$version'");
+        DBQuery("DELETE FROM uo_database WHERE version=$version");
+        try {
+            $this->assertSame($version - 1, getDBVersion(), 'precondition: the newest upgrade is missing');
+
+            CheckDB();
+
+            $this->assertSame($version, getDBVersion());
+            $this->assertEquals(1, DBQueryToValueUncached("SELECT COUNT(*) FROM uo_database WHERE version=$version"));
+            $this->assertSame(2, $this->upgradeLogCount($version), 'the start and the finish of the upgrade are logged');
+
+            // Contrast: with the version recorded a second run does nothing.
+            CheckDB();
+            $this->assertSame(2, $this->upgradeLogCount($version));
+            $this->assertEquals(1, DBQueryToValueUncached("SELECT COUNT(*) FROM uo_database WHERE version=$version"));
+        } finally {
+            DBQuery("INSERT INTO uo_database (version, updated) SELECT $version, NOW() FROM DUAL
+                     WHERE NOT EXISTS (SELECT 1 FROM uo_database WHERE version=$version)");
+            DBQuery("DELETE FROM uo_event_log WHERE category='database' AND type='change' AND id1='$version'");
+        }
+    }
+
+    public function testGetDBVersionIsZeroWhenTheVersionTableCannotBeQueried(): void
+    {
+        $this->assertSame(DB_VERSION, getDBVersion(), 'precondition: the table normally answers');
+        DBQuery("RENAME TABLE uo_database TO uo_database_hidden");
+        mysqli_report(MYSQLI_REPORT_OFF);
+        try {
+            $this->assertSame(0, getDBVersion());
+        } finally {
+            mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
+            DBQuery("RENAME TABLE uo_database_hidden TO uo_database");
+        }
+        $this->assertSame(DB_VERSION, getDBVersion());
+    }
+
+    // --- FindIncludePrefix ---
+
+    public function testFindIncludePrefixWalksUpToTheDirectoryHoldingTheConfigFile(): void
+    {
+        $root = LegacyApp::sutRoot();
+        $this->assertFileExists($root . '/conf/config.inc.php', 'precondition: the runtime copy has a config file');
+        $deep = $root . '/lib/prefix_test_a/prefix_test_b';
+        mkdir($deep, 0775, true);
+        $original = getcwd();
+        try {
+            chdir($root);
+            $this->assertSame('', FindIncludePrefix());
+            chdir($root . '/lib');
+            $this->assertSame('../', FindIncludePrefix());
+            chdir($deep);
+            $this->assertSame('../../../', FindIncludePrefix());
+        } finally {
+            chdir($original);
+            rmdir($deep);
+            rmdir($root . '/lib/prefix_test_a');
+        }
+    }
+
+    // --- DBAffectedRows ---
+
+    public function testDBAffectedRowsCountsOnlyRowsTheLastStatementChanged(): void
+    {
+        DBQuery("UPDATE uo_player SET num=8 WHERE player_id=800");
+        $this->assertSame(0, DBAffectedRows(), 'writing the value the row already holds changes nothing');
+
+        DBQuery("UPDATE uo_player SET num=88 WHERE player_id=800");
+        try {
+            $this->assertSame(1, DBAffectedRows());
+        } finally {
+            DBQuery("UPDATE uo_player SET num=8 WHERE player_id=800");
+        }
+        $this->assertSame(1, DBAffectedRows());
+    }
+
+    // --- DBFieldType for the remaining column types ---
+
+    public function testDBFieldTypeNamesBitRealAndTemporalColumns(): void
+    {
+        DBQuery("CREATE TEMPORARY TABLE tmp_field_types (
+            b BIT(3), y YEAR, t TIME, d DATE, f FLOAT, dec_ DECIMAL(5,2), n INT, e ENUM('a','b'))");
+        try {
+            DBQuery("INSERT INTO tmp_field_types VALUES (b'101', 2026, '10:00:00', '2026-01-01', 1.5, 2.25, 3, 'a')");
+            $result = DBQuery("SELECT * FROM tmp_field_types");
+            $this->assertSame(
+                ['bit', 'year', 'time', 'date', 'real', 'real', 'int', 'string'],
+                array_map(fn($i) => DBFieldType($result, $i), range(0, 7))
+            );
+            $this->assertSame('null', DBFieldType(DBQuery("SELECT NULL AS nothing"), 0));
+        } finally {
+            DBQuery("DROP TEMPORARY TABLE tmp_field_types");
+        }
     }
 
     // --- DBFieldType type returns ---
@@ -916,6 +1026,20 @@ final class DatabaseLibTest extends TestCase
             $this->expectException(DBOperationException::class);
             DBQueryToArray("INVALID SQL");
         });
+    }
+
+    public function testDBQueryInsertThrowsOnInvalidSqlAndInsertsNothing(): void
+    {
+        $before = DBQueryToValueUncached("SELECT COUNT(*) FROM uo_player");
+        $this->withMysqliSilentMode(function () {
+            try {
+                DBQueryInsert("INSERT INTO uo_player (no_such_column) VALUES (1)");
+                $this->fail('A failing insert must not return an id.');
+            } catch (DBOperationException $e) {
+                $this->addToAssertionCount(1);
+            }
+        });
+        $this->assertSame($before, DBQueryToValueUncached("SELECT COUNT(*) FROM uo_player"));
     }
 
     public function testDBQueryToRowThrowsOnInvalidSql(): void

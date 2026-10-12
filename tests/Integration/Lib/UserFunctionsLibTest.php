@@ -1490,6 +1490,174 @@ final class UserFunctionsLibTest extends TestCase
         }
     }
 
+    private function insertRole(string $userid, string $role): int
+    {
+        DBQuery(sprintf(
+            "INSERT INTO uo_userproperties (userid, name, value) VALUES ('%s', 'userrole', '%s')",
+            DBEscapeString($userid),
+            DBEscapeString($role)
+        ));
+        return (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+    }
+
+    private function roleRowCount(string $userid, string $role): int
+    {
+        return (int) DBQueryToValue(sprintf(
+            "SELECT COUNT(*) FROM uo_userproperties WHERE userid='%s' AND name='userrole' AND value='%s'",
+            DBEscapeString($userid),
+            DBEscapeString($role)
+        ));
+    }
+
+    public function testDeleteSelectedUsersEventRolesDeletesOnlyEventScopedRolesOfNamedUsers(): void
+    {
+        LegacyApp::loginAsAdmin();
+        $this->insertRole('ctest_a', 'seasonadmin:HRN2026');
+        $this->insertRole('ctest_a', 'teamadmin:300');
+        $this->insertRole('ctest_a', 'superadmin');
+        $this->insertRole('ctest_b', 'seasonadmin:HRN2026');
+        try {
+            // Duplicate, url-encoded and blank ids collapse to the one named user.
+            $deleted = DeleteSelectedUsersEventRoles(['ctest_a', urlencode('ctest_a'), '']);
+
+            $this->assertSame(2, $deleted);
+            $this->assertSame(0, $this->roleRowCount('ctest_a', 'seasonadmin:HRN2026'));
+            $this->assertSame(0, $this->roleRowCount('ctest_a', 'teamadmin:300'));
+            $this->assertSame(1, $this->roleRowCount('ctest_a', 'superadmin'), 'non-event role stays');
+            $this->assertSame(1, $this->roleRowCount('ctest_b', 'seasonadmin:HRN2026'), 'other users stay');
+            $this->assertSame(
+                2,
+                (int) DBQueryToValueUncached("SELECT COUNT(*) FROM uo_event_log WHERE category='security' AND type='delete' AND id1='ctest_a' AND source='user-access-cleanup'"),
+                'each deleted role is logged with its source'
+            );
+        } finally {
+            DBQuery("DELETE FROM uo_userproperties WHERE userid IN ('ctest_a', 'ctest_b')");
+            DBQuery("DELETE FROM uo_event_log WHERE id1='ctest_a' AND source='user-access-cleanup'");
+            $_SESSION = [];
+        }
+    }
+
+    public function testDeleteEventUserRolesDeletesRolesBoundToTheEvent(): void
+    {
+        LegacyApp::loginAsAdmin();
+        $this->insertRole('ctest_a', 'seasonadmin:HRN2026');
+        $this->insertRole('ctest_a', 'gameadmin:700');
+        $this->insertRole('ctest_a', 'seasonadmin:OTHER-EVENT');
+        try {
+            $preview = EventUserRoleCleanupPreview('HRN2026');
+            $previewValues = array_column(
+                array_filter($preview, fn($row) => $row['userid'] === 'ctest_a'),
+                'value'
+            );
+            sort($previewValues);
+            $this->assertSame(['gameadmin:700', 'seasonadmin:HRN2026'], $previewValues);
+
+            $this->assertSame(2, DeleteEventUserRoles('HRN2026'));
+            $this->assertSame(0, $this->roleRowCount('ctest_a', 'seasonadmin:HRN2026'));
+            $this->assertSame(0, $this->roleRowCount('ctest_a', 'gameadmin:700'));
+            $this->assertSame(1, $this->roleRowCount('ctest_a', 'seasonadmin:OTHER-EVENT'), 'other events stay');
+        } finally {
+            DBQuery("DELETE FROM uo_userproperties WHERE userid='ctest_a'");
+            DBQuery("DELETE FROM uo_event_log WHERE id1='ctest_a' AND source='event-access-cleanup'");
+            $_SESSION = [];
+        }
+    }
+
+    public function testDeleteUserRoleRowsRefreshesSessionWhenCurrentUserLosesARole(): void
+    {
+        LegacyApp::loginAsAdmin();
+        $propId = $this->insertRole('admin', 'seasonadmin:HRN2026');
+        try {
+            SetUserSessionData('admin');
+            $this->assertArrayHasKey('HRN2026', $_SESSION['userproperties']['userrole']['seasonadmin']);
+
+            $deleted = DeleteUserRoleRows(
+                [['prop_id' => $propId, 'userid' => 'admin', 'value' => 'seasonadmin:HRN2026']],
+                'test-source'
+            );
+
+            $this->assertSame(1, $deleted);
+            $this->assertArrayNotHasKey('HRN2026', $_SESSION['userproperties']['userrole']['seasonadmin'] ?? []);
+            $this->assertArrayHasKey('superadmin', $_SESSION['userproperties']['userrole']);
+        } finally {
+            DBQuery("DELETE FROM uo_userproperties WHERE prop_id=$propId");
+            DBQuery("DELETE FROM uo_event_log WHERE source='test-source' AND id1='admin'");
+            $_SESSION = [];
+        }
+    }
+
+    // ---- CanChangeSeasonUserRole ----
+
+    /** @param array<string, array<string, string>> $roles */
+    private function actAs(array $roles): void
+    {
+        $_SESSION['uid'] = 'ctest_actor';
+        $_SESSION['userproperties']['userrole'] = $roles;
+    }
+
+    public function testCanChangeSeasonUserRoleAllowsSuperAdminAnyRole(): void
+    {
+        $this->assertTrue(CanChangeSeasonUserRole('seasonadmin:OTHER-EVENT', 'HRN2026'));
+        $this->assertTrue(CanChangeSeasonUserRole('garbage', 'HRN2026'));
+    }
+
+    public function testCanChangeSeasonUserRoleRejectsMalformedAndUnknownRoles(): void
+    {
+        $this->actAs(['seasonadmin' => ['HRN2026' => 'HRN2026']]);
+        $this->assertFalse(CanChangeSeasonUserRole('seasonadmin', 'HRN2026'));
+        $this->assertFalse(CanChangeSeasonUserRole('seasonadmin:', 'HRN2026'));
+        $this->assertFalse(CanChangeSeasonUserRole('', 'HRN2026'));
+        $this->assertFalse(CanChangeSeasonUserRole('superadmin:HRN2026', 'HRN2026'));
+        $this->assertFalse(CanChangeSeasonUserRole('resadmin:1', 'HRN2026'));
+        // Contrast: the same admin may grant a well-formed role of their event.
+        $this->assertTrue(CanChangeSeasonUserRole('seasonadmin:HRN2026', 'HRN2026'));
+    }
+
+    public function testCanChangeSeasonUserRoleBindsSeasonScopedRolesToTheEventBeingAdministered(): void
+    {
+        $this->actAs(['seasonadmin' => ['HRN2026' => 'HRN2026']]);
+        $this->assertTrue(CanChangeSeasonUserRole('seasonadmin:HRN2026', 'HRN2026'));
+        $this->assertTrue(CanChangeSeasonUserRole('spiritadmin:HRN2026', 'HRN2026'));
+        $this->assertFalse(CanChangeSeasonUserRole('seasonadmin:HRN2026', 'OTHER-EVENT'));
+        $this->assertFalse(CanChangeSeasonUserRole('seasonadmin:OTHER-EVENT', 'HRN2026'));
+        $this->assertFalse(CanChangeSeasonUserRole('spiritadmin:OTHER-EVENT', 'HRN2026'));
+    }
+
+    public function testCanChangeSeasonUserRoleDeniesWithoutAnyAdminRights(): void
+    {
+        $this->actAs([]);
+        $this->assertFalse(CanChangeSeasonUserRole('seasonadmin:HRN2026', 'HRN2026'));
+        $this->assertFalse(CanChangeSeasonUserRole('teamadmin:300', 'HRN2026'));
+        $this->assertFalse(CanChangeSeasonUserRole('gameadmin:700', 'HRN2026'));
+    }
+
+    public function testCanChangeSeasonUserRoleResolvesTeamRolesThroughTheTeamsEvent(): void
+    {
+        $this->actAs(['seasonadmin' => ['HRN2026' => 'HRN2026']]);
+        $this->assertTrue(CanChangeSeasonUserRole('teamadmin:300', 'HRN2026'));
+        $this->assertTrue(CanChangeSeasonUserRole('accradmin:300', 'HRN2026'));
+        $this->assertFalse(CanChangeSeasonUserRole('teamadmin:300', 'OTHER-EVENT'), 'team 300 belongs to HRN2026');
+        $this->assertFalse(CanChangeSeasonUserRole('teamadmin:99999', 'HRN2026'), 'unknown team has no event');
+    }
+
+    public function testCanChangeSeasonUserRoleResolvesGameRolesThroughTheGamesEvent(): void
+    {
+        $this->actAs(['seasonadmin' => ['HRN2026' => 'HRN2026']]);
+        $this->assertTrue(CanChangeSeasonUserRole('gameadmin:700', 'HRN2026'));
+        $this->assertFalse(CanChangeSeasonUserRole('gameadmin:700', 'OTHER-EVENT'), 'game 700 belongs to HRN2026');
+        $this->assertFalse(CanChangeSeasonUserRole('gameadmin:99999', 'HRN2026'), 'unknown game has no event');
+    }
+
+    public function testCanChangeSeasonUserRoleHonoursSeriesAdminForTeamRolesOnly(): void
+    {
+        $this->actAs(['seriesadmin' => ['100' => '100']]);
+        $this->assertTrue(CanChangeSeasonUserRole('teamadmin:300', 'HRN2026'));
+        $this->assertTrue(CanChangeSeasonUserRole('gameadmin:700', 'HRN2026'));
+        // A series admin has no say over the event-wide roles.
+        $this->assertFalse(CanChangeSeasonUserRole('seasonadmin:HRN2026', 'HRN2026'));
+        $this->assertFalse(CanChangeSeasonUserRole('spiritadmin:HRN2026', 'HRN2026'));
+    }
+
     // ---- Email-disabled early return (IsEmailDisabled returns true in test env) ----
 
     public function testAddRegisterRequestReturnsFalseWhenEmailDisabled(): void

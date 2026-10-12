@@ -647,6 +647,226 @@ final class SpiritFunctionsLibTest extends TestCase
         $this->assertSame(0, GameSpiritVisibilityValue(700, $game));
     }
 
+    public function testGameSpiritVisibilityValueWaitsForBothSubmissionsWhenOnlyOnComplete(): void
+    {
+        $game = [
+            'spiritmode' => 1003,
+            'showspiritpoints' => 1,
+            'showspiritpointsonlyoncomplete' => 1,
+            'forfeit' => 0,
+        ];
+        $this->assertSame(0, GameSpiritVisibilityValue(700, $game), 'no submissions yet');
+
+        $this->submitHomeSpirit();
+        self::flushQueryCaches();
+        $this->assertSame(0, GameSpiritVisibilityValue(700, $game), 'only the home team has submitted');
+
+        $this->submitVisitorSpirit();
+        self::flushQueryCaches();
+        $this->assertSame(1, GameSpiritVisibilityValue(700, $game), 'both teams have submitted');
+    }
+
+    // --- SpiritkeeperAccessibleTeams / SpiritkeeperHomeUrl for a team admin ---
+
+    private function actAsTeamAdminOf300(): void
+    {
+        unset($_SESSION['userproperties']['userrole']['superadmin']);
+        unset($_SESSION['userproperties']['userrole']['seasonadmin']);
+        $_SESSION['userproperties']['userrole']['teamadmin'] = [300 => 1];
+    }
+
+    public function testSpiritkeeperAccessibleTeamsListsOnlyTheTeamsAUserAdministers(): void
+    {
+        $this->actAsTeamAdminOf300();
+
+        $teams = SpiritkeeperAccessibleTeams();
+
+        $this->assertCount(1, $teams);
+        $this->assertSame(300, $teams[0]['team_id']);
+        $this->assertSame('Helsinki Heat', $teams[0]['name']);
+        $this->assertSame('HRN2026', $teams[0]['season_id']);
+    }
+
+    public function testSpiritkeeperHomeUrlPreselectsTheOnlyAccessibleTeam(): void
+    {
+        $this->actAsTeamAdminOf300();
+        $this->assertSame(
+            './spiritkeeper/?view=home&season=HRN2026&team=300',
+            SpiritkeeperHomeUrl('', './spiritkeeper/')
+        );
+        $this->assertSame('?view=home&season=HRN2026&team=300', SpiritkeeperHomeUrl('', ''));
+    }
+
+    public function testSpiritkeeperHomeUrlLeavesTeamUnselectedWhenSeveralTeamsAreAccessible(): void
+    {
+        // setUp() session is superadmin: both fixture teams are accessible.
+        $this->assertCount(2, SpiritkeeperCurrentAccessibleTeams());
+        $this->assertSame('./spiritkeeper/?view=home', SpiritkeeperHomeUrl('', './spiritkeeper/'));
+        $this->assertSame('./spiritkeeper/?view=home&season=HRN2026', SpiritkeeperHomeUrl('HRN2026', './spiritkeeper/'));
+    }
+
+    // --- Token helpers: guards and rated-team resolution ---
+
+    /** @return array<string, mixed> a started fixture-like game row as SpiritTokenGame() returns it */
+    private function tokenGameRow(array $overrides = []): array
+    {
+        return array_merge([
+            'game_id' => 700,
+            'hometeam' => 300,
+            'visitorteam' => 301,
+            'hasstarted' => 1,
+            'forfeit' => 0,
+            'spiritmode' => 1003,
+            'event_readonly' => 0,
+            'lockteamspiritonsubmit' => 0,
+        ], $overrides);
+    }
+
+    public function testSpiritTokenCanSubmitRefusesEachDisqualifyingGameState(): void
+    {
+        $this->assertTrue(SpiritTokenCanSubmit(700, 300, $this->tokenGameRow()), 'precondition: baseline row may submit');
+
+        $this->assertFalse(SpiritTokenCanSubmit(700, 0, $this->tokenGameRow()), 'no token team');
+        $this->assertFalse(SpiritTokenCanSubmit(700, 300, $this->tokenGameRow(['spiritmode' => 0])), 'spirit not enabled');
+        $this->assertFalse(SpiritTokenCanSubmit(700, 300, $this->tokenGameRow(['event_readonly' => 1])), 'read-only event');
+        $this->assertFalse(SpiritTokenCanSubmit(700, 999, $this->tokenGameRow()), 'token team is not in the game');
+        $this->assertFalse(SpiritTokenCanSubmit(700, 300, $this->tokenGameRow(['hasstarted' => 0])), 'game not started');
+        $this->assertFalse(SpiritTokenCanSubmit(99999, 300), 'unknown game has no row to load');
+    }
+
+    public function testSpiritTokenCanSubmitLocksAfterTheRatedTeamIsCompleteWhenTheEventLocksOnSubmit(): void
+    {
+        $game = $this->tokenGameRow(['lockteamspiritonsubmit' => 1]);
+        $this->assertTrue(SpiritTokenCanSubmit(700, 300, $game), 'nothing submitted yet');
+
+        // Team 300 rates team 301; the lock applies once 301's score set is complete.
+        $this->submitVisitorSpirit();
+        self::flushQueryCaches();
+        $this->assertFalse(SpiritTokenCanSubmit(700, 300, $game));
+        // Contrast: without the lock setting the same state still accepts a submission.
+        $this->assertTrue(SpiritTokenCanSubmit(700, 300, $this->tokenGameRow()));
+    }
+
+    public function testSpiritTokenHasSubmissionHelpersReturnFalseForUnknownGame(): void
+    {
+        $this->assertFalse(SpiritTokenHasOwnSubmission(99999, 300));
+        $this->assertFalse(SpiritTokenHasReceivedSubmission(99999, 300));
+        $this->assertFalse(SpiritTokenCanViewReceivedPoints(99999, 300));
+    }
+
+    public function testSpiritTokenHasOwnSubmissionIsFalseForTeamOutsideTheGame(): void
+    {
+        $this->submitHomeSpirit();
+        $this->submitVisitorSpirit();
+        self::flushQueryCaches();
+        $this->assertTrue(SpiritTokenHasOwnSubmission(700, 300, $this->tokenGameRow()), 'precondition');
+        $this->assertFalse(SpiritTokenHasOwnSubmission(700, 999, $this->tokenGameRow()));
+    }
+
+    public function testSpiritTokenCanViewReceivedPointsNeedsBothSubmissions(): void
+    {
+        $game = $this->tokenGameRow();
+        $this->assertFalse(SpiritTokenCanViewReceivedPoints(700, 300, $game), 'nothing submitted');
+
+        // Team 300 rated 301 (visitor scores), but 300's own score set has not arrived.
+        $this->submitVisitorSpirit();
+        self::flushQueryCaches();
+        $this->assertTrue(SpiritTokenHasOwnSubmission(700, 300, $game));
+        $this->assertFalse(SpiritTokenHasReceivedSubmission(700, 300, $game));
+        $this->assertFalse(SpiritTokenCanViewReceivedPoints(700, 300, $game));
+
+        $this->submitHomeSpirit();
+        self::flushQueryCaches();
+        $this->assertTrue(SpiritTokenCanViewReceivedPoints(700, 300, $game));
+    }
+
+    public function testSpiritTokenSaveCommentStoresTheCommentOnTheRatedTeam(): void
+    {
+        $this->assertSame('', CommentRaw(COMMENT_TYPE_SPIRIT_VISITOR, 700), 'precondition: no comment yet');
+        try {
+            $this->assertTrue(SpiritTokenSaveComment(700, 300, 'Friendly game'));
+            self::flushQueryCaches();
+            $this->assertSame('Friendly game', CommentRaw(COMMENT_TYPE_SPIRIT_VISITOR, 700));
+            $this->assertSame('', CommentRaw(COMMENT_TYPE_SPIRIT_HOME, 700), 'the token team gets no comment of its own');
+
+            $this->assertTrue(SpiritTokenSaveComment(700, 300, '', true));
+            self::flushQueryCaches();
+            $this->assertSame('', CommentRaw(COMMENT_TYPE_SPIRIT_VISITOR, 700));
+        } finally {
+            SetComment(COMMENT_TYPE_SPIRIT_VISITOR, 700, '');
+        }
+    }
+
+    public function testSpiritTokenSaveCommentRefusesTokenTeamOutsideTheGame(): void
+    {
+        $this->assertFalse(SpiritTokenSaveComment(700, 999, 'Intruder'));
+        $this->assertSame('', CommentRaw(COMMENT_TYPE_SPIRIT_VISITOR, 700));
+        $this->assertSame('', CommentRaw(COMMENT_TYPE_SPIRIT_HOME, 700));
+    }
+
+    // --- HasFullGameSpiritEditRight / ViewRight / SpiritEntryTeamForUser ---
+
+    private function actAsSeriesAdmin(): void
+    {
+        LegacyApp::requireTopLevelLib('game.functions.php');
+        unset($_SESSION['userproperties']['userrole']['superadmin']);
+        unset($_SESSION['userproperties']['userrole']['seasonadmin']);
+        $_SESSION['userproperties']['userrole']['seriesadmin'] = [100 => 1];
+    }
+
+    public function testHasFullGameSpiritEditRightGuards(): void
+    {
+        $this->assertTrue(HasFullGameSpiritEditRight(700), 'precondition: superadmin may edit');
+        $this->assertFalse(HasFullGameSpiritEditRight(0));
+        $this->assertFalse(HasFullGameSpiritEditRight(99999), 'unknown game');
+        $_SESSION['uid'] = 'anonymous';
+        $this->assertFalse(HasFullGameSpiritEditRight(700), 'anonymous user');
+    }
+
+    public function testHasFullGameSpiritEditRightGrantsSeriesAdminButNotUnrelatedUsers(): void
+    {
+        $this->actAsSeriesAdmin();
+        $this->assertTrue(HasFullGameSpiritEditRight(700));
+        $this->assertTrue(HasFullGameSpiritViewRight(700));
+
+        $_SESSION['userproperties']['userrole'] = ['teamadmin' => [300 => 1]];
+        $this->assertFalse(HasFullGameSpiritEditRight(700));
+        $this->assertFalse(HasFullGameSpiritViewRight(700));
+    }
+
+    public function testHasFullGameSpiritViewRightGuards(): void
+    {
+        $this->assertTrue(HasFullGameSpiritViewRight(700), 'precondition: superadmin may view');
+        $this->assertFalse(HasFullGameSpiritViewRight(0));
+        $this->assertFalse(HasFullGameSpiritViewRight(99999), 'unknown game');
+        $_SESSION['uid'] = 'anonymous';
+        $this->assertFalse(HasFullGameSpiritViewRight(700), 'anonymous user');
+    }
+
+    public function testSpiritEntryTeamForUserResolvesWhichTeamTheUserScoresFor(): void
+    {
+        LegacyApp::requireTopLevelLib('game.functions.php');
+        $this->assertSame(0, SpiritEntryTeamForUser(700), 'superadmin scores for either team');
+        $this->assertSame(-1, SpiritEntryTeamForUser(0));
+        $this->assertSame(-1, SpiritEntryTeamForUser(99999), 'unknown game');
+        $this->assertSame(-1, SpiritEntryTeamForUser(700, ['spiritmode' => 0]), 'spirit not enabled');
+
+        $this->actAsTeamAdminOf300();
+        $this->assertSame(300, SpiritEntryTeamForUser(700));
+        $this->assertSame('?view=user/addspirit&game=700&team=300', SpiritEntryUrl(700));
+
+        $_SESSION['userproperties']['userrole'] = ['teamadmin' => [300 => 1, 301 => 1]];
+        $this->assertSame(0, SpiritEntryTeamForUser(700), 'both teams administered: no single team');
+        $this->assertSame('?view=user/addspirit&game=700', SpiritEntryUrl(700));
+
+        $_SESSION['userproperties']['userrole'] = [];
+        $this->assertSame(-1, SpiritEntryTeamForUser(700));
+        $this->assertSame('', SpiritEntryUrl(700));
+
+        $_SESSION['uid'] = 'anonymous';
+        $this->assertSame(-1, SpiritEntryTeamForUser(700));
+    }
+
     // --- SpiritEntryUrl ---
 
     public function testSpiritEntryUrlReturnsString(): void

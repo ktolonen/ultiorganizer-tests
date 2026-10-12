@@ -423,6 +423,41 @@ final class ScorekeeperFunctionsLibTest extends TestCase
         $this->assertNull(ScorekeeperLinkTarget('reservation', 99999));
     }
 
+    public function testTokenDescriptionNamesWhatTheLinkOpens(): void
+    {
+        $gameToken = self::tokenId(ScorekeeperToken('game', 700));
+        $fieldToken = self::tokenId(ScorekeeperToken('reservation', 500));
+
+        $this->assertStringEndsWith('Helsinki Heat-Tampere Tempest', ScorekeeperTokenDescription($gameToken));
+        $this->assertStringStartsWith('Harness Field Complex Field 1, ', ScorekeeperTokenDescription($fieldToken));
+        $this->assertNotSame(ScorekeeperTokenDescription($gameToken), ScorekeeperTokenDescription($fieldToken));
+    }
+
+    public function testTokenRowAndDescriptionAreEmptyForUnknownTokenId(): void
+    {
+        $this->assertNull(ScorekeeperTokenRow(999999));
+        $this->assertSame('', ScorekeeperTokenDescription(999999));
+        $row = ScorekeeperTokenRow(self::tokenId(ScorekeeperToken('game', 700)));
+        $this->assertSame('HRN2026', $row['season']);
+        $this->assertEquals(700, $row['game']);
+    }
+
+    public function testRevokeTokenDeletesTheLinkAndItsGrantsOnlyForIssuers(): void
+    {
+        $token = ScorekeeperToken('game', 700);
+        ScorekeeperAddGrant(self::tokenId($token), self::KEEPER);
+
+        $this->assertFalse(ScorekeeperRevokeToken('field', 700), 'unknown scope');
+        self::asUser(self::KEEPER, []);
+        $this->assertFalse(ScorekeeperRevokeToken('game', 700), 'not an issuer');
+        $this->assertSame(1, (int) DBQueryToValueUncached("SELECT COUNT(*) FROM uo_scorekeeper_token WHERE game=700"));
+
+        self::asSuperadmin();
+        $this->assertTrue(ScorekeeperRevokeToken('game', 700));
+        $this->assertSame(0, (int) DBQueryToValueUncached("SELECT COUNT(*) FROM uo_scorekeeper_token WHERE game=700"));
+        $this->assertSame(0, (int) DBQueryToValueUncached("SELECT COUNT(*) FROM uo_scorekeeper_grant"));
+    }
+
     public function testLinkGamesTableEscapesNamesAndFallsBackToSchedulingNames(): void
     {
         $html = ScorekeeperLinkGamesHtml([

@@ -7,7 +7,9 @@ Some SUT code cannot be covered in-process no matter how good the tests are. The
 1. **Termination instead of return.** Guards and mutations that end in `die()`, `exit()`, or `header()` redirects cannot have their terminal branch asserted: `exit()` kills PHPUnit, and `runInSeparateProcess` records the child's `exit()` as an error. Test the boolean predicate the guard branches on instead, and note the gap in `triage_notes`.
 2. **Entrypoint coupling.** Some lib functions call helpers defined outside `lib/`. For example, `GetPageTitle()` calls `utf8entities()` from `localization.php`. Those need shims or wider loading, and the outside code never shows in coverage.
 3. **Request and session globals.** Functions that read or write `$_SESSION`, `$_SERVER`, `$_GET`, or `$_POST` need explicit setup and teardown. Check which key a function actually reads.
-4. **Include cycles.** Files are not independent modules. For example, `team` ↔ `pool`, and `common` → `comment` → `spirit` → `user` → `team`. Loading one file loads a cluster, so shims and load order interact (see [Pitfalls](lib-test-pitfalls.md)).
+4. **Request input read through `filter_input()`.** `GetString()`, `GetInt()`, and every `iget()`-based helper read `INPUT_GET` through `filter_input()`, which always returns `null` in the CLI SAPI that PHPUnit runs under, whatever `$_GET` holds. Branches that act on a request parameter (for example `RequestSeasonsFromView()`) are reachable only over HTTP, where coverage is not collected.
+5. **Environment the image lacks.** The `php-test` image has only the `C`, `C.utf8` and `POSIX` locales (`locale-gen` runs without any `/etc/locale.gen` entry) and no `intl`, so the gettext carrier-locale paths in `locale.functions.php` and the `NumberFormatter` branch of `ordinal()` never run. Fixing that is an image change that also alters what the `fi_FI` case renders, so decide it deliberately.
+6. **Include cycles.** Files are not independent modules. For example, `team` ↔ `pool`, and `common` → `comment` → `spirit` → `user` → `team`. Loading one file loads a cluster, so shims and load order interact (see [Pitfalls](lib-test-pitfalls.md)).
 
 ## Decision Rule
 

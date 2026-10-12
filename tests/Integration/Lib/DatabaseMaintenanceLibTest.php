@@ -532,4 +532,137 @@ final class DatabaseMaintenanceLibTest extends TestCase
         DBHandleMaintenanceState();
         $this->assertFileDoesNotExist(DBMaintenanceFlagPath());
     }
+
+    // --- Upgrades driven by DBHandleMaintenanceState / DBRunAutomaticUpgrade ---
+
+    /** Drop the newest schema version record so the database looks one upgrade behind. */
+    private function makeDatabaseOneVersionBehind(): void
+    {
+        DBQuery("DELETE FROM uo_database WHERE version=" . DB_VERSION);
+    }
+
+    private function restoreSchemaVersion(): void
+    {
+        $version = DB_VERSION;
+        DBQuery("INSERT INTO uo_database (version, updated) SELECT $version, NOW() FROM DUAL
+                 WHERE NOT EXISTS (SELECT 1 FROM uo_database WHERE version=$version)");
+        DBQuery("DELETE FROM uo_database WHERE version > $version");
+        DBQuery("DELETE FROM uo_event_log WHERE category='database' AND type='change' AND id1='$version'");
+    }
+
+    public function testDBHandleMaintenanceStateUpgradesAnOutdatedDatabaseWithoutAFlag(): void
+    {
+        $this->makeDatabaseOneVersionBehind();
+        try {
+            $this->assertSame(DB_VERSION - 1, getDBVersion(), 'precondition: one upgrade behind');
+            $this->assertFileDoesNotExist(DBMaintenanceFlagPath(), 'precondition: no flag yet');
+
+            DBHandleMaintenanceState();
+
+            $this->assertSame(DB_VERSION, getDBVersion());
+            $this->assertFileDoesNotExist(DBMaintenanceFlagPath(), 'a finished upgrade leaves no flag');
+            $this->assertFileDoesNotExist(DBMaintenanceLockPath(), 'and releases its lock');
+        } finally {
+            $this->restoreSchemaVersion();
+        }
+    }
+
+    public function testDBHandleMaintenanceStateUpgradesAnOutdatedDatabaseUnderAPendingFlag(): void
+    {
+        $this->makeDatabaseOneVersionBehind();
+        try {
+            $this->assertTrue(DBCreateAutomaticMaintenanceFlag());
+            $this->assertSame('pending', DBReadMaintenanceState()['status']);
+
+            DBHandleMaintenanceState();
+
+            $this->assertSame(DB_VERSION, getDBVersion());
+            $this->assertFileDoesNotExist(DBMaintenanceFlagPath());
+        } finally {
+            $this->restoreSchemaVersion();
+        }
+    }
+
+    public function testDBRunAutomaticUpgradeFlagsFailureWhenTheTargetVersionIsNotReached(): void
+    {
+        // A recorded version beyond the target makes getDBVersion() differ from DB_VERSION
+        // after CheckDB, which is how an upgrade that stalls short of the target looks.
+        $bogus = DB_VERSION + 1;
+        DBQuery("INSERT INTO uo_database (version, updated) VALUES ($bogus, NOW())");
+        try {
+            $this->assertFalse(DBRunAutomaticUpgrade());
+
+            $state = DBReadMaintenanceState();
+            $this->assertSame('automatic', $state['mode']);
+            $this->assertSame('failed', $state['status']);
+            $this->assertSame('Upgrade finished without reaching target version.', $state['error']);
+            $this->assertFileDoesNotExist(DBMaintenanceLockPath(), 'the lock is released after a failure');
+        } finally {
+            $this->restoreSchemaVersion();
+        }
+    }
+
+    // --- Runtime directory unavailable ---
+
+    /** Run $body with a regular file standing where the maintenance runtime directory would be. */
+    private function withoutRuntimeDir(callable $body): void
+    {
+        $dir = DBMaintenanceRuntimeDir();
+        $moved = $dir . '.moved-by-test';
+        $this->assertTrue(rename($dir, $moved));
+        file_put_contents($dir, 'not a directory');
+        try {
+            $body();
+        } finally {
+            @unlink($dir);
+            rename($moved, $dir);
+        }
+    }
+
+    public function testMaintenanceStateIsManualAndNothingCanBeWrittenWhenTheRuntimeDirIsUnavailable(): void
+    {
+        $this->withoutRuntimeDir(function () {
+            $this->assertFalse(DBEnsureMaintenanceRuntimeDir());
+            $state = DBReadMaintenanceState();
+            $this->assertSame('manual', $state['mode']);
+            $this->assertSame('runtime_dir_unavailable', $state['reason']);
+            $this->assertSame(DBMaintenanceFlagPath(), $state['path']);
+
+            $this->assertFalse(DBWriteMaintenanceFlag('mode=automatic'));
+            $this->assertFalse(DBCreateAutomaticMaintenanceFlag());
+            $this->assertFalse(DBTryAcquireUpgradeLock());
+            $this->assertFalse(DBRunAutomaticUpgrade());
+        });
+    }
+
+    public function testDBHandleMaintenanceStateContinuesWhenTheRuntimeDirIsUnavailableButTheDatabaseIsCurrent(): void
+    {
+        $this->assertSame(DB_VERSION, getDBVersion(), 'precondition: database is current');
+        $this->withoutRuntimeDir(function () {
+            // Returning (rather than rendering the maintenance page and exiting) is the assertion:
+            // reaching the next line proves the request was let through.
+            DBHandleMaintenanceState();
+            $this->addToAssertionCount(1);
+            $this->assertSame('manual', DBReadMaintenanceState()['mode']);
+        });
+    }
+
+    public function testMaintenanceFlagThatCannotBeReadIsTreatedAsManualMaintenance(): void
+    {
+        // A directory at the flag path is not a file, so exercise the unreadable branch with a
+        // file that exists but cannot be read.
+        $path = DBMaintenanceFlagPath();
+        file_put_contents($path, "mode=automatic\n");
+        chmod($path, 0000);
+        try {
+            if (is_readable($path)) {
+                $this->markTestSkipped('Running as a user that can read mode 0000 files.');
+            }
+            $state = DBReadMaintenanceState();
+            $this->assertSame('manual', $state['mode']);
+            $this->assertSame('unreadable', $state['reason']);
+        } finally {
+            chmod($path, 0644);
+        }
+    }
 }

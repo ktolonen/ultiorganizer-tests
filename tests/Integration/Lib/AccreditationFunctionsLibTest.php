@@ -102,6 +102,37 @@ final class AccreditationFunctionsLibTest extends TestCase
         $this->assertFalse((bool) $result);
     }
 
+    // --- LicenseDataList ---
+
+    public function testLicenseDataListReturnsEmptyWithoutUsableIds(): void
+    {
+        $this->assertSame([], LicenseDataList([]));
+        $this->assertSame([], LicenseDataList([null, '']));
+    }
+
+    public function testLicenseDataListKeysRowsByAccreditationIdAndKeepsFirstDuplicate(): void
+    {
+        DBQuery("DELETE FROM uo_license WHERE accreditation_id IN ('LDL-A', 'LDL-B')");
+        try {
+            DBQuery("INSERT INTO uo_license (lastname, firstname, membership, accreditation_id, ultimate, license, external_id, external_type, external_validity)
+                     VALUES ('One', 'First', 2026, 'LDL-A', 1, 11, 501, 1, 2027),
+                            ('Two', 'Second', 2026, 'LDL-A', 0, 22, 502, 1, 2028),
+                            ('Three', 'Third', 2025, 'LDL-B', 1, 33, 503, 2, 2026)");
+
+            $rows = LicenseDataList(['LDL-A', 'LDL-B', 'LDL-missing', null, '']);
+
+            $this->assertSame(['LDL-A', 'LDL-B'], array_keys($rows));
+            $this->assertEquals(11, $rows['LDL-A']['license']);
+            $this->assertEquals(501, $rows['LDL-A']['external_id']);
+            $this->assertEquals(33, $rows['LDL-B']['license']);
+            $this->assertEquals(2025, $rows['LDL-B']['membership']);
+            // Contrast: an id with no license row yields nothing.
+            $this->assertSame([], LicenseDataList(['LDL-missing']));
+        } finally {
+            DBQuery("DELETE FROM uo_license WHERE accreditation_id IN ('LDL-A', 'LDL-B')");
+        }
+    }
+
     // --- SearchLicenseData ---
 
     public function testSearchLicenseDataReturnsArrayForNameSearch(): void

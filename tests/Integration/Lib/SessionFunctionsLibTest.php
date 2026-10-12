@@ -104,4 +104,61 @@ final class SessionFunctionsLibTest extends TestCase
         regenerateSessionId();
         $this->assertSame(PHP_SESSION_ACTIVE, session_status());
     }
+
+    public function testSessionInstanceFingerprintIsStableHexAndFollowsInstallationValues(): void
+    {
+        $fingerprint = sessionInstanceFingerprint();
+
+        $this->assertMatchesRegularExpression('/^[0-9a-f]{32}$/', $fingerprint);
+        $this->assertSame($fingerprint, sessionInstanceFingerprint());
+        $parts = [
+            defined('DB_HOST') ? (string) DB_HOST : '',
+            defined('DB_DATABASE') ? (string) DB_DATABASE : '',
+            defined('BASEURL') ? (string) BASEURL : '',
+            sessionCookieName(),
+        ];
+        $this->assertSame(substr(hash('sha256', implode('|', $parts)), 0, 32), $fingerprint);
+    }
+
+    public function testEnforceSessionInstanceBindingAdoptsSessionWithoutFingerprint(): void
+    {
+        startSecureSession();
+        unset($_SESSION['__uo_instance']);
+        $_SESSION['uid'] = 'keep-me';
+        $idBefore = session_id();
+
+        enforceSessionInstanceBinding();
+
+        $this->assertSame(sessionInstanceFingerprint(), $_SESSION['__uo_instance']);
+        $this->assertSame('keep-me', $_SESSION['uid'], 'adoption must not discard existing data');
+        $this->assertSame($idBefore, session_id());
+    }
+
+    public function testEnforceSessionInstanceBindingKeepsSessionWithMatchingFingerprint(): void
+    {
+        startSecureSession();
+        $_SESSION['__uo_instance'] = sessionInstanceFingerprint();
+        $_SESSION['uid'] = 'keep-me';
+        $idBefore = session_id();
+
+        enforceSessionInstanceBinding();
+
+        $this->assertSame('keep-me', $_SESSION['uid']);
+        $this->assertSame($idBefore, session_id());
+    }
+
+    public function testEnforceSessionInstanceBindingStartsFreshSessionForForeignFingerprint(): void
+    {
+        startSecureSession();
+        $_SESSION['__uo_instance'] = str_repeat('f', 32);
+        $_SESSION['uid'] = 'foreign-user';
+        $idBefore = session_id();
+
+        enforceSessionInstanceBinding();
+
+        $this->assertSame(PHP_SESSION_ACTIVE, session_status());
+        $this->assertNotSame($idBefore, session_id());
+        $this->assertSame(sessionInstanceFingerprint(), $_SESSION['__uo_instance']);
+        $this->assertArrayNotHasKey('uid', $_SESSION, 'foreign session data must not leak into the new session');
+    }
 }

@@ -751,4 +751,122 @@ final class PlayerFunctionsLibTest extends TestCase
             unset($_FILES['picture']);
         }
     }
+
+    // --- PlayerLatestId (season filter) ---
+
+    public function testPlayerLatestIdLimitsLookupToTheGivenSeason(): void
+    {
+        $this->assertSame($this->testPlayerId, (int) PlayerLatestId($this->testProfileId, 'HRN2026'));
+        // Contrast: the profile has no player in another event.
+        $this->assertNull(PlayerLatestId($this->testProfileId, 'NO-SUCH-SEASON'));
+    }
+
+    // --- FindExistingPlayerProfileId (conflicting matches) ---
+
+    public function testFindExistingPlayerProfileIdRefusesWhenAccreditationAndEmailNameMatchDifferentProfiles(): void
+    {
+        DBQuery("INSERT INTO uo_player_profile (firstname, lastname, email) VALUES ('Quentin', 'Quirk', 'quentin@quirk.example')");
+        $otherProfileId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+        try {
+            $this->assertSame(
+                $this->testProfileId,
+                FindExistingPlayerProfileId(['accreditation_id' => 'TEST-ACCRID-999']),
+                'precondition: the accreditation id alone resolves to the first profile'
+            );
+            $this->assertSame(
+                $otherProfileId,
+                FindExistingPlayerProfileId([
+                    'firstname' => 'Quentin',
+                    'lastname'  => 'Quirk',
+                    'email'     => 'quentin@quirk.example',
+                ]),
+                'precondition: email and name alone resolve to the second profile'
+            );
+
+            $this->assertSame(0, FindExistingPlayerProfileId([
+                'accreditation_id' => 'TEST-ACCRID-999',
+                'firstname'        => 'Quentin',
+                'lastname'         => 'Quirk',
+                'email'            => 'quentin@quirk.example',
+            ]));
+        } finally {
+            DBQuery(sprintf("DELETE FROM uo_player_profile WHERE profile_id=%d", $otherProfileId));
+        }
+    }
+
+    // --- CreatePlayerProfile / SetPlayerProfile reuse an existing profile ---
+
+    public function testCreatePlayerProfileLinksExistingProfileMatchingAccreditationId(): void
+    {
+        DBQuery(sprintf(
+            "UPDATE uo_player SET accreditation_id='TEST-ACCRID-999' WHERE player_id=%d",
+            $this->testPlayerId2
+        ));
+        $profilesBefore = (int) DBQueryToValue("SELECT COUNT(*) FROM uo_player_profile");
+
+        CreatePlayerProfile($this->testPlayerId2);
+
+        $this->assertEquals($this->testProfileId, PlayerInfo($this->testPlayerId2)['profile_id']);
+        $this->assertEquals($profilesBefore, DBQueryToValue("SELECT COUNT(*) FROM uo_player_profile"));
+    }
+
+    public function testSetPlayerProfileLinksExistingProfileMatchingAccreditationId(): void
+    {
+        $profile = [
+            'accreditation_id' => 'TEST-ACCRID-999',
+            'firstname'        => 'Pekka',
+            'lastname'         => 'Probe',
+            'num'              => '7',
+            'email'            => 'pekka@probe.example',
+            'nickname'         => '',
+            'gender'           => '',
+            'info'             => '',
+            'national_id'      => '',
+            'birthdate'        => '1990-01-15',
+            'birthplace'       => '',
+            'nationality'      => '',
+            'throwing_hand'    => '',
+            'height'           => '',
+            'weight'           => '',
+            'position'         => '',
+            'story'            => '',
+            'achievements'     => '',
+            'public'           => '1',
+        ];
+        $profilesBefore = (int) DBQueryToValue("SELECT COUNT(*) FROM uo_player_profile");
+
+        SetPlayerProfile(300, $this->testPlayerId2, $profile);
+
+        $this->assertEquals($this->testProfileId, PlayerInfo($this->testPlayerId2)['profile_id']);
+        $this->assertEquals($profilesBefore, DBQueryToValue("SELECT COUNT(*) FROM uo_player_profile"));
+    }
+
+    // --- SeasonPlayerInfos / SeasonPlayerTeamPlayedGames ---
+
+    public function testSeasonPlayerInfosKeysEveryPlayerOfTheSeasonByPlayerId(): void
+    {
+        $infos = SeasonPlayerInfos('HRN2026');
+
+        $this->assertArrayHasKey(800, $infos);
+        $this->assertSame('Ari Ace', $infos[800]['name']);
+        $this->assertSame('Helsinki Heat', $infos[800]['teamname']);
+        $this->assertEquals(8, $infos[800]['num']);
+        $this->assertNull($infos[800]['email'], 'player 800 has no profile row');
+        $this->assertSame('Tampere Tempest', $infos[802]['teamname']);
+        // The disposable player is linked to a profile, so the profile columns come through.
+        $this->assertSame('pekka@probe.example', $infos[$this->testPlayerId]['email']);
+        // Contrast: nothing comes back for an unknown event.
+        $this->assertSame([], SeasonPlayerInfos('NO-SUCH-SEASON'));
+    }
+
+    public function testSeasonPlayerTeamPlayedGamesCountsPlayedGamesPerPlayer(): void
+    {
+        $games = SeasonPlayerTeamPlayedGames('HRN2026');
+
+        foreach ([800, 801, 802, 803] as $playerId) {
+            $this->assertSame(1, $games[$playerId], "player $playerId played game 700 for their own team");
+        }
+        $this->assertArrayNotHasKey($this->testPlayerId, $games, 'a player without played games is absent');
+        $this->assertSame([], SeasonPlayerTeamPlayedGames('NO-SUCH-SEASON'));
+    }
 }

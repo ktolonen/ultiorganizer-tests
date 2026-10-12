@@ -228,6 +228,82 @@ final class PersistentCacheFunctionsLibTest extends TestCase
         $this->assertSame('recomputed', $result);
     }
 
+    public function testCacheRememberForReturnsStalePayloadWhileAnotherWorkerHoldsTheLock(): void
+    {
+        $path = $this->registerCachePath('uo_unit_lock_stale', 'k');
+        if ($path === null) {
+            $this->markTestSkipped('PersistentCacheDir not available');
+        }
+        file_put_contents($path, serialize(['expires' => time() - 1, 'payload' => 'stale']));
+        $holder = fopen($path . '.lock', 'c');
+        $this->assertTrue(flock($holder, LOCK_EX | LOCK_NB), 'precondition: test holds the lock');
+        try {
+            $calls = 0;
+            $result = CacheRememberFor('uo_unit_lock_stale', 'k', 10, function () use (&$calls) {
+                $calls++;
+                return 'fresh';
+            });
+            $this->assertSame('stale', $result);
+            $this->assertSame(0, $calls);
+        } finally {
+            flock($holder, LOCK_UN);
+            fclose($holder);
+        }
+
+        // Contrast: with the lock released the same expired entry is recomputed.
+        $this->assertSame('fresh', CacheRememberFor('uo_unit_lock_stale', 'k', 10, fn() => 'fresh'));
+    }
+
+    public function testCacheRememberForResolvesDirectlyWhenLockedAndNoCachedEntryExists(): void
+    {
+        $path = $this->registerCachePath('uo_unit_lock_miss', 'k');
+        if ($path === null) {
+            $this->markTestSkipped('PersistentCacheDir not available');
+        }
+        @unlink($path);
+        $holder = fopen($path . '.lock', 'c');
+        $this->assertTrue(flock($holder, LOCK_EX | LOCK_NB), 'precondition: test holds the lock');
+        try {
+            $result = CacheRememberFor('uo_unit_lock_miss', 'k', 10, fn() => 'computed');
+            $this->assertSame('computed', $result);
+            $this->assertFileDoesNotExist($path, 'a contended miss must not write the cache entry');
+        } finally {
+            flock($holder, LOCK_UN);
+            fclose($holder);
+        }
+    }
+
+    public function testCacheRememberForResolvesDirectlyWhenLockFileCannotBeOpened(): void
+    {
+        $path = $this->registerCachePath('uo_unit_lock_open', 'k');
+        if ($path === null) {
+            $this->markTestSkipped('PersistentCacheDir not available');
+        }
+        @unlink($path);
+        // A directory at the lock path makes fopen($lock, 'c') fail.
+        mkdir($path . '.lock');
+        try {
+            $result = CacheRememberFor('uo_unit_lock_open', 'k', 10, fn() => 'computed');
+            $this->assertSame('computed', $result);
+            $this->assertFileDoesNotExist($path);
+        } finally {
+            rmdir($path . '.lock');
+        }
+    }
+
+    public function testPersistentCacheWriteLeavesNoTempFileWhenRenameFails(): void
+    {
+        $target = $this->tmpPath();
+        mkdir($target);
+        try {
+            PersistentCacheWrite($target, 'value', 60);
+            $this->assertDirectoryExists($target, 'rename onto a directory must fail and leave it in place');
+            $this->assertFileDoesNotExist($target . '.tmp.' . getmypid());
+        } finally {
+            rmdir($target);
+        }
+    }
+
     public function testCacheRememberForUsesExplicitTtlForNewEntry(): void
     {
         $path = $this->registerCachePath('uo_unit_ttl', 'k5');

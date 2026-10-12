@@ -23,7 +23,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "Meets \u226580% line and 100% fn targets. Tests cover CRUD operations and role-gated access checks.",
+      "triage_notes": "96.9% line / 100% fn. Remaining: the three die() rights guards. LicenseDataList is covered with real uo_license rows (empty input, duplicate ids keep the first row, unknown ids absent).",
       "notes": "",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/accreditation.functions.php"
     },
@@ -39,7 +39,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "Meets \u226580% line and 100% fn targets. Tests cover REST API endpoint dispatching and token validation.",
+      "triage_notes": "Meets ≥80% line and 100% fn targets. Tests cover REST API endpoint dispatching and token validation.",
       "notes": "",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/api.functions.php"
     },
@@ -55,7 +55,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "69.2% line / 0 named fns \u2014 module-level guard script. Covered path: logged-in session passes through. Uncovered: header(location)+exit() branch (lines 20-21) requires isLoggedIn()=false which terminates the process. True ceiling.",
+      "triage_notes": "69.2% line / 0 named fns — module-level guard script. Covered path: logged-in session passes through. Uncovered: header(location)+exit() branch (lines 20-21) requires isLoggedIn()=false which terminates the process. True ceiling.",
       "notes": "",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/auth.guard.php"
     },
@@ -71,7 +71,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "Meets \u226580% line and 100% fn targets. Tests cover cache read/write/flush operations.",
+      "triage_notes": "Meets ≥80% line and 100% fn targets. Tests cover cache read/write/flush operations.",
       "notes": "",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/cache.functions.php"
     },
@@ -87,7 +87,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "Meets \u226580% line and 100% fn targets. Tests cover club CRUD and list functions.",
+      "triage_notes": "Meets ≥80% line and 100% fn targets. Tests cover club CRUD and list functions.",
       "notes": "",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/club.functions.php"
     },
@@ -119,7 +119,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "80.8% line / 100% fn achieved. Remaining ~19%: GetURLBase non-BASEURL path unreachable (BASEURL constant defined by config.inc.php), ordinal() fallback switch unreachable (NumberFormatter always available), GetInt/GetString return-value paths unreachable (filter_input returns null in CLI), GetScriptName die() path not testable. No function coverage gaps.",
+      "triage_notes": "90.0% line / 100% fn. Remaining ~10% is unreachable in-process: GetURLBase fallback (BASEURL is always defined), ordinal() NumberFormatter branch (php-intl absent; the hand-written English table is asserted exactly), GetString body (filter_input returns null in CLI), polyfill blocks (parse_ini_string, array_combine, str_split, stripos), convertToUtf8 iconv fallbacks (mb_convert_encoding always yields valid UTF-8), ToInternalTimeFormat's 'append 00:00' branch (the test DATE_FORMAT is date-only), and the die() branches. SafeRedirectUrl, ValidStyleSheet, ValidCsvEncoding and ValidCsvSeparator are covered by value assertions.",
       "notes": "Stable utility-heavy target for the first pure-helper checkpoint.",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/common.functions.php"
     },
@@ -135,7 +135,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "66.9% line / 96.0% fn \u2014 ceiling. SetServerConfValue now covered. RenderSoftMaintenanceResponse (lines 71-112, ~31 stmts) has two exit() calls \u2014 untestable in-process. SetServerConf die() branch (non-superadmin, line 195) same. getAvailableLocalizations line 262 is system-locale-dependent.",
+      "triage_notes": "72.0% line / 96.0% fn - ceiling. RenderSoftMaintenanceResponse (~31 stmts) ends in exit() on every branch, SetServerConf's non-superadmin die() (line 196) likewise, and getAvailableLocalizations' English-fallback line depends on the system locales.",
       "notes": "Pilot tuning showed that page-title reads also need common helper loading because utf8entities() is not declared inside the file.",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/configuration.functions.php"
     },
@@ -167,7 +167,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "80.1% line / 100% fn achieved. Tests cover JSON export + roundtrip import (new + replace modes), URL/comment/team-profile snapshots, and ~30 exception paths. Remaining ~20%: catch block in importFile (transaction failure path), \"existing global entity found\" paths (float-precision prevents location match), empty-fixture foreach bodies (no game events, spirit scores, defenses, season rounds, final standings in baseline fixture).",
+      "triage_notes": "92.1% line / 100% fn. Covered: JSON export + roundtrip import (new and replace), a rich roundtrip carrying spirit scores, defences, game events, timeouts, season rounds/points, final standings, move rules, pool followers and links; every validation refusal asserted by message; dangling-reference warnings; replace-mode delegated-admin and orphaned-profile warnings; profile reuse by accreditation id. Remaining: transaction-failure catch in importFile, global-entity reuse paths (pool templates, spirit categories, locations; float precision defeats the location match), the schema-version-mismatch warning, and the 'Invalid column' throw (obsolete columns are dropped first).",
       "notes": "",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/data.functions.php"
     },
@@ -183,7 +183,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "64.0% line / 95.2% fn \u2014 ceiling. DBRenderMaintenanceResponse (called in all maintenance-mode paths) calls http_response_code(503)+exit() in every branch and cannot be tested in-process. DBHandleMaintenanceState paths that call DBRenderMaintenanceResponse are also unreachable. DBRunAutomaticUpgrade lock-held path (returns false) is covered.",
+      "triage_notes": "77.8% line / 95.2% fn - ceiling. DBRenderMaintenanceResponse (~30 stmts) ends in exit() on every branch, so every DBHandleMaintenanceState path that renders it is unreachable. Covered: upgrade through DBHandleMaintenanceState with and without a pending flag, a stalled upgrade flagging failure, the runtime-dir-unavailable fallback, unreadable flag. Unreached: flag removal failure, exception inside CheckDB.",
       "notes": "",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/database.maintenance.php"
     },
@@ -199,7 +199,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "80.3% line / 100% fn achieved. Remaining ~20%: die() paths in GetServerName (no SERVER_NAME/HTTP_HOST), DBAbort (exception mode off), OpenConnection (connection failure), and the CheckDB upgrade-loop body (no missing upgrades in fixture DB schema).",
+      "triage_notes": "90%+ line / 100% fn. Remaining: die() paths (GetServerName, FindIncludePrefix miss, DBConnectionUnavailable, OpenConnection failures, DBSetRow validators, DBStat/Info helpers), CheckDB's two `continue` branches (no upgradeNN gap exists and rows above max(version) cannot), and DBFieldType's 'char'/'enum' (aliased to 'tinyint'/'string' by mysqli) and unmapped types. SUT BUG: DBFieldType() references MYSQLI_TYPE_INTERVAL, which is undefined on PHP 8.5, so any column type that falls through to that case (GEOMETRY, SET, NEWDATE, JSON, ...) raises Error: Undefined constant instead of returning 'unknown'; latent because the schema uses none of them.",
       "notes": "Treat as bootstrap/runtime coverage first; avoid deep DB side effects until a dedicated checkpoint.",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/database.php"
     },
@@ -231,7 +231,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "Meets \u226580% line and 100% fn targets. Tests cover game scoring, state transitions, and result queries.",
+      "triage_notes": "Meets ≥80% line and 100% fn targets. Tests cover game scoring, state transitions, and result queries.",
       "notes": "",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/game.functions.php"
     },
@@ -247,7 +247,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "81.4% (up from 36.3%) after adding php-gd to the php-test Dockerfile. Real GD image generation now exercises ConvertToJpeg/CreateThumb/WriteJpegImage for png/jpeg/gif sources and aspect-ratio branches. Remaining gap: WriteJpegImage rename-failure edge and RemoveImage die() non-superadmin path.",
+      "triage_notes": "94.1% line / 100% fn. Covered with real GD images and header-only PNGs for the size limits. Remaining: RemoveImage die() guard, GD allocation failures.",
       "notes": "",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/image.functions.php"
     },
@@ -263,7 +263,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "77.8% line / 100% fn \u2014 ceiling at the http_response_code(404)+exit() branch. That path is verified by subprocess tests (proc_open) but PCOV cannot track cross-process coverage. In-process tests cover the two early-return paths and the denyDirectLibAccess delegate.",
+      "triage_notes": "77.8% line / 100% fn — ceiling at the http_response_code(404)+exit() branch. That path is verified by subprocess tests (proc_open) but PCOV cannot track cross-process coverage. In-process tests cover the two early-return paths and the denyDirectLibAccess delegate.",
       "notes": "Guard behavior should be validated with isolated include tests instead of broad runtime assertions.",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/include_only.guard.php"
     },
@@ -279,7 +279,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "Meets \u226580% line and 100% fn targets. Tests cover locale detection and formatting helpers.",
+      "triage_notes": "88.9% line / 100% fn - ceiling. The image has no locale besides C/C.utf8/POSIX, so the carrier-locale paths (GettextCarrierLocale success, ActivateGettextLocale fallback) never run, and the Windows branches and shell_exec guards are unreachable on Linux.",
       "notes": "",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/locale.functions.php"
     },
@@ -295,7 +295,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "96.4% achieved. Remaining 4 lines are die() paths in SetLocation/AddLocation/RemoveLocation else-branches (lines 122, 169, 176, 180) \u2014 genuinely hard to reach without in-process process isolation.",
+      "triage_notes": "96.4% achieved. Remaining 4 lines are die() paths in SetLocation/AddLocation/RemoveLocation else-branches (lines 122, 169, 176, 180) — genuinely hard to reach without in-process process isolation.",
       "notes": "",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/location.functions.php"
     },
@@ -311,7 +311,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "96.9% achieved. Remaining 7 lines: LogPageLoad/LogVisitor disabled-return (304, 352) \u2014 static cache in IsVisitorLoggingDisabled prevents testing after first enabled call; IsVisitorLoggingDisabled null-setting path (335-336) \u2014 requires DB without that setting; EventCount DB failure path (138) \u2014 hard to trigger; LogResetVisitorCounter/PageLoadCounter non-superadmin (392, 410) \u2014 isSuperAdmin returns true once loaded in process context.",
+      "triage_notes": "96.9% achieved. Remaining 7 lines: LogPageLoad/LogVisitor disabled-return (304, 352) — static cache in IsVisitorLoggingDisabled prevents testing after first enabled call; IsVisitorLoggingDisabled null-setting path (335-336) — requires DB without that setting; EventCount DB failure path (138) — hard to trigger; LogResetVisitorCounter/PageLoadCounter non-superadmin (392, 410) — isSuperAdmin returns true once loaded in process context.",
       "notes": "Feasible shallow target; keep coverage on event-category enumeration and direct event-log inserts.",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/logging.functions.php"
     },
@@ -327,7 +327,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "Meets \u226580% line and 100% fn targets. Tests cover PDF interface function stubs.",
+      "triage_notes": "Meets ≥80% line and 100% fn targets. Tests cover PDF interface function stubs.",
       "notes": "",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/pdf.interfaces.php"
     },
@@ -343,7 +343,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "Remaining ~19% gap is filesystem-fault and lock-contention paths: cache-disabled fallthrough (line 32), null-filepath fallthrough (38), fopen failure (52), recheck-inside-lock fresh path (59-61), lock-contention stale/miss (74-78), namespace-wipe when dir null (104), stats/wipe when dir null (127, 150), PersistentCacheDir mkdir failure (173/176/190/199), file_get_contents failure (213), rename failure (231). All require broken filesystem or race condition simulation; genuinely hard to reach without mocking.",
+      "triage_notes": "92.5% line / 100% fn. Contended-lock (stale payload / direct resolve), unopenable lock file and failed rename are covered with a real second lock holder and directories standing in for files. Remaining: recheck-inside-lock race, unreadable cache file, mkdir failure.",
       "notes": "",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/persistent-cache.functions.php"
     },
@@ -359,7 +359,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "Meets \u226580% line and 100% fn targets (91%/100%). Tests cover player CRUD, roster ops, and profile management; upload tested via oversize/type-rejection paths.",
+      "triage_notes": "94.4% line / 100% fn. Remaining: die() guards and the upload path (is_uploaded_file cannot be simulated in the CLI).",
       "notes": "",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/player.functions.php"
     },
@@ -375,7 +375,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "Meets \u226580% line and 100% fn targets. Tests cover plugin registration and hook dispatch.",
+      "triage_notes": "Meets ≥80% line and 100% fn targets. Tests cover plugin registration and hook dispatch.",
       "notes": "",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/plugin.functions.php"
     },
@@ -391,7 +391,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "Meets \u226580% line and 100% fn targets. Tests cover pool creation, standings, and game scheduling queries.",
+      "triage_notes": "Meets ≥80% line and 100% fn targets. Tests cover pool creation, standings, and game scheduling queries.",
       "notes": "",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/pool.functions.php"
     },
@@ -407,7 +407,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "82.8% line / 96.6% fn \u2014 ceiling at PrivacyDownloadTextFile (header()+echo+exit()). All other functions covered: pure helpers, DB-backed player/user report collection and rendering, export logging, PrivacyRemovePlayerProfileImageByProfileId (filesystem creation/removal), PrivacyRemoveEmptyDirectory, PrivacyDeleteUserData (throwaway user), and anonymize on a throwaway player.",
+      "triage_notes": "82.8% line / 96.6% fn — ceiling at PrivacyDownloadTextFile (header()+echo+exit()). All other functions covered: pure helpers, DB-backed player/user report collection and rendering, export logging, PrivacyRemovePlayerProfileImageByProfileId (filesystem creation/removal), PrivacyRemoveEmptyDirectory, PrivacyDeleteUserData (throwaway user), and anonymize on a throwaway player.",
       "notes": "",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/privacy.functions.php"
     },
@@ -423,7 +423,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "Meets \u226580% line and 100% fn targets (86%/100%). Tests cover reservation CRUD, field/season queries, game attachment, and ReservationSeason lookup.",
+      "triage_notes": "Meets ≥80% line and 100% fn targets (86%/100%). Tests cover reservation CRUD, field/season queries, game attachment, and ReservationSeason lookup.",
       "notes": "",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/reservation.functions.php"
     },
@@ -439,7 +439,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "Meets \u226590% line and 100% fn targets (93%/100%). Tests cover token issue/rotate/revoke, redeem and grant coverage by game day, the event link list, link sheet/QR output.",
+      "triage_notes": "91.2% line / 100% fn. Remaining: the anonymous-session branch that needs UO_APP_SOURCE defined, and defensive null checks.",
       "notes": "",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/scorekeeper.functions.php"
     },
@@ -455,7 +455,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "Meets \u226590% line and 100% fn targets (98%/100%). Tests cover record/snapshot/restore, list paging, event history deletion, and every FormatDetail target. The fixture-move branch of FormatDetail is not asserted: it lazy-requires translation.functions.php, which redeclares U_() stubbed by SearchFunctionsLibTest.",
+      "triage_notes": "Meets ≥90% line and 100% fn targets (98%/100%). Tests cover record/snapshot/restore, list paging, event history deletion, and every FormatDetail target. The fixture-move branch of FormatDetail is not asserted: it lazy-requires translation.functions.php, which redeclares U_() stubbed by SearchFunctionsLibTest.",
       "notes": "",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/scoresheethistory.functions.php"
     },
@@ -471,7 +471,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "80.6% line / 100% fn \u2014 ceiling. PlayerResults (lines 659\u2013736, 3.4% covered) contains a SUT bug: GROUP_CONCAT(DISTINCT email) references a column that exists only in uo_player_profile, but the query never joins that table. Any call with $_POST['searchplayer'] set throws Unknown column 'email' in 'SELECT'. Body is untestable until SUT is fixed. All other Search*/Results functions (except PlayerResults body) are covered.",
+      "triage_notes": "80.6% line / 100% fn — ceiling. PlayerResults (lines 659–736, 3.4% covered) contains a SUT bug: GROUP_CONCAT(DISTINCT email) references a column that exists only in uo_player_profile, but the query never joins that table. Any call with $_POST['searchplayer'] set throws Unknown column 'email' in 'SELECT'. Body is untestable until SUT is fixed. All other Search*/Results functions (except PlayerResults body) are covered.",
       "notes": "",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/search.functions.php"
     },
@@ -487,7 +487,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "80.9% line / 100% fn achieved (updated after the per-event banner feature added SeasonBannerHTML/UploadSeasonBanner/RemoveSeasonBanner). Remaining line gap: EnforceSoftMaintenanceForView/EnforcePrivateEventAccessForView exit() paths not testable in-process; MaintenanceSeasonFromView GET-param branches unreachable via filter_input in CLI; and UploadSeasonBanner (12.1% covered) is now the largest single gap because it calls is_uploaded_file() before any other branch, which only ever returns true for a genuine SAPI multipart upload and cannot be simulated in a CLI PHPUnit process -- only its 'No image selected' rejection branch is reachable. RemoveSeasonBanner and SeasonBannerHTML are fully covered aside from the isSeasonAdmin() die() guard. All functions now covered.",
+      "triage_notes": "86.9% line / 100% fn - ceiling. RequestSeasonsFromView / MaintenanceSeasonFromView parameter branches read filter_input() (null in CLI), the Enforce*/Require* wrappers end in exit(), UploadSeasonBanner needs is_uploaded_file(), and the die() guards. Covered: CanAccessSeason with scoped roles, FilterAccessibleSeasons, AccessibleSeasonIdListSql, duplicate-id AddSeason.",
       "notes": "Feasible read-only target; keep first-pass coverage on deterministic season, pool, and reservation reads.",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/season.functions.php"
     },
@@ -503,7 +503,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "Meets \u226580% line and 100% fn targets. Tests cover season points calculation helpers.",
+      "triage_notes": "Meets ≥80% line and 100% fn targets. Tests cover season points calculation helpers.",
       "notes": "",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/seasonpoints.functions.php"
     },
@@ -535,7 +535,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "Meets \u226580% line and 100% fn targets. Tests cover session start, role checks, and logout.",
+      "triage_notes": "94.5% line / 100% fn. The UO_SESSION_NAME configured/invalid branches need a constant that cannot be undefined again within the process, so they stay uncovered; instance binding is asserted for adoption, match and foreign fingerprint.",
       "notes": "Feasible request/session helper target even though the catalog still keeps it in the integration suite for now.",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/session.functions.php"
     },
@@ -551,7 +551,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "Meets \u226580% line and 100% fn targets. Tests cover spirit score submission and aggregation.",
+      "triage_notes": "92.9% line / 100% fn. Token guards, rights helpers and the spiritkeeper team/url helpers are asserted per branch. Remaining: die() guards and rarely-hit defensive returns.",
       "notes": "",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/spirit.functions.php"
     },
@@ -583,7 +583,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "Meets \u226580% line and 100% fn targets. Tests cover statistical aggregation helpers.",
+      "triage_notes": "Meets ≥80% line and 100% fn targets. Tests cover statistical aggregation helpers.",
       "notes": "",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/statistical.functions.php"
     },
@@ -599,7 +599,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "Meets \u226580% line and 100% fn targets. Tests cover Swiss-draw pairing logic.",
+      "triage_notes": "Meets ≥80% line and 100% fn targets. Tests cover Swiss-draw pairing logic.",
       "notes": "",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/swissdraw.functions.php"
     },
@@ -631,7 +631,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "Meets \u226580% line and 100% fn targets. Tests cover timekeeper state transitions.",
+      "triage_notes": "Meets ≥80% line and 100% fn targets. Tests cover timekeeper state transitions.",
       "notes": "",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/timekeeper.functions.php"
     },
@@ -647,7 +647,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "Meets \u226580% line and 100% fn targets. Tests cover timetable slot generation and conflict detection.",
+      "triage_notes": "Meets ≥80% line and 100% fn targets. Tests cover timetable slot generation and conflict detection.",
       "notes": "",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/timetable.functions.php"
     },
@@ -663,7 +663,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "84.3% line / 100% fn \u2014 targets met. Tests cover translate(), autocomplete, u_(), LoadDBTranslations, GetTranslations, Translations, SetTranslation, AddTranslation, RemoveTranslation, RegisterTranslationKey (early-return guards, explicit locale, session locale).",
+      "triage_notes": "84.3% line / 100% fn — targets met. Tests cover translate(), autocomplete, u_(), LoadDBTranslations, GetTranslations, Translations, SetTranslation, AddTranslation, RemoveTranslation, RegisterTranslationKey (early-return guards, explicit locale, session locale).",
       "notes": "",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/translation.functions.php"
     },
@@ -679,7 +679,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "80.7% achieved. Remaining ~19%: die() paths in AddUrl/AddMail/SetUrl/SetMail/RemoveUrl/AddMediaUrl/RemoveMediaUrl non-superadmin branches, and CanEditMediaTarget switch-case branches (game/team/player/club/series/pool) + CanEditClubMediaTarget + CanEditPlayerMediaTarget \u2014 require non-superadmin users with specific media rights and fixtures.",
+      "triage_notes": "80.7% achieved. Remaining ~19%: die() paths in AddUrl/AddMail/SetUrl/SetMail/RemoveUrl/AddMediaUrl/RemoveMediaUrl non-superadmin branches, and CanEditMediaTarget switch-case branches (game/team/player/club/series/pool) + CanEditClubMediaTarget + CanEditPlayerMediaTarget — require non-superadmin users with specific media rights and fixtures.",
       "notes": "Feasible read-only target; prefer fixture-backed URL reads and defer superadmin-only write paths.",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/url.functions.php"
     },
@@ -695,7 +695,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "89.6% line / 96.1% fn \u2014 line target met. Remaining uncovered: FailRedirect, FailRedirectMobile, FailUnauthorized, Forbidden \u2014 all call exit() after sending HTTP headers and are unreachable in-process. UserAuthenticate covered via wrong-password paths (returns false / invokes failcallback).",
+      "triage_notes": "93.1% line / 100% fn. CanChangeSeasonUserRole is asserted for every role kind, event binding and series-admin scope; DeleteSelectedUsersEventRoles/DeleteEventUserRoles/DeleteUserRoleRows delete only event-scoped roles and refresh the session. Remaining: the exit() redirects (FailRedirect, FailUnauthorized, Forbidden) and the md5/hash_equals polyfill fallbacks.",
       "notes": "",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/user.functions.php"
     },
@@ -711,7 +711,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "Meets \u226580% line and 100% fn targets. Tests cover version string parsing and comparison.",
+      "triage_notes": "Meets ≥80% line and 100% fn targets. Tests cover version string parsing and comparison.",
       "notes": "",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/version.functions.php"
     },
@@ -727,7 +727,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "51.7% line / 100% fn \u2014 ceiling. requireRoutedView() calls header(Location)+exit() in the redirect branch; routedViewFromScript() return paths are covered. The redirect+exit path is die-blocked and cannot be tested in-process.",
+      "triage_notes": "51.7% line / 100% fn — ceiling. requireRoutedView() calls header(Location)+exit() in the redirect branch; routedViewFromScript() return paths are covered. The redirect+exit path is die-blocked and cannot be tested in-process.",
       "notes": "",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/view.guard.php"
     }

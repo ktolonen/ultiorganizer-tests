@@ -267,6 +267,14 @@ final class CommonFunctionsLibTest extends TestCase
         $this->assertSame('2026-6-22 14:30:00', ToInternalTimeFormat('22.06.2026 14:30'));
     }
 
+    public function testToInternalTimeFormatTreatsADateWithoutTimeAsMidnight(): void
+    {
+        // The string is not zero-padded ("0:0:00"), so compare the instant it denotes.
+        $this->assertSame(strtotime('2026-06-22 00:00:00'), strtotime(ToInternalTimeFormat('22.06.2026')));
+        // Contrast: the same day with a time keeps that time.
+        $this->assertSame(strtotime('2026-06-22 14:30:00'), strtotime(ToInternalTimeFormat('22.06.2026 14:30')));
+    }
+
     public function testToInternalTimeFormatFallsBackForInvalidDate(): void
     {
         $result = ToInternalTimeFormat('not-a-date');
@@ -1108,6 +1116,26 @@ final class CommonFunctionsLibTest extends TestCase
         $this->assertStringContainsString('th', $result);
     }
 
+    public function testOrdinalUsesTheEnglishSuffixTableIncludingTheTeens(): void
+    {
+        $_SESSION['userproperties']['locale'] = 'en_US';
+        try {
+            $expected = [
+                1 => '1st', 2 => '2nd', 3 => '3rd', 4 => '4th', 10 => '10th',
+                11 => '11th', 12 => '12th', 13 => '13th', 14 => '14th',
+                21 => '21st', 22 => '22nd', 23 => '23rd',
+                101 => '101st', 111 => '111th', 112 => '112th', 113 => '113th',
+            ];
+            $actual = [];
+            foreach (array_keys($expected) as $number) {
+                $actual[$number] = ordinal($number);
+            }
+            $this->assertSame($expected, $actual);
+        } finally {
+            unset($_SESSION['userproperties']['locale']);
+        }
+    }
+
     public function testOrdinalReturnsDotForNonEnglishLocale(): void
     {
         $_SESSION['userproperties']['locale'] = 'fi_FI';
@@ -1622,5 +1650,118 @@ final class CommonFunctionsLibTest extends TestCase
         );
         $this->assertStringContainsString('UPPER', $result);
         $this->assertStringContainsString('SELECT', $result);
+    }
+
+    // ===== SafeRedirectUrl =====
+
+    public function testSafeRedirectUrlKeepsRelativeTargets(): void
+    {
+        $this->assertSame('?view=frontpage', SafeRedirectUrl('?view=frontpage', 'fallback'));
+        $this->assertSame('index.php?view=teams&season=X', SafeRedirectUrl('  index.php?view=teams&season=X ', 'fallback'));
+        $this->assertSame('/admin/page', SafeRedirectUrl('/admin/page', 'fallback'));
+    }
+
+    public function testSafeRedirectUrlFallsBackForEmptyAndHeaderInjectingValues(): void
+    {
+        $this->assertSame('fallback', SafeRedirectUrl('', 'fallback'));
+        $this->assertSame('fallback', SafeRedirectUrl('   ', 'fallback'));
+        $this->assertSame('index.php', SafeRedirectUrl(null));
+        $this->assertSame('fallback', SafeRedirectUrl("?view=a\r\nSet-Cookie: x=1", 'fallback'));
+        $this->assertSame('fallback', SafeRedirectUrl("?view=a\nLocation: http://evil.example", 'fallback'));
+        $this->assertSame('fallback', SafeRedirectUrl("?view=a\0b", 'fallback'));
+        $this->assertSame('fallback', SafeRedirectUrl("?view=a\x7fb", 'fallback'));
+    }
+
+    public function testSafeRedirectUrlRejectsOffSiteShapes(): void
+    {
+        $this->assertSame('fallback', SafeRedirectUrl('//evil.example/path', 'fallback'));
+        $this->assertSame('fallback', SafeRedirectUrl('/\\evil.example', 'fallback'));
+        $this->assertSame('fallback', SafeRedirectUrl('https:\\evil.example', 'fallback'));
+        $this->assertSame('fallback', SafeRedirectUrl('https:///evil.example/path', 'fallback'), 'parse_url() rejects it');
+        $this->assertSame('fallback', SafeRedirectUrl('javascript:alert(1)', 'fallback'));
+        $this->assertSame('fallback', SafeRedirectUrl('data:text/html,x', 'fallback'));
+        $this->assertSame('fallback', SafeRedirectUrl('ftp://' . parse_url(GetURLBase(), PHP_URL_HOST) . '/x', 'fallback'));
+        $this->assertSame('fallback', SafeRedirectUrl('http://', 'fallback'));
+    }
+
+    public function testSafeRedirectUrlAcceptsAbsoluteUrlsOnlyForTheInstallationHost(): void
+    {
+        $base = GetURLBase();
+        $host = (string) parse_url($base, PHP_URL_HOST);
+        $this->assertNotSame('', $host, 'precondition: the installation has a host');
+
+        $this->assertSame($base . '/?view=teams', SafeRedirectUrl($base . '/?view=teams', 'fallback'));
+        $this->assertSame(
+            'http://' . strtoupper($host) . '/x',
+            SafeRedirectUrl('http://' . strtoupper($host) . '/x', 'fallback'),
+            'host comparison ignores case'
+        );
+        // Contrast: the same path on another host, and a look-alike host, are refused.
+        $this->assertSame('fallback', SafeRedirectUrl('https://evil.example/?view=teams', 'fallback'));
+        $this->assertSame('fallback', SafeRedirectUrl('https://' . $host . '.evil.example/', 'fallback'));
+    }
+
+    // ===== ValidStyleSheet =====
+
+    public function testValidStyleSheetAcceptsCssPathsAndHttpUrls(): void
+    {
+        $this->assertSame('cust/skin/layout.css', ValidStyleSheet('cust/skin/layout.css', 'default.css'));
+        $this->assertSame('https://cdn.example/site.CSS', ValidStyleSheet(' https://cdn.example/site.CSS ', 'default.css'));
+        $this->assertSame('http://cdn.example/a/b.css?v=2', ValidStyleSheet('http://cdn.example/a/b.css?v=2', 'default.css'));
+    }
+
+    public function testValidStyleSheetFallsBackForEverythingElse(): void
+    {
+        foreach ([
+            '', '   ', null,
+            'javascript:alert(1).css',
+            'data:text/css,body{}.css',
+            'ftp://host/site.css',
+            'cust/skin/layout.php',
+            'cust/skin/layout',
+            'https://cdn.example/',
+            'a b.css',
+            'a"b.css',
+            "a'b.css",
+            'a<b>.css',
+            "a\\b.css",
+            "a\nb.css",
+        ] as $style) {
+            $this->assertSame('default.css', ValidStyleSheet($style, 'default.css'), var_export($style, true));
+        }
+    }
+
+    // ===== ValidCsvEncoding =====
+
+    public function testValidCsvEncodingReturnsTheNameForKnownEncodingsAndAliases(): void
+    {
+        $this->assertSame('UTF-8', ValidCsvEncoding('UTF-8'));
+        $this->assertSame('ISO-8859-1', ValidCsvEncoding('ISO-8859-1'));
+        $this->assertSame('latin1', ValidCsvEncoding('latin1'), 'aliases are accepted and returned as given');
+        $this->assertSame('CP1252', ValidCsvEncoding('CP1252'));
+    }
+
+    public function testValidCsvEncodingRejectsEmptyAndUnknownNames(): void
+    {
+        $this->assertFalse(ValidCsvEncoding(''));
+        $this->assertFalse(ValidCsvEncoding(null));
+        $this->assertFalse(ValidCsvEncoding('not-an-encoding'));
+        $this->assertFalse(ValidCsvEncoding('UTF-8; drop'));
+    }
+
+    // ===== ValidCsvSeparator =====
+
+    public function testValidCsvSeparatorAcceptsASingleByteDelimiter(): void
+    {
+        foreach ([',', ';', "\t", '|', ' '] as $separator) {
+            $this->assertSame($separator, ValidCsvSeparator($separator));
+        }
+    }
+
+    public function testValidCsvSeparatorRejectsQuotesNewlinesAndWrongLengths(): void
+    {
+        foreach (['"', "\r", "\n", '', ',,', ';;', '€', null] as $separator) {
+            $this->assertFalse(ValidCsvSeparator($separator), var_export($separator, true));
+        }
     }
 }

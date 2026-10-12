@@ -232,6 +232,14 @@ final class LocaleFunctionsLibTest extends TestCase
         $this->assertTrue($result);
     }
 
+    public function testActivateGettextLocaleReturnsTrueWhenLocaleItselfIsInstalled(): void
+    {
+        // C.utf8 ships with the image, so setlocale() accepts it directly and no carrier lookup runs.
+        $this->assertNotFalse(setlocale(LC_MESSAGES, 'C.utf8'), 'precondition: C.utf8 is installed');
+        $this->assertTrue(ActivateGettextLocale('C.utf8'));
+        $this->assertSame('C.utf8', getenv('LC_MESSAGES'));
+    }
+
     public function testActivateGettextLocaleSetsLanguageEnvVar(): void
     {
         ActivateGettextLocale('en_US.UTF-8');

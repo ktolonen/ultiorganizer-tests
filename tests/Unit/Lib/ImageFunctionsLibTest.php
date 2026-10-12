@@ -50,6 +50,19 @@ final class ImageFunctionsLibTest extends TestCase
         return $path;
     }
 
+    /**
+     * A PNG that carries only the signature and an IHDR chunk. getimagesize() reads the
+     * dimensions from it, but the pixel data is missing, so decoding fails.
+     */
+    private function makeHeaderOnlyPng(int $w, int $h): string
+    {
+        $ihdr = pack('NNCCCCC', $w, $h, 8, 2, 0, 0, 0);
+        $chunk = pack('N', strlen($ihdr)) . 'IHDR' . $ihdr . pack('N', crc32('IHDR' . $ihdr));
+        $path = $this->tmp('.png');
+        file_put_contents($path, "\x89PNG\r\n\x1a\n" . $chunk);
+        return $path;
+    }
+
     // --- CanProcessImages / CanReadImageType ---
 
     public function testCanProcessImagesReturnsTrueWithGd(): void
@@ -229,5 +242,94 @@ final class ImageFunctionsLibTest extends TestCase
         LegacyApp::loginAsAdmin();
         $result = RemoveImage(999999);
         $this->assertTrue((bool) $result);
+    }
+
+    // --- CanDecodeImageSize / ImageSizeError ---
+
+    public function testCanDecodeImageSizeAcceptsDimensionsUpToTheLimits(): void
+    {
+        $this->assertTrue(CanDecodeImageSize(1, 1));
+        $this->assertTrue(CanDecodeImageSize('40', '30'));
+        $this->assertTrue(CanDecodeImageSize(MAX_IMAGE_DIMENSION, MAX_IMAGE_PIXELS / MAX_IMAGE_DIMENSION));
+    }
+
+    public function testCanDecodeImageSizeRejectsNonPositiveDimensions(): void
+    {
+        $this->assertFalse(CanDecodeImageSize(0, 10));
+        $this->assertFalse(CanDecodeImageSize(10, 0));
+        $this->assertFalse(CanDecodeImageSize(-5, 10));
+        $this->assertFalse(CanDecodeImageSize(10, -5));
+    }
+
+    public function testCanDecodeImageSizeRejectsTooLongSideEvenWhenPixelCountIsSmall(): void
+    {
+        $this->assertSame(MAX_IMAGE_DIMENSION + 1, 8001);
+        $this->assertFalse(CanDecodeImageSize(MAX_IMAGE_DIMENSION + 1, 1));
+        $this->assertFalse(CanDecodeImageSize(1, MAX_IMAGE_DIMENSION + 1));
+    }
+
+    public function testCanDecodeImageSizeRejectsTooManyPixelsWithinSideLimit(): void
+    {
+        $this->assertFalse(CanDecodeImageSize(MAX_IMAGE_DIMENSION, MAX_IMAGE_PIXELS / MAX_IMAGE_DIMENSION + 1));
+        $this->assertFalse(CanDecodeImageSize(5000, 5000));
+    }
+
+    public function testImageSizeErrorIsEmptyForNormalImageAndNonImage(): void
+    {
+        $this->assertSame('', ImageSizeError($this->makeImage('png')));
+        $notImage = $this->tmp('.png');
+        file_put_contents($notImage, 'not an image');
+        $this->assertSame('', ImageSizeError($notImage));
+    }
+
+    public function testImageSizeErrorNamesTheLimitsForOversizedImage(): void
+    {
+        $error = ImageSizeError($this->makeHeaderOnlyPng(9000, 10));
+        $this->assertSame(
+            'Image resolution is too large. The maximum is 8000 x 8000 pixels and 16 megapixels.',
+            $error
+        );
+        // Contrast: the same helper accepts an image inside the limits.
+        $this->assertSame('', ImageSizeError($this->makeHeaderOnlyPng(8000, 2000)));
+    }
+
+    public function testConvertToJpegAndCreateThumbRefuseOversizedImageBeforeDecoding(): void
+    {
+        $src = $this->makeHeaderOnlyPng(9000, 10);
+        $dst = $this->tmp('.jpg');
+        $this->assertFalse(ConvertToJpeg($src, $dst));
+        $this->assertFalse(CreateThumb($src, $dst, 50, 50));
+        $this->assertFileDoesNotExist($dst);
+    }
+
+    public function testConvertToJpegAndCreateThumbReturnFalseWhenPixelDataCannotBeDecoded(): void
+    {
+        $src = $this->makeHeaderOnlyPng(10, 10);
+        $dst = $this->tmp('.jpg');
+        $this->assertSame([10, 10], array_slice(getimagesize($src), 0, 2), 'precondition: header is readable');
+        set_error_handler(static fn() => true);
+        try {
+            $this->assertFalse(ConvertToJpeg($src, $dst));
+            $this->assertFalse(CreateThumb($src, $dst, 5, 5));
+        } finally {
+            restore_error_handler();
+        }
+        $this->assertFileDoesNotExist($dst);
+    }
+
+    public function testWriteJpegImageReturnsFalseAndLeavesNoTempFileWhenRenameFails(): void
+    {
+        $dir = sys_get_temp_dir() . '/uo_img_dir_' . uniqid();
+        mkdir($dir);
+        mkdir($dir . '/target.jpg');
+        $img = imagecreatetruecolor(4, 4);
+        try {
+            $this->assertFalse(WriteJpegImage($img, $dir . '/target.jpg'));
+            $this->assertSame(['target.jpg'], array_values(array_diff(scandir($dir), ['.', '..'])));
+            $this->assertTrue(is_dir($dir . '/target.jpg'));
+        } finally {
+            rmdir($dir . '/target.jpg');
+            rmdir($dir);
+        }
     }
 }
