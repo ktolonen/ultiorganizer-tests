@@ -1500,12 +1500,16 @@ final class CommonFunctionsLibTest extends TestCase
 
     // ---- ToInternalTimeFormat: date-only appends 00:00 ----
 
-    public function testToInternalTimeFormatAppendsZeroTimeToDateString(): void
+    public function testToInternalTimeFormatAppendsZeroTimeWhenTheTimePartIsEmpty(): void
     {
-        // A date-without-time string fails the first strptime but succeeds
-        // with " 00:00" appended, covering the $timestamp .= " 00:00" branch.
-        $result = ToInternalTimeFormat('22.06.2026');
-        $this->assertSame('2026-6-22 0:0:00', $result);
+        // uo_strptime() stops at the end of the input, so a bare date already parses as
+        // midnight under '%d.%m.%Y %H:%M'. A trailing separator makes %H read nothing and
+        // fail; only the $timestamp .= " 00:00" retry then rescues the date.
+        $this->assertFalse(uo_strptime('22.06.2026 ', DATE_FORMAT));
+        $this->assertSame('2026-6-22 0:0:00', ToInternalTimeFormat('22.06.2026 '));
+        // Contrast: the bare date passes the first parse and reaches the same value.
+        $this->assertNotFalse(uo_strptime('22.06.2026', DATE_FORMAT));
+        $this->assertSame('2026-6-22 0:0:00', ToInternalTimeFormat('22.06.2026'));
     }
 
     // ---- GetScriptName: PATH_INFO fallback ----
