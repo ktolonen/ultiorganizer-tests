@@ -1209,7 +1209,7 @@ final class ScoresheethistoryFunctionsLibTest extends TestCase
         // Fixture pool 200 is played=1 and season HRN2026 has uo_season_stats
         // seeded, so these are non-blocking warnings the operator sees on
         // every restore of this fixture -- see ScoresheetHistoryRestore().
-        $this->assertSame(['Pool is locked.', 'Event played.'], $result['warnings']);
+        $this->assertSame(['Pool is locked.', 'Event statistics have already been computed.'], $result['warnings']);
         $this->assertSame(4, (int) DBQueryToValue("SELECT COUNT(*) FROM uo_goal WHERE game=700"));
 
         $game = DBQueryToRow(
@@ -1397,7 +1397,7 @@ final class ScoresheethistoryFunctionsLibTest extends TestCase
             // differ.
             $backCompatResult = ScoresheetHistoryRestore($preV4SnapshotId);
             $this->assertTrue($backCompatResult['restored']);
-            $this->assertSame(['Pool is locked.', 'Event played.'], $backCompatResult['warnings']);
+            $this->assertSame(['Pool is locked.', 'Event statistics have already been computed.'], $backCompatResult['warnings']);
             $game = DBQueryToRow("SELECT homescore, visitorscore FROM uo_game WHERE game_id=700");
             $this->assertSame('15', (string) $game['homescore']);
             $this->assertSame('11', (string) $game['visitorscore']);
@@ -1567,7 +1567,7 @@ final class ScoresheethistoryFunctionsLibTest extends TestCase
             // Same non-blocking pool/season warnings as every other restore
             // of this fixture; no player-restore warning, since the rematch
             // by team+num succeeded.
-            $this->assertSame(['Pool is locked.', 'Event played.'], $result['warnings']);
+            $this->assertSame(['Pool is locked.', 'Event statistics have already been computed.'], $result['warnings']);
 
             $row = DBQueryToRow(sprintf(
                 "SELECT player, num FROM uo_played WHERE game=700 AND player=%d",
@@ -1615,7 +1615,7 @@ final class ScoresheethistoryFunctionsLibTest extends TestCase
             $this->assertSame(
                 [
                     'Pool is locked.',
-                    'Event played.',
+                    'Event statistics have already been computed.',
                     'Player Temp Ambiguous could not be restored: jersey number 22 is not unique on team Helsinki Heat.',
                 ],
                 $result['warnings'],
@@ -1673,7 +1673,7 @@ final class ScoresheethistoryFunctionsLibTest extends TestCase
 
             $this->assertTrue($result['restored']);
             $this->assertContains('Pool is locked.', $result['warnings']);
-            $this->assertContains('Event played.', $result['warnings']);
+            $this->assertContains('Event statistics have already been computed.', $result['warnings']);
             $this->assertContains(
                 'Player Merge One could not be restored: jersey number 25 is not unique on team Helsinki Heat.',
                 $result['warnings'],
@@ -1844,7 +1844,7 @@ final class ScoresheethistoryFunctionsLibTest extends TestCase
 
         $this->assertTrue($result['restored']);
         $this->assertSame(
-            ['Pool is locked.', 'Event played.', 'Player Ghost Scorer could not be restored.'],
+            ['Pool is locked.', 'Event statistics have already been computed.', 'Player Ghost Scorer could not be restored.'],
             $result['warnings'],
         );
 
