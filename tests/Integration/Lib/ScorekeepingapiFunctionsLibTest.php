@@ -304,4 +304,217 @@ final class ScorekeepingapiFunctionsLibTest extends TestCase
         }
         $GLOBALS['runtime_cache'] = [];
     }
+
+    // --- Receipts, wrapper and document check (Phase 2) ---
+
+    private function skipWithoutPhase2(): void
+    {
+        if (!function_exists('ScorekeepingApiTransaction')) {
+            $this->markTestSkipped('The SUT has no scorekeeping API read and upload services.');
+        }
+    }
+
+    /** Gives game 701 a link covering today and sets the API actor; undone by finishLink(). */
+    private function startLink(): void
+    {
+        $today = (new DateTimeImmutable('now', new DateTimeZone('Europe/Helsinki')))->format('Y-m-d');
+        DBQuery("UPDATE uo_game SET time='$today 14:00:00' WHERE game_id=701");
+        DBQuery("DELETE FROM uo_scorekeeper_token WHERE token_id=9930");
+        DBQuery("INSERT INTO uo_scorekeeper_token (token_id, token, game) VALUES (9930, 'eeeeeeeeeeeeeeeeeeeeeeeeeeee0701', 701)");
+        $_SESSION = [];
+        ScorekeeperApiActor(9930, 9931);
+    }
+
+    private function finishLink(): void
+    {
+        ScorekeeperApiActor(0, 0);
+        DBQuery("DELETE FROM uo_scorekeeper_token WHERE token_id=9930");
+        DBQuery("UPDATE uo_game SET time='2026-06-01 14:00:00' WHERE game_id=701");
+        DBQuery("DELETE FROM uo_setting WHERE name LIKE 'sktx_%'");
+        DBQuery("DELETE FROM uo_api_receipt WHERE game=701");
+    }
+
+    public function testReceiptsRoundTripPerKeyTokenPairAndGame(): void
+    {
+        $this->skipWithoutPhase2();
+        DBQuery("DELETE FROM uo_api_receipt WHERE game=701");
+        try {
+            $this->assertNull(ApiReceiptFind(9931, 9930, 701, 'k1'));
+
+            ApiReceiptStore(9931, 9930, 701, 'k1', 'PUT', '/api/v1/games/701/game-data', str_repeat('a', 64), 200, ['status' => 'ok', 'data' => ['token' => 'x']]);
+
+            $this->assertSame(
+                ['method' => 'PUT', 'path' => '/api/v1/games/701/game-data', 'request_hash' => str_repeat('a', 64), 'status' => 200, 'response' => ['status' => 'ok', 'data' => ['token' => 'x']]],
+                ApiReceiptFind(9931, 9930, 701, 'k1'),
+            );
+            $this->assertNull(ApiReceiptFind(9931, 9930, 701, 'K1'), 'keys are case-sensitive');
+            $this->assertNull(ApiReceiptFind(9932, 9930, 701, 'k1'), 'another app token has its own keys');
+            $this->assertNull(ApiReceiptFind(9931, 9933, 701, 'k1'), 'another link has its own keys');
+            $this->assertNull(ApiReceiptFind(9931, 9930, 700, 'k1'), 'another game has its own keys');
+        } finally {
+            DBQuery("DELETE FROM uo_api_receipt WHERE game=701");
+        }
+    }
+
+    public function testIdempotencyKeyAcceptsOneToSixtyFourPrintableAsciiCharacters(): void
+    {
+        $this->skipWithoutPhase2();
+        $this->assertSame('a', ScorekeepingApiIdempotencyKey('a'));
+        $this->assertSame(str_repeat('~', 64), ScorekeepingApiIdempotencyKey(str_repeat('~', 64)));
+        foreach ([null, '', str_repeat('k', 65), "tab\there", "\u{e5}"] as $bad) {
+            try {
+                ScorekeepingApiIdempotencyKey($bad);
+                $this->fail('accepted ' . json_encode($bad));
+            } catch (ScorekeepingApiException $e) {
+                $this->assertSame(400, $e->httpStatus);
+            }
+        }
+    }
+
+    public function testLinkTokenStringResolvesOnlyLiveWellFormedTokens(): void
+    {
+        $this->skipWithoutPhase2();
+        $this->startLink();
+        try {
+            $this->assertSame(9930, ScorekeeperTokenIdFromLink('eeeeeeeeeeeeeeeeeeeeeeeeeeee0701'));
+            $this->assertSame(9930, ScorekeeperTokenIdFromLink(' EEEEEEEEEEEEEEEEEEEEEEEEEEEE0701 '));
+            $this->assertSame(0, ScorekeeperTokenIdFromLink('eeeeeeeeeeeeeeeeeeeeeeeeeeee0702'));
+            $this->assertSame(0, ScorekeeperTokenIdFromLink('short'));
+            $this->assertSame(0, ScorekeeperTokenIdFromLink("e' OR '1'='1"));
+        } finally {
+            $this->finishLink();
+        }
+    }
+
+    public function testDocumentCheckRefusesUnknownMissingAndMistypedFields(): void
+    {
+        $this->skipWithoutPhase2();
+        $doc = [
+            'version' => 1, 'home_team_id' => 301, 'away_team_id' => 300,
+            'rosters' => ['home' => [], 'away' => []], 'goals' => [],
+            'timeouts' => ['home' => [], 'away' => []], 'spirit_stoppages' => ['home' => [], 'away' => []],
+            'result' => null, 'starting_offence' => null, 'halftime' => null, 'official' => null,
+        ];
+        $this->assertSame($doc, ScorekeeperGameDataNormalize($doc));
+
+        foreach ([
+            'unknown' => [$doc + ['extra' => 1], 'extra'],
+            'version' => [['version' => 2] + $doc, 'version'],
+            'team id as string' => [['home_team_id' => '301'] + $doc, 'home_team_id'],
+            'side' => [['goals' => [['side' => 'left', 'scorer_id' => null, 'assist_id' => null, 'callahan' => false, 'time' => 1]]] + $doc, 'goals[0].side'],
+            'goal extra' => [['goals' => [['side' => 'home', 'scorer_id' => null, 'assist_id' => null, 'callahan' => false, 'time' => 1, 'num' => 1]]] + $doc, 'goals[0].num'],
+            'result state' => [['result' => ['home' => 1, 'away' => 0, 'state' => 'done']] + $doc, 'result.state'],
+            'offence' => [['starting_offence' => 'both'] + $doc, 'starting_offence'],
+            'not an object' => [[1, 2], ''],
+        ] as $label => [$bad, $path]) {
+            try {
+                ScorekeeperGameDataNormalize($bad);
+                $this->fail($label . ' was accepted');
+            } catch (ScorekeepingApiException $e) {
+                $this->assertSame(400, $e->httpStatus, $label);
+                $this->assertContains($path, array_column($e->details, 'path'), $label);
+            }
+        }
+        $missing = $doc;
+        unset($missing['official']);
+        try {
+            ScorekeeperGameDataNormalize($missing);
+            $this->fail('a missing field was accepted');
+        } catch (ScorekeepingApiException $e) {
+            $this->assertSame([['path' => 'official', 'message' => 'Required field is missing.']], $e->details);
+        }
+    }
+
+    public function testTransactionRefusesAGameTheLinkDoesNotCoverWithoutRunningTheWork(): void
+    {
+        $this->skipWithoutPhase2();
+        $ran = false;
+        try {
+            ScorekeepingApiTransaction(701, function () use (&$ran) {
+                $ran = true;
+            });
+            $this->fail('expected a refusal');
+        } catch (ScorekeepingApiException $e) {
+            $this->assertSame([403, 'game_not_covered'], [$e->httpStatus, $e->apiCode]);
+        }
+        $this->assertFalse($ran);
+        $this->assertSame(0, DBTransactionDepth());
+        $this->assertSame(0, (int) DBQueryToValueUncached("SELECT @@in_transaction"));
+    }
+
+    public function testTransactionCommitsHoldsTheLockAndDiscardsPrintedOutput(): void
+    {
+        $this->skipWithoutPhase2();
+        $this->startLink();
+        try {
+            $seen = ScorekeepingApiTransaction(701, function () {
+                echo '<p>printed by a helper</p>';
+                DBQuery("INSERT INTO uo_setting (name, value) VALUES ('sktx_commit', 'yes')");
+                return [(int) DBQueryToValueUncached("SELECT @@in_transaction"), DBTransactionDepth()];
+            });
+
+            $this->assertSame([1, 1], $seen);
+            $this->assertSame('yes', DBQueryToValueUncached("SELECT value FROM uo_setting WHERE name='sktx_commit'"));
+            $this->assertSame(0, (int) DBQueryToValueUncached("SELECT @@in_transaction"));
+        } finally {
+            $this->finishLink();
+        }
+    }
+
+    public function testTransactionRollsBackEveryLevelAndRethrowsOtherFailures(): void
+    {
+        $this->skipWithoutPhase2();
+        $this->startLink();
+        try {
+            try {
+                ScorekeepingApiTransaction(701, function () {
+                    DBQuery("INSERT INTO uo_setting (name, value) VALUES ('sktx_rollback', 'yes')");
+                    DBTransactionBegin();
+                    DBQuery("INSERT INTO uo_setting (name, value) VALUES ('sktx_rollback2', 'yes')");
+                    throw new RuntimeException('boom');
+                });
+                $this->fail('expected the failure');
+            } catch (RuntimeException $e) {
+                $this->assertSame('boom', $e->getMessage());
+            }
+
+            $this->assertSame(0, DBTransactionDepth());
+            $this->assertSame(0, (int) DBQueryToValueUncached("SELECT COUNT(*) FROM uo_setting WHERE name LIKE 'sktx_%'"));
+        } finally {
+            $this->finishLink();
+        }
+    }
+
+    public function testTransactionRetriesDeadlocksTwiceThenAnswersBusy(): void
+    {
+        $this->skipWithoutPhase2();
+        $this->startLink();
+        try {
+            $attempts = 0;
+            $value = ScorekeepingApiTransaction(701, function () use (&$attempts) {
+                DBQuery("INSERT INTO uo_setting (name, value) VALUES ('sktx_retry', 'yes')");
+                if (++$attempts < 3) {
+                    throw new mysqli_sql_exception('Deadlock found when trying to get lock', 1213);
+                }
+                return 'done';
+            });
+            $this->assertSame(['done', 3], [$value, $attempts]);
+            $this->assertSame(1, (int) DBQueryToValueUncached("SELECT COUNT(*) FROM uo_setting WHERE name='sktx_retry'"), 'the failed attempts were rolled back');
+
+            $attempts = 0;
+            try {
+                ScorekeepingApiTransaction(701, function () use (&$attempts) {
+                    $attempts++;
+                    throw new mysqli_sql_exception('Lock wait timeout exceeded', 1205);
+                });
+                $this->fail('expected 503');
+            } catch (ScorekeepingApiException $e) {
+                $this->assertSame([503, 'busy', ['Retry-After: 1']], [$e->httpStatus, $e->apiCode, $e->headers]);
+            }
+            $this->assertSame(3, $attempts, 'the first attempt and two retries');
+            $this->assertSame(0, DBTransactionDepth());
+        } finally {
+            $this->finishLink();
+        }
+    }
 }

@@ -1242,6 +1242,72 @@ final class DatabaseLibTest extends TestCase
         });
     }
 
+    public function testDBAbortKeepsTheServerErrorNumberAsTheExceptionCode(): void
+    {
+        $this->withMysqliSilentMode(function () {
+            try {
+                DBQuery("SELECT * FROM uo_table_that_does_not_exist");
+                $this->fail('expected an exception');
+            } catch (DBOperationException $e) {
+                $this->assertSame(1146, $e->getCode(), 'ER_NO_SUCH_TABLE survives so callers can tell a deadlock (1213) from other failures');
+            }
+        });
+    }
+
+    public function testRollbackAllEndsTheTransactionAtEveryLevel(): void
+    {
+        $this->skipWithoutTransactionHelpers();
+        if (!function_exists('DBTransactionRollbackAll')) {
+            $this->markTestSkipped('The SUT has no DBTransactionRollbackAll().');
+        }
+        DBQuery("DELETE FROM uo_setting WHERE name='txall_probe'");
+        DBTransactionBegin();
+        DBQuery("INSERT INTO uo_setting (name, value) VALUES ('txall_probe', 'outer')");
+        DBTransactionBegin();
+        DBQuery("INSERT INTO uo_setting (name, value) VALUES ('txall_probe2', 'inner')");
+        $this->assertSame(2, DBTransactionDepth());
+
+        DBTransactionRollbackAll();
+
+        $this->assertSame(0, DBTransactionDepth());
+        $this->assertSame(0, $this->inTransaction());
+        $this->assertFalse($this->txProbe('txall_probe'));
+        $this->assertFalse($this->txProbe('txall_probe2'));
+        DBTransactionRollbackAll();
+        $this->assertSame(0, DBTransactionDepth(), 'safe with no transaction open');
+    }
+
+    public function testNestedRollbackAfterTheServerEndedTheTransactionResetsTheDepth(): void
+    {
+        $this->skipWithoutTransactionHelpers();
+        // A deadlock victim loses the whole transaction, savepoints included; the
+        // inner rollback of a failed helper must not throw 1305 over the real error.
+        DBTransactionBegin();
+        DBTransactionBegin();
+        DBQuery('ROLLBACK');
+        $this->assertSame(0, $this->inTransaction());
+
+        DBTransactionRollback();
+
+        $this->assertSame(0, DBTransactionDepth());
+        DBTransactionBegin();
+        $this->assertSame(1, $this->inTransaction(), 'the next begin starts a real transaction, not a savepoint');
+        DBTransactionRollback();
+    }
+
+    public function testBeginCanOpenAConsistentSnapshot(): void
+    {
+        $this->skipWithoutTransactionHelpers();
+        DBTransactionBegin(true);
+        try {
+            $this->assertSame(1, $this->inTransaction());
+            $this->assertSame(1, DBTransactionDepth());
+        } finally {
+            DBTransactionRollback();
+        }
+        $this->assertSame(0, $this->inTransaction());
+    }
+
     public function testGetDBVersionReturnsZeroWhenTableEmpty(): void
     {
         $rows = DBQueryToArray("SELECT version, updated FROM uo_database ORDER BY version");

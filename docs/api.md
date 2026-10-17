@@ -6,6 +6,8 @@ The baseline fixture marks `HRN2026` API-public and seeds the token `harness-api
 
 Covered: `GET /api/v1/openapi`; `401` for missing and invalid tokens; `events`, `teams`, `divisions`, and `games` for `event=HRN2026`; `gameplay?game=700`; plus season-scoped token, pool visibility, hidden-time, and spirit-visibility rules.
 
+The scorekeeping app API cases (`ScorekeepingApi*Test`, base class `tests/Support/ScorekeepingApiTestCase.php`) drive discovery, entry context and the complete upload over HTTP with their own app tokens (ids 910-914) and scorekeeping links (920-923). They move games 700 and 701 and their reservations to today in the event timezone and restore everything in `tearDown()`. A case skips when the SUT's OpenAPI document does not list the endpoints, never on a 5xx. They cover the auth matrix, the entry-context shape, upload preconditions and validation, idempotent replay, history attribution, the forced snapshot (restored with history disabled) and failure handling: a `BEFORE INSERT` trigger on `uo_api_receipt` injects a failure after every write to prove data, history and receipt roll back together, and a trigger signalling error 1213 exercises the deadlock retry and the 503 `busy` answer. Those two cases skip if the database user cannot create triggers.
+
 ```sh
 ./test:api
 ```
