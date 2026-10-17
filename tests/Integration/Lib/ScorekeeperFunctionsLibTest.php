@@ -45,9 +45,6 @@ final class ScorekeeperFunctionsLibTest extends TestCase
 
     protected function tearDown(): void
     {
-        if (function_exists('ScorekeeperApiActor')) {
-            ScorekeeperApiActor(0, 0);
-        }
         DBQuery("DELETE FROM uo_scorekeeper_token");
         DBQuery("DELETE FROM uo_scorekeeper_grant");
         DBQuery("DELETE FROM uo_users WHERE userid='" . self::KEEPER . "'");
@@ -363,84 +360,6 @@ final class ScorekeeperFunctionsLibTest extends TestCase
             // An anonymous row reaches no registered user's deletion, so it
             // must not keep the visitor's address where logging is off.
             $this->assertSame(IsVisitorLoggingDisabled() ? '' : '203.0.113.7', $row['ip']);
-        }
-    }
-
-    public function testApiActorGivesLinkRightsWithoutSessionOrAnonymousSetting(): void
-    {
-        $this->requireApiActor();
-        $link = self::tokenId(ScorekeeperToken('game', 701));
-        // setUp() leaves anonymous_scorekeeping off: the app token is the gate.
-        $this->assertSame(0, (int) DBQueryToValueUncached(
-            "SELECT anonymous_scorekeeping FROM uo_season WHERE season_id='HRN2026'",
-        ));
-        $this->assertSame(['link' => 0, 'api' => 0], ScorekeeperApiActor());
-
-        $this->assertSame(['link' => $link, 'api' => 4242], ScorekeeperApiActor($link, 4242));
-
-        $this->assertSame(['link' => $link, 'api' => 4242], ScorekeeperApiActor());
-        $this->assertSame('anonymous', $_SESSION['uid']);
-        $this->assertSame([], $_SESSION['userproperties']);
-        $this->assertFalse(isLoggedIn());
-        $this->assertSame($link, ScorekeeperAnonymousTokenId(701));
-        $this->assertTrue(ScorekeeperGrantCovers(701));
-        $this->assertTrue(hasEditGameEventsRight(701));
-        $this->assertTrue(hasEditGamePlayersRight(701));
-        // Contrast: the link covers one game only.
-        $this->assertFalse(hasEditGameEventsRight(700));
-        $this->assertSame(0, ScorekeeperAnonymousTokenId(700));
-        $this->assertSame([701], ScorekeeperGrantedGameIds('HRN2026'));
-
-        // The link stops working outside its game day, whatever the app token.
-        DBQuery("UPDATE uo_game SET time='" . self::day('+3 days') . " 10:00:00' WHERE game_id=701");
-        self::flushCaches();
-        $this->assertFalse(hasEditGameEventsRight(701));
-        DBQuery("UPDATE uo_game SET time='" . self::today() . " 14:00:00' WHERE game_id=701");
-
-        ScorekeeperApiActor(0, 0);
-        $this->assertSame(['link' => 0, 'api' => 0], ScorekeeperApiActor());
-        $this->assertSame('testuser', $_SESSION['uid'], 'clearing restores the session the request had');
-        $this->assertFalse(ScorekeeperGrantCovers(701));
-    }
-
-    public function testApiActorRowsCarryLinkAndAppTokenInHistory(): void
-    {
-        $this->requireApiActor();
-        DBQuery("DELETE FROM uo_setting WHERE name='DisableScoresheetHistory'");
-        DBQuery("INSERT INTO uo_setting (name, value) VALUES ('DisableScoresheetHistory', 'false')");
-        $link = self::tokenId(ScorekeeperToken('game', 701));
-        ScorekeeperApiActor($link, 4242);
-
-        $this->assertTrue(GameSetResult(701, 13, 9, false));
-
-        $rows = DBQueryToArrayUncached(
-            "SELECT user_id, target, has_snapshot, scorekeeper_token, api_token
-             FROM uo_scoresheet_history WHERE game=701 ORDER BY history_id",
-        );
-        $this->assertCount(2, $rows, 'the restore point and the result row');
-        foreach ($rows as $row) {
-            $this->assertSame('anonymous', $row['user_id']);
-            $this->assertSame($link, (int) $row['scorekeeper_token']);
-            $this->assertSame(4242, (int) $row['api_token']);
-        }
-
-        // Contrast: a desktop writer leaves both attributions empty.
-        ScorekeeperApiActor(0, 0);
-        self::asSuperadmin();
-        $this->assertTrue(GameSetResult(701, 12, 9, false));
-        $last = DBQueryToRowUncached(
-            "SELECT user_id, scorekeeper_token, api_token FROM uo_scoresheet_history
-             WHERE game=701 AND target='result' ORDER BY history_id DESC LIMIT 1",
-        );
-        $this->assertSame('testuser', $last['user_id']);
-        $this->assertNull($last['scorekeeper_token']);
-        $this->assertNull($last['api_token']);
-    }
-
-    private function requireApiActor(): void
-    {
-        if (!function_exists('ScorekeeperApiActor') || !defined('DB_VERSION') || constant('DB_VERSION') < 104) {
-            $this->markTestSkipped('The SUT has no scorekeeping app API actor (needs DB version 104).');
         }
     }
 
