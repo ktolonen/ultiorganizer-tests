@@ -39,6 +39,7 @@ abstract class ScorekeepingApiTestCase extends TestCase
     private array $savedTeamPool = [];
     private array $savedTeams = [];
     private array $savedPools = [];
+    private bool $fixtureInstalled = false;
 
     protected function setUp(): void
     {
@@ -49,19 +50,26 @@ abstract class ScorekeepingApiTestCase extends TestCase
         }
         self::cleanUp();
         $this->installFixture();
+        $this->fixtureInstalled = true;
     }
 
     protected function tearDown(): void
     {
-        $this->restorePool();
-        self::cleanUp();
-        self::flushQueryCaches();
+        if ($this->fixtureInstalled) {
+            $this->restorePool();
+            self::cleanUp();
+            self::flushQueryCaches();
+        }
         LegacyApp::closeDatabaseConnection();
     }
 
+    /** Skips only when the SUT answers but does not list the endpoints; a 5xx fails the case. */
     private static function sutHasEndpoints(): bool
     {
         $response = self::request('GET', '/api/v1/openapi');
+        if ($response['status'] >= 500 || $response['status'] === 0) {
+            self::fail('The OpenAPI probe failed with status ' . $response['status'] . ': ' . substr($response['raw'], 0, 300));
+        }
         $paths = $response['json']['paths'] ?? null;
         return $response['status'] === 200 && is_array($paths)
             && isset($paths['/api/v1/games/{game_id}/game-data'], $paths['/api/v1/games/{game_id}/entry-context'], $paths['/api/v1/scorekeeping/games']);

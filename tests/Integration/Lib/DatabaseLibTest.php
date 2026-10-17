@@ -49,6 +49,10 @@ final class DatabaseLibTest extends TestCase
 
     protected function tearDown(): void
     {
+        // A failing transaction test must not leave its depth behind for the next one.
+        if (function_exists('DBTransactionRollbackAll')) {
+            DBTransactionRollbackAll();
+        }
         if ($this->insertedUrlId !== null) {
             DBQuery(sprintf("DELETE FROM uo_urls WHERE url_id=%d", $this->insertedUrlId));
             $this->insertedUrlId = null;
@@ -1242,8 +1246,17 @@ final class DatabaseLibTest extends TestCase
         });
     }
 
+    private function skipWithoutPhase2Database(): void
+    {
+        $this->skipWithoutTransactionHelpers();
+        if (!function_exists('DBTransactionRollbackAll')) {
+            $this->markTestSkipped('The SUT has no DBTransactionRollbackAll() (scorekeeping API read and upload).');
+        }
+    }
+
     public function testDBAbortKeepsTheServerErrorNumberAsTheExceptionCode(): void
     {
+        $this->skipWithoutPhase2Database();
         $this->withMysqliSilentMode(function () {
             try {
                 DBQuery("SELECT * FROM uo_table_that_does_not_exist");
@@ -1256,10 +1269,7 @@ final class DatabaseLibTest extends TestCase
 
     public function testRollbackAllEndsTheTransactionAtEveryLevel(): void
     {
-        $this->skipWithoutTransactionHelpers();
-        if (!function_exists('DBTransactionRollbackAll')) {
-            $this->markTestSkipped('The SUT has no DBTransactionRollbackAll().');
-        }
+        $this->skipWithoutPhase2Database();
         DBQuery("DELETE FROM uo_setting WHERE name='txall_probe'");
         DBTransactionBegin();
         DBQuery("INSERT INTO uo_setting (name, value) VALUES ('txall_probe', 'outer')");
@@ -1279,7 +1289,7 @@ final class DatabaseLibTest extends TestCase
 
     public function testNestedRollbackAfterTheServerEndedTheTransactionResetsTheDepth(): void
     {
-        $this->skipWithoutTransactionHelpers();
+        $this->skipWithoutPhase2Database();
         // A deadlock victim loses the whole transaction, savepoints included; the
         // inner rollback of a failed helper must not throw 1305 over the real error.
         DBTransactionBegin();
@@ -1297,7 +1307,7 @@ final class DatabaseLibTest extends TestCase
 
     public function testBeginCanOpenAConsistentSnapshot(): void
     {
-        $this->skipWithoutTransactionHelpers();
+        $this->skipWithoutPhase2Database();
         DBTransactionBegin(true);
         try {
             $this->assertSame(1, $this->inTransaction());
