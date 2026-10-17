@@ -419,6 +419,20 @@ final class ScorekeepingApiUploadTest extends ScorekeepingApiTestCase
         $this->assertSame($before, self::stored());
     }
 
+    public function testUploadNeedsALinkThatCoversTheGame(): void
+    {
+        $token = self::entryContext()['token'];
+        $before = self::stored();
+
+        self::assertError(self::put(self::validDoc(), $token, 'key-1', ['X-Scorekeeping-Token' => self::LINK_OTHER_GAME]), 403, 'game_not_covered');
+        self::assertError(self::put(self::validDoc(), $token, 'key-1', ['X-Scorekeeping-Token' => null]), 401, 'missing_scorekeeping_token');
+        self::assertError(self::put(self::validDoc(), $token, 'key-1', ['Authorization' => 'Bearer ' . self::TOKEN_USER]), 403, 'invalid_scope');
+        self::assertError(self::put(self::validDoc(), $token, 'key-1', ['Authorization' => 'Bearer ' . self::TOKEN_OTHER_EVENT]), 403, 'event_scope_mismatch');
+        $this->assertSame($before, self::stored());
+        // Contrast: the field link of the game's reservation may upload.
+        $this->assertSame(200, self::put(self::validDoc(), $token, 'key-1', ['X-Scorekeeping-Token' => self::LINK_FIELD])['status']);
+    }
+
     public function testRightsAreRecheckedUnderTheLock(): void
     {
         DBQuery("UPDATE uo_season SET event_readonly=1 WHERE season_id='HRN2026'");
