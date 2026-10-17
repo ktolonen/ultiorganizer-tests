@@ -509,6 +509,28 @@ final class ScorekeepingApiUploadTest extends ScorekeepingApiTestCase
         $this->assertSame(9, self::dbCount("SELECT num FROM uo_played WHERE game=701 AND player=802"));
     }
 
+    public function testTokenSeparatesAnUnnumberedPlayerFromJerseyZero(): void
+    {
+        DBQuery("INSERT INTO uo_played (player, game, num, accredited, captain) VALUES (802, 701, 0, 1, 0)");
+        $zero = self::entryContext();
+        $this->assertSame(0, $zero['home']['roster'][0]['number']);
+        $doc = self::validDoc();
+        $doc['goals'] = [];
+        $doc['result'] = null;
+        $doc['rosters']['home'] = [['player_id' => 802, 'number' => 0, 'captain' => false, 'spirit_captain' => false]];
+        $doc['rosters']['away'] = [];
+
+        DBQuery("UPDATE uo_played SET num=NULL WHERE game=701 AND player=802");
+        $unnumbered = self::entryContext();
+        $this->assertNotSame($zero['token'], $unnumbered['token'], 'NULL and 0 are different content');
+        self::assertError(self::put($doc, $zero['token']), 409, 'stale_token');
+
+        // And back: a token read while unnumbered is stale once the number is 0.
+        DBQuery("UPDATE uo_played SET num=0 WHERE game=701 AND player=802");
+        self::assertError(self::put($doc, $unnumbered['token'], 'key-2'), 409, 'stale_token');
+        $this->assertSame(200, self::put($doc, $zero['token'], 'key-3')['status'], 'the original content has its original token');
+    }
+
     public function testRightsAreRecheckedUnderTheLock(): void
     {
         DBQuery("UPDATE uo_season SET event_readonly=1 WHERE season_id='HRN2026'");
