@@ -454,6 +454,61 @@ final class ScorekeepingApiUploadTest extends ScorekeepingApiTestCase
         $this->assertSame(200, self::put(self::validDoc(), $token, 'key-1', ['X-Scorekeeping-Token' => self::LINK_FIELD])['status']);
     }
 
+    public function testEventStateIsReadAgainAfterWaitingForTheLock(): void
+    {
+        $token = self::entryContext()['token'];
+        $writer = new \mysqli(DB_HOST, DB_USER, DB_PASSWORD, DB_DATABASE);
+        $writer->query("START TRANSACTION");
+        $writer->query("SELECT game_id FROM uo_game WHERE game_id=701 FOR UPDATE");
+        $parts = parse_url(getenv('UO_BASE_URL') ?: 'http://127.0.0.1');
+        $socket = fsockopen($parts['host'], $parts['port'] ?? 80, $errno, $error, 10);
+        $this->assertNotFalse($socket, "connect: $error");
+        try {
+            $body = json_encode(self::validDoc());
+            fwrite($socket, "PUT /api/v1/games/701/game-data HTTP/1.1\r\nHost: {$parts['host']}\r\n"
+                . "Authorization: Bearer " . self::TOKEN_INSTALL . "\r\nX-Scorekeeping-Token: " . self::LINK_GAME . "\r\n"
+                . "If-Match: \"$token\"\r\nIdempotency-Key: waiting\r\nContent-Type: application/json\r\n"
+                . "Content-Length: " . strlen($body) . "\r\nConnection: close\r\n\r\n" . $body);
+            sleep(1); // the request has passed its preflight and waits for the lock
+            DBQuery("UPDATE uo_season SET event_readonly=1 WHERE season_id='HRN2026'");
+        } finally {
+            $writer->query("ROLLBACK");
+            $writer->close();
+        }
+        $response = stream_get_contents($socket);
+        fclose($socket);
+
+        $this->assertStringContainsString(' 403 ', strtok($response, "\r\n"), substr($response, 0, 300));
+        $this->assertStringContainsString('event_readonly', $response);
+        $this->assertSame(0, self::stored()['goals']);
+        $this->assertSame(0, self::stored()['receipts']);
+    }
+
+    public function testUnnumberedRosterPlayersRoundTrip(): void
+    {
+        DBQuery("INSERT INTO uo_played (player, game, num, accredited, captain) VALUES (802, 701, NULL, 1, 0)");
+        $context = self::entryContext();
+        $this->assertSame([['player_id' => 802, 'number' => null, 'captain' => false, 'spirit_captain' => false]], $context['home']['roster']);
+        $doc = self::validDoc();
+        $doc['goals'] = [];
+        $doc['result'] = null;
+        $doc['rosters']['home'] = $context['home']['roster'];
+        $doc['rosters']['home'][] = ['player_id' => 803, 'number' => null, 'captain' => false, 'spirit_captain' => false];
+        $doc['rosters']['away'] = [];
+
+        $response = self::put($doc, $context['token']);
+
+        $this->assertSame(200, $response['status'], $response['raw']);
+        $this->assertNull(DBQueryToValueUncached("SELECT num FROM uo_played WHERE game=701 AND player=802"));
+        $this->assertNull(DBQueryToValueUncached("SELECT num FROM uo_played WHERE game=701 AND player=803"), 'a player added without a number stays unnumbered');
+        $this->assertSame(14, self::dbCount("SELECT num FROM uo_player WHERE player_id=803"));
+        $this->assertSame(7, self::dbCount("SELECT num FROM uo_player WHERE player_id=802"), 'the player default number is not touched');
+        // Contrast: an explicit number is stored.
+        $doc['rosters']['home'][0]['number'] = 9;
+        $this->assertSame(200, self::put($doc, $response['json']['data']['token'], 'key-2')['status']);
+        $this->assertSame(9, self::dbCount("SELECT num FROM uo_played WHERE game=701 AND player=802"));
+    }
+
     public function testRightsAreRecheckedUnderTheLock(): void
     {
         DBQuery("UPDATE uo_season SET event_readonly=1 WHERE season_id='HRN2026'");
