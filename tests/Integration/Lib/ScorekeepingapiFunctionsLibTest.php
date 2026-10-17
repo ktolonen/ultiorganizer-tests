@@ -118,6 +118,41 @@ final class ScorekeepingapiFunctionsLibTest extends TestCase
         $this->assertNotSame($afterGoal, ScorekeeperUploadToken(701));
     }
 
+    public function testUploadTokenOnAGetIgnoresThePersistentCache(): void
+    {
+        global $serverConf;
+        $serverConf['PersistentCacheEnabled'] = 'true';
+        $method = $_SERVER['REQUEST_METHOD'] ?? null;
+        $_SERVER['REQUEST_METHOD'] = 'GET';
+        unset($GLOBALS['uo_persistent_cache_bypass']);
+        try {
+            if (!IsPersistentCacheEnabled() || PersistentCacheFilePath('db_query_array', 'probe') === null) {
+                $this->markTestSkipped('PersistentCacheDir not available');
+            }
+            // A goal first: the cache admits only non-empty results.
+            GameAddScoreEntry([
+                'game' => 701, 'num' => 1, 'assist' => 802, 'scorer' => 803,
+                'time' => 60, 'homescore' => 1, 'visitorscore' => 0,
+                'ishomegoal' => 1, 'iscallahan' => 0,
+            ]);
+            $before = ScorekeeperUploadToken(701);
+            GameAddScoreEntry([
+                'game' => 701, 'num' => 2, 'assist' => 803, 'scorer' => 802,
+                'time' => 120, 'homescore' => 2, 'visitorscore' => 0,
+                'ishomegoal' => 1, 'iscallahan' => 0,
+            ]);
+            $this->assertNotSame($before, ScorekeeperUploadToken(701));
+        } finally {
+            unset($GLOBALS['uo_persistent_cache_bypass']);
+            $serverConf['PersistentCacheEnabled'] = 'false';
+            if ($method === null) {
+                unset($_SERVER['REQUEST_METHOD']);
+            } else {
+                $_SERVER['REQUEST_METHOD'] = $method;
+            }
+        }
+    }
+
     public function testUploadTokenFollowsRosterTimeoutsStoppagesResultAndMetadata(): void
     {
         $seen = [ScorekeeperUploadToken(701)];
