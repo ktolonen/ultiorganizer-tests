@@ -173,6 +173,22 @@ final class ScorekeepingapiFunctionsLibTest extends TestCase
         }
     }
 
+    public function testUploadTokenMovesWhenTheFixtureTeamsChange(): void
+    {
+        $before = ScorekeeperUploadToken(701);
+        // Game 701 has no rosters or goals, so only the teams can move the token.
+        DBQuery("UPDATE uo_game SET hometeam=300, visitorteam=301 WHERE game_id=701");
+        try {
+            $swapped = ScorekeeperUploadToken(701);
+            $this->assertNotSame($before, $swapped, 'swapping sides moves the token');
+            DBQuery("UPDATE uo_game SET hometeam=NULL WHERE game_id=701");
+            $this->assertNotSame($swapped, ScorekeeperUploadToken(701), 'a placeholder side moves the token');
+        } finally {
+            DBQuery("UPDATE uo_game SET hometeam=301, visitorteam=300 WHERE game_id=701");
+        }
+        $this->assertSame($before, ScorekeeperUploadToken(701));
+    }
+
     public function testUploadTokenIgnoresNoOpWritesAndTimerOnlyChanges(): void
     {
         GameSetScoreSheetKeeper(701, 'Keeper A');
