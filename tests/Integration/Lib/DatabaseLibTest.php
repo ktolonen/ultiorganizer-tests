@@ -804,6 +804,173 @@ final class DatabaseLibTest extends TestCase
         $this->assertSame(DB_VERSION, getDBVersion());
     }
 
+    // --- Schema 104 and transaction helpers ---
+
+    private function requireVersion104(): void
+    {
+        if (!defined('DB_VERSION') || constant('DB_VERSION') < 104) {
+            $this->markTestSkipped('The SUT is older than DB version 104.');
+        }
+    }
+
+    private function hasApiHistoryColumn(): bool
+    {
+        return (int) DBQueryToValueUncached(
+            "SELECT COUNT(*) FROM information_schema.COLUMNS
+             WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='uo_scoresheet_history' AND COLUMN_NAME='api_token'"
+        ) === 1;
+    }
+
+    private function hasApiReceiptTable(): bool
+    {
+        return (int) DBQueryToValueUncached(
+            "SELECT COUNT(*) FROM information_schema.TABLES
+             WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='uo_api_receipt'"
+        ) === 1;
+    }
+
+    public function testFreshSchemaIsAtVersion104WithApiTokenColumnAndReceiptTable(): void
+    {
+        $this->requireVersion104();
+        $this->assertSame(DB_VERSION, getDBVersion());
+        $this->assertTrue($this->hasApiHistoryColumn());
+        $this->assertTrue($this->hasApiReceiptTable());
+        $column = DBQueryToRowUncached(
+            "SELECT IS_NULLABLE, DATA_TYPE FROM information_schema.COLUMNS
+             WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='uo_scoresheet_history' AND COLUMN_NAME='api_token'"
+        );
+        $this->assertSame('YES', $column['IS_NULLABLE']);
+        $this->assertSame('int', $column['DATA_TYPE']);
+        $this->assertSame(0, (int) DBQueryToValueUncached(
+            "SELECT COUNT(*) FROM information_schema.KEY_COLUMN_USAGE
+             WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='uo_scoresheet_history'
+               AND COLUMN_NAME='api_token' AND REFERENCED_TABLE_NAME IS NOT NULL"
+        ), 'api_token has no foreign key');
+        $this->assertSame(
+            ['api_token', 'scorekeeper_token', 'game', 'idempotency_key'],
+            array_column(DBQueryToArrayUncached(
+                "SELECT COLUMN_NAME FROM information_schema.STATISTICS
+                 WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='uo_api_receipt' AND INDEX_NAME='uq_api_receipt_key'
+                 ORDER BY SEQ_IN_INDEX"
+            ), 'COLUMN_NAME'),
+        );
+        $this->assertSame('CASCADE', DBQueryToValueUncached(
+            "SELECT DELETE_RULE FROM information_schema.REFERENTIAL_CONSTRAINTS
+             WHERE CONSTRAINT_SCHEMA=DATABASE() AND TABLE_NAME='uo_api_receipt' AND REFERENCED_TABLE_NAME='uo_game'"
+        ));
+    }
+
+    public function testUpgradeFrom103AddsTheColumnAndTableOnce(): void
+    {
+        $this->requireVersion104();
+        DBQuery("DELETE FROM uo_event_log WHERE category='database' AND type='change' AND id1='104'");
+        DBQuery("DROP TABLE uo_api_receipt");
+        DBQuery("ALTER TABLE uo_scoresheet_history DROP COLUMN api_token");
+        DBQuery("DELETE FROM uo_database WHERE version=104");
+        try {
+            $this->assertSame(103, getDBVersion(), 'precondition: the schema is at 103');
+            $this->assertFalse($this->hasApiHistoryColumn());
+            $this->assertFalse($this->hasApiReceiptTable());
+
+            CheckDB();
+
+            $this->assertSame(104, getDBVersion());
+            $this->assertTrue($this->hasApiHistoryColumn());
+            $this->assertTrue($this->hasApiReceiptTable());
+
+            // Contrast: the step is rerun safe once its record is gone again.
+            DBQuery("DELETE FROM uo_database WHERE version=104");
+            CheckDB();
+            $this->assertSame(104, getDBVersion());
+            $this->assertTrue($this->hasApiHistoryColumn());
+            $this->assertTrue($this->hasApiReceiptTable());
+        } finally {
+            if (!$this->hasApiHistoryColumn() || !$this->hasApiReceiptTable() || getDBVersion() < 104) {
+                DBQuery("DELETE FROM uo_database WHERE version=104");
+                CheckDB();
+            }
+            DBQuery("DELETE FROM uo_event_log WHERE category='database' AND type='change' AND id1='104'");
+        }
+    }
+
+    private function skipWithoutTransactionHelpers(): void
+    {
+        if (!function_exists('DBTransactionBegin')) {
+            $this->markTestSkipped('The SUT has no reentrant transaction helpers.');
+        }
+    }
+
+    private function txProbe(string $name): bool
+    {
+        return DBQueryToValueUncached("SELECT COUNT(*) FROM uo_setting WHERE name='$name'") > 0;
+    }
+
+    private function inTransaction(): int
+    {
+        return (int) DBQueryToValueUncached("SELECT @@in_transaction");
+    }
+
+    public function testNestedTransactionCommitKeepsTheOuterTransactionOpen(): void
+    {
+        $this->skipWithoutTransactionHelpers();
+        $this->assertSame(0, DBTransactionDepth());
+        DBTransactionBegin();
+        try {
+            $this->assertSame(1, DBTransactionDepth());
+            $this->assertSame(1, $this->inTransaction());
+            DBQuery("INSERT INTO uo_setting (name, value) VALUES ('TxProbeOuter', '1')");
+
+            DBTransactionBegin();
+            $this->assertSame(2, DBTransactionDepth());
+            DBQuery("INSERT INTO uo_setting (name, value) VALUES ('TxProbeInner', '1')");
+            DBTransactionCommit();
+
+            $this->assertSame(1, DBTransactionDepth());
+            $this->assertSame(1, $this->inTransaction(), 'an inner commit must not end the transaction');
+        } finally {
+            DBTransactionRollback();
+        }
+        $this->assertSame(0, DBTransactionDepth());
+        $this->assertSame(0, $this->inTransaction());
+        $this->assertFalse($this->txProbe('TxProbeOuter'));
+        $this->assertFalse($this->txProbe('TxProbeInner'), 'the inner commit was only a savepoint release');
+    }
+
+    public function testInnerRollbackUndoesOnlyInnerWorkAndOuterCommitKeepsTheRest(): void
+    {
+        $this->skipWithoutTransactionHelpers();
+        try {
+            DBTransactionBegin();
+            DBQuery("INSERT INTO uo_setting (name, value) VALUES ('TxProbeOuter', '1')");
+            DBTransactionBegin();
+            DBQuery("INSERT INTO uo_setting (name, value) VALUES ('TxProbeInner', '1')");
+            DBTransactionRollback();
+            $this->assertSame(1, DBTransactionDepth());
+            $this->assertSame(1, $this->inTransaction());
+            $this->assertFalse($this->txProbe('TxProbeInner'));
+            DBTransactionCommit();
+
+            $this->assertSame(0, DBTransactionDepth());
+            $this->assertSame(0, $this->inTransaction());
+            $this->assertTrue($this->txProbe('TxProbeOuter'), 'the outer work survives a swallowed inner failure');
+            $this->assertFalse($this->txProbe('TxProbeInner'));
+        } finally {
+            DBQuery("DELETE FROM uo_setting WHERE name IN ('TxProbeOuter', 'TxProbeInner')");
+        }
+    }
+
+    public function testTransactionHelpersAreNoOpsAtDepthZero(): void
+    {
+        $this->skipWithoutTransactionHelpers();
+        DBTransactionCommit();
+        DBTransactionRollback();
+        $this->assertSame(0, DBTransactionDepth());
+        DBTransactionBegin();
+        DBTransactionCommit();
+        $this->assertSame(0, DBTransactionDepth());
+        $this->assertSame(0, $this->inTransaction());
+    }
+
     // --- FindIncludePrefix ---
 
     public function testFindIncludePrefixWalksUpToTheDirectoryHoldingTheConfigFile(): void
