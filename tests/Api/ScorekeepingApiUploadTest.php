@@ -43,6 +43,27 @@ final class ScorekeepingApiUploadTest extends ScorekeepingApiTestCase
         $this->assertSame($before, self::stored(), 'refusals write nothing');
     }
 
+    public function testChunkedBodyOverTheCapIsRefusedToo(): void
+    {
+        // A chunked request has no Content-Length, so the cap must also hold while reading.
+        $token = self::entryContext()['token'];
+        $body = json_encode(self::validDoc() + ['padding' => str_repeat('x', 300 * 1024)]);
+        $parts = parse_url(getenv('UO_BASE_URL') ?: 'http://127.0.0.1');
+        $socket = fsockopen($parts['host'], $parts['port'] ?? 80, $errno, $error, 10);
+        $this->assertNotFalse($socket, "connect: $error");
+        fwrite($socket, "PUT /api/v1/games/701/game-data HTTP/1.1\r\nHost: {$parts['host']}\r\n"
+            . "Authorization: Bearer " . self::TOKEN_INSTALL . "\r\nX-Scorekeeping-Token: " . self::LINK_GAME . "\r\n"
+            . "If-Match: \"$token\"\r\nIdempotency-Key: chunked\r\nContent-Type: application/json\r\n"
+            . "Transfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
+            . dechex(strlen($body)) . "\r\n" . $body . "\r\n0\r\n\r\n");
+        $response = stream_get_contents($socket);
+        fclose($socket);
+
+        $this->assertStringContainsString(' 413 ', strtok($response, "\r\n"), substr($response, 0, 300));
+        $this->assertStringContainsString('payload_too_large', $response);
+        $this->assertSame(0, self::stored()['goals']);
+    }
+
     public function testStaleTokenIsRefusedWithoutRevealingTheCurrentOne(): void
     {
         $stale = self::entryContext()['token'];
