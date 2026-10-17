@@ -376,6 +376,12 @@ final class ScorekeeperFunctionsLibTest extends TestCase
         ));
         $this->assertSame(['link' => 0, 'api' => 0], ScorekeeperApiActor());
 
+        // The link alone, without an app token, sets no actor and grants nothing.
+        $this->assertSame(['link' => 0, 'api' => 0], ScorekeeperApiActor($link, 0));
+        $this->assertSame('testuser', $_SESSION['uid']);
+        $this->assertFalse(ScorekeeperGrantCovers(701));
+        $this->assertSame([], ScorekeeperGrantedGameIds('HRN2026'));
+
         $this->assertSame(['link' => $link, 'api' => 4242], ScorekeeperApiActor($link, 4242));
 
         $this->assertSame(['link' => $link, 'api' => 4242], ScorekeeperApiActor());
