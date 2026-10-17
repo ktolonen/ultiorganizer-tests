@@ -829,6 +829,14 @@ final class DatabaseLibTest extends TestCase
         ) === 1;
     }
 
+    private function receiptKeyCollation(): ?string
+    {
+        return DBQueryToValueUncached(
+            "SELECT COLLATION_NAME FROM information_schema.COLUMNS
+             WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='uo_api_receipt' AND COLUMN_NAME='idempotency_key'"
+        );
+    }
+
     public function testFreshSchemaIsAtVersion104WithApiTokenColumnAndReceiptTable(): void
     {
         $this->requireVersion104();
@@ -854,6 +862,7 @@ final class DatabaseLibTest extends TestCase
                  ORDER BY SEQ_IN_INDEX"
             ), 'COLUMN_NAME'),
         );
+        $this->assertSame('ascii_bin', $this->receiptKeyCollation(), 'idempotency keys are case-sensitive');
         $this->assertSame('CASCADE', DBQueryToValueUncached(
             "SELECT DELETE_RULE FROM information_schema.REFERENTIAL_CONSTRAINTS
              WHERE CONSTRAINT_SCHEMA=DATABASE() AND TABLE_NAME='uo_api_receipt' AND REFERENCED_TABLE_NAME='uo_game'"
@@ -877,6 +886,7 @@ final class DatabaseLibTest extends TestCase
             $this->assertSame(104, getDBVersion());
             $this->assertTrue($this->hasApiHistoryColumn());
             $this->assertTrue($this->hasApiReceiptTable());
+            $this->assertSame('ascii_bin', $this->receiptKeyCollation());
 
             // Contrast: the step is rerun safe once its record is gone again.
             DBQuery("DELETE FROM uo_database WHERE version=104");
