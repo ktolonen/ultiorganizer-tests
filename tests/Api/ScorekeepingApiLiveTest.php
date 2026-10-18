@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use UltiorganizerHarness\Support\LegacyApp;
 use UltiorganizerHarness\Support\ScorekeepingApiTestCase;
 
 /**
@@ -62,6 +63,38 @@ final class ScorekeepingApiLiveTest extends ScorekeepingApiTestCase
             'receipts' => self::dbCount("SELECT COUNT(*) FROM uo_api_receipt WHERE game=701"),
             'game' => DBQueryToRowUncached("SELECT homescore, visitorscore, hasstarted, isongoing, official FROM uo_game WHERE game_id=701"),
         ];
+    }
+
+    /** Send a live write on its own connection and return the socket, so the case can act while the request waits. */
+    private static function startLive(string $method, string $route, array $body, string $key): mixed
+    {
+        $parts = parse_url(getenv('UO_BASE_URL') ?: 'http://127.0.0.1');
+        $socket = fsockopen($parts['host'], $parts['port'] ?? 80, $errno, $error, 10);
+        self::assertNotFalse($socket, "connect: $error");
+        $json = (string) json_encode($body);
+        fwrite($socket, "$method /api/v1/games/" . self::GAME . "/$route HTTP/1.1\r\nHost: {$parts['host']}\r\n"
+            . "Authorization: Bearer " . self::TOKEN_INSTALL . "\r\nX-Scorekeeping-Token: " . self::LINK_GAME . "\r\n"
+            . "Idempotency-Key: $key\r\nContent-Type: application/json\r\n"
+            . "Content-Length: " . strlen($json) . "\r\nConnection: close\r\n\r\n" . $json);
+        return $socket;
+    }
+
+    /** @return array{status: int, json: mixed} */
+    private static function finishLive(mixed $socket): array
+    {
+        $response = (string) stream_get_contents($socket);
+        fclose($socket);
+        [$head, $body] = array_pad(explode("\r\n\r\n", $response, 2), 2, '');
+        preg_match('/^HTTP\/\S+ (\d{3})/', $head, $m);
+        if (stripos($head, 'transfer-encoding: chunked') !== false) {
+            $decoded = '';
+            while (preg_match('/^([0-9a-f]+)\r\n/i', $body, $c) && hexdec($c[1]) > 0) {
+                $decoded .= substr($body, strlen($c[0]), (int) hexdec($c[1]));
+                $body = substr($body, strlen($c[0]) + (int) hexdec($c[1]) + 2);
+            }
+            $body = $decoded;
+        }
+        return ['status' => (int) ($m[1] ?? 0), 'json' => json_decode($body, true)];
     }
 
     private static function score(): array
@@ -208,6 +241,86 @@ final class ScorekeepingApiLiveTest extends ScorekeepingApiTestCase
         $this->assertSame($before, self::stored());
     }
 
+    public function testGoalAppendWaitsForABrowserGoalInFlight(): void
+    {
+        self::seedRoster();
+        // A browser append is in flight: its goal row is written but not committed.
+        // The insert's foreign key check holds a shared lock on the game row, so
+        // the API waits at its game lock and its reads start after the commit.
+        $browser = new \mysqli(DB_HOST, DB_USER, DB_PASSWORD, DB_DATABASE);
+        $browser->query("START TRANSACTION");
+        $browser->query("INSERT INTO uo_goal (game, num, assist, scorer, time, homescore, visitorscore, ishomegoal, iscallahan)
+            VALUES (701, 1, 802, 803, 60, 1, 0, 1, 0)");
+        try {
+            $socket = self::startLive('POST', 'goals', self::goal('away', 800, 801, 120), 'race');
+            // Commit only once the API waits for the game lock.
+            $waiting = 0;
+            for ($i = 0; $i < 100 && $waiting === 0; $i++) {
+                usleep(100000);
+                $waiting = self::dbCount("SELECT COUNT(*) FROM information_schema.PROCESSLIST
+                    WHERE ID<>CONNECTION_ID() AND INFO LIKE 'SELECT game_id FROM uo_game WHERE game_id=701 FOR UPDATE'");
+            }
+            $this->assertSame(1, $waiting, 'the API request waits on the browser goal');
+            $browser->query("COMMIT");
+        } finally {
+            $browser->close();
+        }
+        $response = self::finishLive($socket);
+
+        $this->assertSame(201, $response['status'], (string) json_encode($response['json']));
+        $this->assertSame([2, 1, 1], [
+            $response['json']['data']['goal']['num'] ?? null,
+            $response['json']['data']['goal']['home_score'] ?? null,
+            $response['json']['data']['goal']['away_score'] ?? null,
+        ], 'the API numbered its goal after the browser one');
+        $this->assertSame(2, self::stored()['goals']);
+    }
+
+    public function testAFatalErrorAnswersJsonAndRollsBack(): void
+    {
+        self::seedRoster();
+        // So many spirit stoppage rows that building the resulting upload token,
+        // after the goal is written, runs out of memory: a fatal error, which
+        // ends the request the way a die() in a shared helper would, with the
+        // transaction open.
+        DBQuery("INSERT INTO uo_spirit_timeout (game, num, time, ishome) SELECT 701, 1, seq, 1 FROM seq_1_to_1500000");
+        $before = self::stored();
+
+        $response = self::live('POST', 'goals', self::goal('home', 803, 802, 60));
+        $after = self::stored();
+        DBQuery("DELETE FROM uo_spirit_timeout WHERE game=701");
+
+        self::assertError($response, 500, 'internal_error');
+        $this->assertSame('application/json; charset=utf-8', $response['headers']['content-type'] ?? null);
+        $this->assertStringNotContainsString('Fatal error', $response['raw']);
+        $this->assertSame($before, $after, 'the goal and the receipt were rolled back');
+    }
+
+    public function testEveryLiveWriteMovesAnOpenDesktopSheetsToken(): void
+    {
+        LegacyApp::loadLibFilesUsingProfile(['scoresheethistory.functions.php'], 'database_with_common');
+        // The players' own numbers: adding a player to the game roster also sets uo_player.num.
+        $entry = static fn(int $id, int $number) => ['player_id' => $id, 'number' => $number, 'captain' => false, 'spirit_captain' => false];
+        $writes = [
+            'roster' => ['PUT', 'rosters/home', ['team_id' => 301, 'players' => [$entry(802, 7), $entry(803, 14)]]],
+            'metadata' => ['PATCH', 'metadata', ['official' => 'Official One']],
+            'goal' => ['POST', 'goals', self::goal('home', 803, 802, 60)],
+            'goal delete' => ['DELETE', 'goals/1', null],
+            'timeout' => ['POST', 'timeouts', ['side' => 'home', 'time' => 100]],
+            'spirit stoppage' => ['POST', 'spirit-stoppages', ['side' => 'home', 'time' => 110]],
+            'score tap' => ['POST', 'score-taps', ['side' => 'home', 'delta' => 1]],
+            'finalize' => ['POST', 'finalize', ['home' => 1, 'away' => 0]],
+        ];
+        $token = ScoresheetHistoryToken(self::GAME);
+        foreach ($writes as $name => [$method, $route, $body]) {
+            $response = self::live($method, $route, $body, "desktop-$name");
+            $this->assertLessThan(300, $response['status'], "$name: " . $response['raw']);
+            $next = ScoresheetHistoryToken(self::GAME);
+            $this->assertNotSame($token, $next, "$name moves the token an open desktop sheet saves against");
+            $token = $next;
+        }
+    }
+
     public function testTimeoutsStopAtThePoolLimit(): void
     {
         $limit = self::entryContext()['rules']['timeouts_per_team'];
@@ -290,6 +403,20 @@ final class ScorekeepingApiLiveTest extends ScorekeepingApiTestCase
         $unaccredited = self::live('PUT', 'rosters/home', ['team_id' => 301, 'players' => [$entry(802), $entry(803)]], 'live-3');
         self::assertError($unaccredited, 400, 'validation_failed');
         $this->assertSame('players[1].player_id', $unaccredited['json']['error']['details'][0]['path'] ?? null);
+        $this->assertSame(0, self::stored()['played']);
+    }
+
+    public function testRosterRefusesARepeatedAndAnUnknownPlayer(): void
+    {
+        $entry = static fn(int $id) => ['player_id' => $id, 'number' => 1, 'captain' => false, 'spirit_captain' => false];
+
+        $response = self::live('PUT', 'rosters/home', ['team_id' => 301, 'players' => [$entry(802), $entry(802), $entry(999999)]]);
+
+        self::assertError($response, 400, 'validation_failed');
+        $this->assertSame(
+            [['players[1].player_id', 'The player is listed more than once.'], ['players[2].player_id', 'The player does not exist.']],
+            array_map(static fn(array $d) => [$d['path'], $d['message']], $response['json']['error']['details']),
+        );
         $this->assertSame(0, self::stored()['played']);
     }
 

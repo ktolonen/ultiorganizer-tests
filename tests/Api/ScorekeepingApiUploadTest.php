@@ -174,6 +174,22 @@ final class ScorekeepingApiUploadTest extends ScorekeepingApiTestCase
         $this->assertSame($before, self::stored());
     }
 
+    public function testRosterRefusesAPlayerOnBothSidesAndAnUnknownPlayer(): void
+    {
+        $doc = self::validDoc();
+        $doc['rosters']['away'][] = $doc['rosters']['home'][0];
+        $doc['rosters']['home'][] = ['player_id' => 999999, 'number' => 99, 'captain' => false, 'spirit_captain' => false];
+        $before = self::stored();
+
+        $response = $this->upload($doc);
+
+        self::assertError($response, 400, 'validation_failed');
+        $details = array_map(static fn(array $d) => [$d['path'], $d['message']], $response['json']['error']['details']);
+        $this->assertContains(['rosters.away[2].player_id', 'The player is listed more than once.'], $details);
+        $this->assertContains(['rosters.home[2].player_id', 'The player does not exist.'], $details);
+        $this->assertSame($before, self::stored());
+    }
+
     public function testAccreditationIsEnforced(): void
     {
         DBQuery("UPDATE uo_season SET require_accreditation=1 WHERE season_id='HRN2026'");
