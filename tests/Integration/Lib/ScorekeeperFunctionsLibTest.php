@@ -466,6 +466,20 @@ final class ScorekeeperFunctionsLibTest extends TestCase
         $this->assertSame(BASEURL . '/scorekeeper/?t=a%2Fb%26c', ScorekeeperTokenUrl('a/b&c'));
     }
 
+    public function testAppSetupUrlCarriesTheRootOfTheLinkUrlsAndTheToken(): void
+    {
+        if (!function_exists('ScorekeeperAppSetupUrl')) {
+            $this->markTestSkipped('The SUT has no ScorekeeperAppSetupUrl().');
+        }
+        $url = ScorekeeperAppSetupUrl('tok/en&1');
+        $this->assertStringStartsWith('ultiorganizer-app://pair?', $url);
+        parse_str((string) parse_url($url, PHP_URL_QUERY), $query);
+        $this->assertSame(['root', 'token'], array_keys($query));
+        $this->assertSame('tok/en&1', $query['token']);
+        // The app pairs a scanned link by the part before /scorekeeper/, so the roots must agree.
+        $this->assertSame(strstr(ScorekeeperTokenUrl('x'), '/scorekeeper/', true), $query['root']);
+    }
+
     public function testEventLinkListShowsOnlyThisEventsTokensToItsAdmins(): void
     {
         self::addGame(791, 500, self::OTHER_SEASON, 191, 291);
