@@ -256,4 +256,34 @@ final class LocaleFunctionsLibTest extends TestCase
         // Either the exact locale or a carrier locale
         $this->assertNotEmpty($lcMessages);
     }
+
+    public function testAcceptLanguageLocaleMatchesFullTagsAndBareLanguagesInQOrder(): void
+    {
+        if (!function_exists('AcceptLanguageLocale')) {
+            $this->markTestSkipped('The SUT has no AcceptLanguageLocale().');
+        }
+        $available = ['de_DE.utf8', 'en_GB.utf8', 'fi_FI.utf8'];
+
+        $this->assertSame('fi_FI.utf8', AcceptLanguageLocale('fi-FI', $available));
+        $this->assertSame('fi_FI.utf8', AcceptLanguageLocale('FI_fi', $available));
+        $this->assertSame('de_DE.utf8', AcceptLanguageLocale('de', $available));
+        $this->assertSame('fi_FI.utf8', AcceptLanguageLocale('sv-SE, fi;q=0.8, en;q=0.5', $available));
+        $this->assertSame('en_GB.utf8', AcceptLanguageLocale('fi;q=0.4, en;q=0.9', $available));
+        $this->assertSame('de_DE.utf8', AcceptLanguageLocale('de;q=0.5, fi;q=0.5', $available), 'ties keep header order');
+        $this->assertSame('en_GB.utf8', AcceptLanguageLocale('fi;q=0, en', $available), 'q=0 excludes');
+    }
+
+    public function testAcceptLanguageLocaleReturnsNullWithoutAMatch(): void
+    {
+        if (!function_exists('AcceptLanguageLocale')) {
+            $this->markTestSkipped('The SUT has no AcceptLanguageLocale().');
+        }
+        $available = ['en_GB.utf8', 'fi_FI.utf8'];
+
+        $this->assertNull(AcceptLanguageLocale('', $available));
+        $this->assertNull(AcceptLanguageLocale('*', $available));
+        $this->assertNull(AcceptLanguageLocale('sv-SE, sv', $available));
+        $this->assertNull(AcceptLanguageLocale('en-US', $available), 'a full tag does not fall back to its language');
+        $this->assertNull(AcceptLanguageLocale('fi', []));
+    }
 }
