@@ -257,7 +257,7 @@ final class LocaleFunctionsLibTest extends TestCase
         $this->assertNotEmpty($lcMessages);
     }
 
-    public function testAcceptLanguageLocaleMatchesFullTagsAndBareLanguagesInQOrder(): void
+    public function testAcceptLanguageLocaleMatchesTagsThenLanguagesInQOrder(): void
     {
         if (!function_exists('AcceptLanguageLocale')) {
             $this->markTestSkipped('The SUT has no AcceptLanguageLocale().');
@@ -271,6 +271,9 @@ final class LocaleFunctionsLibTest extends TestCase
         $this->assertSame('en_GB.utf8', AcceptLanguageLocale('fi;q=0.4, en;q=0.9', $available));
         $this->assertSame('de_DE.utf8', AcceptLanguageLocale('de;q=0.5, fi;q=0.5', $available), 'ties keep header order');
         $this->assertSame('en_GB.utf8', AcceptLanguageLocale('fi;q=0, en', $available), 'q=0 excludes');
+        $this->assertSame('en_GB.utf8', AcceptLanguageLocale('en-US', $available), 'a region tag falls back to its language');
+        $this->assertSame('de_DE.utf8', AcceptLanguageLocale('de-AT', $available));
+        $this->assertSame('en_GB.utf8', AcceptLanguageLocale('en-US, fi', $available), 'the fallback keeps the range order');
     }
 
     public function testAcceptLanguageLocaleReturnsNullWithoutAMatch(): void
@@ -283,7 +286,6 @@ final class LocaleFunctionsLibTest extends TestCase
         $this->assertNull(AcceptLanguageLocale('', $available));
         $this->assertNull(AcceptLanguageLocale('*', $available));
         $this->assertNull(AcceptLanguageLocale('sv-SE, sv', $available));
-        $this->assertNull(AcceptLanguageLocale('en-US', $available), 'a full tag does not fall back to its language');
         $this->assertNull(AcceptLanguageLocale('fi', []));
     }
 }

@@ -16,6 +16,7 @@ final class TimekeeperTemplatesApiTest extends ScorekeepingApiTestCase
     private const TEMPLATE = 930;
     private const SIGNAL_TEXT = 'Harness signal';
     private const SIGNAL_TEXT_FI = 'Harness-merkki';
+    private const SIGNAL_TEXT_EN = 'Harness signal (en)';
 
     protected function setUp(): void
     {
@@ -37,9 +38,11 @@ final class TimekeeperTemplatesApiTest extends ScorekeepingApiTestCase
             self::SIGNAL_TEXT,
         ));
         DBQuery(sprintf(
-            "INSERT INTO uo_translation (translation_key, locale, translation) VALUES ('%s', 'fi_FI_utf8', '%s')",
+            "INSERT INTO uo_translation (translation_key, locale, translation) VALUES ('%s', 'fi_FI_utf8', '%s'), ('%s', 'en_GB_utf8', '%s')",
             self::SIGNAL_TEXT,
             self::SIGNAL_TEXT_FI,
+            self::SIGNAL_TEXT,
+            self::SIGNAL_TEXT_EN,
         ));
     }
 
@@ -97,14 +100,18 @@ final class TimekeeperTemplatesApiTest extends ScorekeepingApiTestCase
         self::assertSame([], $template['signals']['betweenpoints']);
         self::assertCount(1, $template['signals']['timeout']);
         self::assertSame(70, $template['signals']['timeout'][0]['time']);
-        self::assertSame(self::SIGNAL_TEXT, $template['signals']['timeout'][0]['text']);
+        self::assertSame(self::SIGNAL_TEXT_EN, $template['signals']['timeout'][0]['text'], 'texts go through the database translations');
     }
 
     public function testTranslatesTextsByAcceptLanguage(): void
     {
+        $english = self::templates('en-US');
+        self::assertSame('en-GB', $english['headers']['content-language'] ?? null);
+        self::assertSame(self::SIGNAL_TEXT_EN, self::harnessTemplate($english)['signals']['timeout'][0]['text']);
+
         $unmatched = self::templates('sv-SE');
         self::assertSame(200, $unmatched['status'], $unmatched['raw']);
-        self::assertSame(self::SIGNAL_TEXT, self::harnessTemplate($unmatched)['signals']['timeout'][0]['text']);
+        self::assertSame(self::SIGNAL_TEXT_EN, self::harnessTemplate($unmatched)['signals']['timeout'][0]['text'], 'the default locale is English here');
 
         // The route offers only the locales gettext can serve, as the language
         // selector does; a runtime without an fi_FI system locale serves English.
