@@ -83,7 +83,8 @@ final class TimekeeperTemplatesApiTest extends ScorekeepingApiTestCase
         self::assertStringContainsString('Accept-Language', $response['headers']['vary'] ?? '');
         $data = $response['json']['data'];
         self::assertTrue(array_is_list($data['templates']), 'templates is a list');
-        $default = (int) DBQueryToValueUncached("SELECT template_id FROM uo_timekeeper_template WHERE is_default=1 ORDER BY template_id LIMIT 1");
+        // Without a default row the SUT falls back to the first system template, then the lowest id.
+        $default = (int) DBQueryToValueUncached("SELECT template_id FROM uo_timekeeper_template ORDER BY is_default DESC, is_system DESC, template_id LIMIT 1");
         self::assertSame($default, $data['default_template_id']);
 
         $template = self::harnessTemplate($response);
