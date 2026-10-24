@@ -79,6 +79,20 @@ final class ScorekeepingApiCapsTest extends ScorekeepingApiTestCase
         $this->assertSame(['time_cap' => ['time' => 4100, 'info' => 4]], self::storedCaps());
     }
 
+    public function testTimeIsBoundByTheEventColumn(): void
+    {
+        // uo_gameevent.time is smallint: the largest time stores, the next is refused before the write.
+        $accepted = self::cap('PUT', 'half_cap', ['time' => 32767, 'point_cap' => 196], 'cap-max');
+        $this->assertSame(200, $accepted['status'], $accepted['raw']);
+        $this->assertSame(32767, $accepted['json']['data']['cap']['time']);
+
+        $refused = self::cap('PUT', 'time_cap', ['time' => 32768, 'point_cap' => 196], 'cap-over');
+        $this->assertError($refused, 400, 'invalid_body');
+        $this->assertSame('time', $refused['json']['error']['details'][0]['path'] ?? null, $refused['raw']);
+        $this->assertStringContainsString('32767', $refused['json']['error']['details'][0]['message'] ?? '', $refused['raw']);
+        $this->assertSame(['half_cap' => ['time' => 32767, 'info' => 196]], self::storedCaps());
+    }
+
     public function testACapCanBeSetOnAFinalGame(): void
     {
         DBQuery("UPDATE uo_game SET homescore=9, visitorscore=7, hasstarted=2, isongoing=0 WHERE game_id=701");
