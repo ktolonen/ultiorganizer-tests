@@ -30,11 +30,57 @@ final class ApiFuzzTest extends ScorekeepingApiTestCase
     /** Requests between fixture resets; a fuzzed finalize or upload would otherwise turn every later request into a 409. */
     private const RESET_EVERY = 10;
     private const GAMES = '700, 701';
+    /** A private event (not API public, not a public event) no fixture credential may read; its names are the leak markers. */
+    private const PRIVATE_SEASON = 'PRIV2026';
 
     private int $seed;
     /** @var string[] anchored regexes of the documented paths */
     private array $routes = [];
     private int $requests = 0;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        self::removePrivateEvent();
+        DBQuery("INSERT INTO uo_season (season_id, name, starttime, endtime, iscurrent, enrollopen, type, istournament,
+            isinternational, isnationalteams, organizer, category, showspiritpoints, use_season_points, hide_time_on_scoresheet,
+            event_readonly, api_public, public_event, timezone, spiritmode)
+            VALUES ('" . self::PRIVATE_SEASON . "', 'Secretteam Cup', '2026-07-01 09:00:00', '2026-07-02 18:00:00', 0, 0, 'outdoor', 1,
+            0, 0, 'Secretteam Org', 'test', 0, 0, 0, 0, 0, 0, 'Europe/Helsinki', 1003)");
+        DBQuery("INSERT INTO uo_series (series_id, name, ordering, season, valid, type, color, pool_template) VALUES (190, 'Secretteam Open', 'A', '" . self::PRIVATE_SEASON . "', 1, 'open', '336699', NULL)");
+        DBQuery("INSERT INTO uo_pool (pool_id, name, ordering, visible, continuingpool, placementpool, teams, mvgames, timeoutlen, halftime, winningscore,
+            played, timeouts, timeoutsper, timeoutsovertime, timeoutstimecap, betweenpointslen, series, type, timeslot, color, forfeitscore, forfeitagainst, drawsallowed)
+            VALUES (290, 'Secretteam Pool', '1', 1, 0, 0, 2, 0, 70, 35, 15, 1, 2, 'half', 1, 'soft', 90, 190, 1, NULL, '336699', 15, 0, 0)");
+        DBQuery("INSERT INTO uo_team (team_id, name, pool, rank, activerank, valid, series, country, abbreviation) VALUES
+            (390, 'Secretteam Alpha', 290, 1, 1, 1, 190, 1064, 'SECA'), (391, 'Secretteam Beta', 290, 2, 2, 1, 190, 1064, 'SECB')");
+        DBQuery("INSERT INTO uo_team_pool (team, pool, rank, activerank) VALUES (390, 290, 1, 1), (391, 290, 2, 2)");
+        DBQuery("INSERT INTO uo_reservation (id, location, fieldname, reservationgroup, starttime, endtime, season, date) VALUES
+            (590, 400, '1', 'Secretteam Cup', '2026-07-01 10:00:00', '2026-07-01 11:30:00', '" . self::PRIVATE_SEASON . "', '2026-07-01 00:00:00')");
+        DBQuery("INSERT INTO uo_game (game_id, hometeam, visitorteam, homescore, visitorscore, reservation, time, valid, halftime, respteam,
+            isongoing, name, homedefenses, visitordefenses, hasstarted, islive, timer_paused_duration)
+            VALUES (790, 390, 391, 9, 8, 590, '2026-07-01 10:00:00', 1, 35, 390, 0, 600, 0, 0, 1, 0, 0)");
+        DBQuery("INSERT INTO uo_game_pool (game, pool, timetable) VALUES (790, 290, 1)");
+        self::flushQueryCaches();
+    }
+
+    protected function tearDown(): void
+    {
+        self::removePrivateEvent();
+        parent::tearDown();
+    }
+
+    private static function removePrivateEvent(): void
+    {
+        DBQuery("DELETE FROM uo_game_pool WHERE game=790");
+        DBQuery("DELETE FROM uo_game WHERE game_id=790");
+        DBQuery("DELETE FROM uo_reservation WHERE id=590");
+        DBQuery("DELETE FROM uo_team_pool WHERE pool=290");
+        DBQuery("DELETE FROM uo_team WHERE team_id IN (390, 391)");
+        DBQuery("DELETE FROM uo_pool WHERE pool_id=290");
+        DBQuery("DELETE FROM uo_series WHERE series_id=190");
+        DBQuery("DELETE FROM uo_season WHERE season_id='" . self::PRIVATE_SEASON . "'");
+        self::flushQueryCaches();
+    }
 
     /** @return array<string, array{string, string}> */
     public static function operations(): array
@@ -134,6 +180,8 @@ final class ApiFuzzTest extends ScorekeepingApiTestCase
     /**
      * A refused request must leave no trace, and whatever a request did the
      * stored goals must stay a gapless sequence 1..n of players on the game roster.
+ * A success never contains the private event PRIV2026 (series 190, pool 290,
+ * teams 390/391, game 790), which no fixture credential may read.
  * A success needs a path the OpenAPI document lists, and on a game route a valid
  * app token and a link covering that game.
      */
@@ -182,6 +230,9 @@ final class ApiFuzzTest extends ScorekeepingApiTestCase
         );
         $busy = $response['status'] === 503 && ($response['json']['error']['code'] ?? '') === 'busy';
         $this->assertTrue($response['status'] > 0 && ($response['status'] < 500 || $busy), "5xx or no response\n" . $context);
+        if ($response['status'] < 300) {
+            $this->assertDoesNotMatchRegularExpression('/Secretteam|' . self::PRIVATE_SEASON . '|"game_id":790/', $response['raw'], "A private event leaked into a success response\n" . $context);
+        }
         $this->assertDoesNotMatchRegularExpression('/(Warning|Notice|Deprecated|Fatal error|Parse error|Stack trace)\b|on line \d+/', $response['raw'], "PHP diagnostic leaked\n" . $context);
         // Apache answers some hostile requests itself (encoded slashes, oversized lines); the SUT never ran.
         $apache = $response['status'] >= 400 && $response['status'] < 500 && str_contains($response['raw'], '<address>Apache/');
@@ -362,12 +413,12 @@ final class ApiFuzzTest extends ScorekeepingApiTestCase
         }
         if ($in === 'query' && $this->chance(80)) {
             $hinted = match ($name) {
-                'event' => $this->pick(['HRN2026', 'HRN2026', 'HRN2026', 'OTHER2026', 'hrn2026', 'HRN2026 ', 'HRN2026,OTHER2026']),
-                'division' => $this->pick([100, 100, 101, 0, -1]),
-                'pool' => $this->pick([200, 200, 201, 0, -1]),
-                'pools' => $this->pick(['200', '200,201', '200,', ',', '200;201', '0', '-1', str_repeat('200,', 300)]),
-                'team' => $this->pick([300, 301, 302, 0, -1]),
-                'game' => $this->pick([700, 700, 701, 702, 0, -1, PHP_INT_MAX]),
+                'event' => $this->pick(['HRN2026', 'HRN2026', 'HRN2026', self::PRIVATE_SEASON, 'OTHER2026', 'hrn2026', 'HRN2026 ', 'HRN2026,OTHER2026']),
+                'division' => $this->pick([100, 100, 190, 101, 0, -1]),
+                'pool' => $this->pick([200, 200, 290, 201, 0, -1]),
+                'pools' => $this->pick(['200', '200,290', '290', '200,201', '200,', ',', '200;201', '0', '-1', str_repeat('200,', 300)]),
+                'team' => $this->pick([300, 301, 390, 391, 302, 0, -1]),
+                'game' => $this->pick([700, 700, 701, 790, 702, 0, -1, PHP_INT_MAX]),
                 'group' => $this->pick(['all', 'Harness', '', '%', 'a,b']),
                 default => null,
             };
@@ -376,7 +427,7 @@ final class ApiFuzzTest extends ScorekeepingApiTestCase
             }
         }
         if ($name === 'game_id') {
-            return $this->pick(array_merge(array_fill(0, 12, self::GAME), [700, 700, 0, -1, 999999, PHP_INT_MAX]));
+            return $this->pick(array_merge(array_fill(0, 12, self::GAME), [700, 700, 790, 0, -1, 999999, PHP_INT_MAX]));
         }
         if ($name === 'num' && $in === 'path' && $this->chance(70)) {
             // Only the last goal can be deleted.

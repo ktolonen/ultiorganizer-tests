@@ -20,6 +20,8 @@ Output is `logs/api.log` and `junit/api.xml`. Failures are `phpunit_test_failure
 
 Schema-only generation cannot satisfy rules such as "scorer on the side's roster", "score equals the stored score" or a fresh `If-Match`, so the write handlers would mostly answer 400/409. The fuzzer therefore also uses fixture-aware values (player and team ids, the live token, a valid upload document, the stored score) and resets the fixture every 10 requests to one of four starting states (empty, rostered, uploaded, rostered with a goal). Half of those valid bodies go out unmutated, and `DELETE goals/{num}` targets the last goal.
 
+The test also seeds a private event `PRIV2026` (not API public, not a public event; series 190, pool 290, teams 390/391, game 790, all named `Secretteam …`) and removes it afterwards; the hints send its ids as well, and any success response that mentions it fails as a leak, since no fixture credential may read it.
+
 Per response it asserts: no 5xx (a `503 busy` is allowed), no leaked PHP diagnostics, a JSON object body, and the `Error` envelope on every 4xx. Responses that Apache generates itself (encoded slashes, oversized lines) skip the envelope check because the SUT never ran. Query parameters of the read endpoints get fixture-aware values (event, division, pool, team, game) mixed with near-misses. After every request it also asserts: a JSON body carries a JSON content type, a 405 carries `Allow`, a success only answers a path the OpenAPI document lists, and a success on a game route needs a valid app token and a link covering that game; and, for games 700 and 701, that a GET and any refused (4xx) request changed no stored state and that the goal numbers stay a gapless 1..n of players on the game roster.
 
 ```sh
