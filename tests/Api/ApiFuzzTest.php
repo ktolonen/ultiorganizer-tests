@@ -32,6 +32,8 @@ final class ApiFuzzTest extends ScorekeepingApiTestCase
     private const GAMES = '700, 701';
 
     private int $seed;
+    /** @var string[] anchored regexes of the documented paths */
+    private array $routes = [];
     private int $requests = 0;
 
     /** @return array<string, array{string, string}> */
@@ -63,6 +65,7 @@ final class ApiFuzzTest extends ScorekeepingApiTestCase
         $iterations = (int) (getenv('UO_FUZZ_ITERATIONS') ?: 60);
         $spec = json_decode((string) file_get_contents(self::specPath()), true);
         $operation = $spec['paths'][$path][strtolower($method)];
+        $this->routes = $this->compileRoutes($spec);
 
         $tally = [];
         for ($i = 0; $i < $iterations; $i++) {
@@ -131,10 +134,26 @@ final class ApiFuzzTest extends ScorekeepingApiTestCase
     /**
      * A refused request must leave no trace, and whatever a request did the
      * stored goals must stay a gapless sequence 1..n of players on the game roster.
+ * A success needs a path the OpenAPI document lists, and on a game route a valid
+ * app token and a link covering that game.
      */
     private function assertStateInvariants(array $response, string $before, string $method, string $url, array $headers, ?string $body, int $i): void
     {
         $context = sprintf("seed=%d iteration=%d\n%s %s\nheaders=%s\nbody=%s\n-> %d %s", $this->seed, $i, $method, $url, json_encode($headers), substr((string) $body, 0, 600), $response['status'], substr($response['raw'], 0, 300));
+        $urlPath = (string) parse_url($url, PHP_URL_PATH);
+        if ($response['status'] < 300) {
+            $documented = false;
+            foreach ($this->routes as $route) {
+                $documented = $documented || preg_match($route, $urlPath) === 1;
+            }
+            $this->assertTrue($documented, "A path the OpenAPI document does not list answered with a success\n" . $context);
+        }
+        if ($response['status'] < 300 && preg_match('#^/api/v1/games/(\d+)/#', $url, $m)) {
+            // Both credentials must be valid and the link must cover this very game; the fixture links cover 701 (game, field 501) and 700 (game, field 500).
+            $covered = [self::LINK_GAME => 701, self::LINK_FIELD => 701, self::LINK_OTHER_GAME => 700, self::LINK_OTHER_FIELD => 700];
+            $this->assertContains($headers['Authorization'] ?? '', ['Bearer ' . self::TOKEN_INSTALL, 'Bearer ' . self::TOKEN_EVENT], "A request succeeded without a valid app token\n" . $context);
+            $this->assertSame((int) $m[1], $covered[$headers['X-Scorekeeping-Token'] ?? ''] ?? null, "A request succeeded for a game its scorekeeping link does not cover\n" . $context);
+        }
         if ($response['status'] >= 400) {
             $this->assertSame($before, $this->stateSnapshot(), "A refused request changed stored state\n" . $context);
         }
@@ -284,6 +303,34 @@ final class ApiFuzzTest extends ScorekeepingApiTestCase
             $headers['X-Scorekeeping-Token'] = $this->headerSafe($link);
         }
         return $headers;
+    }
+
+    /**
+     * One regex per documented path: integer parameters match digits, enum
+     * parameters match their values, any other parameter one non-empty segment.
+     *
+     * @return string[]
+     */
+    private function compileRoutes(array $spec): array
+    {
+        $routes = [];
+        foreach ($spec['paths'] as $path => $item) {
+            $pattern = preg_quote($path, '#');
+            foreach ($item as $operation) {
+                foreach (is_array($operation) ? ($operation['parameters'] ?? []) : [] as $param) {
+                    $param = $this->deref($spec, $param);
+                    if (($param['in'] ?? '') !== 'path') {
+                        continue;
+                    }
+                    $schema = $this->deref($spec, $param['schema'] ?? []);
+                    $class = isset($schema['enum']) ? '(?:' . implode('|', array_map(fn($v) => preg_quote((string) $v, '#'), $schema['enum'])) . ')'
+                        : (($schema['type'] ?? '') === 'integer' ? '\\d+' : '[^/]+');
+                    $pattern = str_replace(preg_quote('{' . $param['name'] . '}', '#'), $class, $pattern);
+                }
+            }
+            $routes[] = '#^' . $pattern . '/?$#';
+        }
+        return $routes;
     }
 
     private function deref(array $spec, array $node): array
