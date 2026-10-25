@@ -13,3 +13,15 @@ The scorekeeping app API cases (`ScorekeepingApi*Test`, base class `tests/Suppor
 ```
 
 Output is `logs/api.log` and `junit/api.xml`. Failures are `phpunit_test_failure`, with an `API_FAILURE` payload when the response or the Apache log shows a PHP runtime error.
+
+## Fuzzing
+
+`tests/Api/ApiFuzzTest.php` fuzzes every operation listed in the SUT's `api/openapi.json` (one test per operation, so a new endpoint is picked up automatically). It builds requests from the request schemas, then mutates them: wrong types, `null`, boundary and huge numbers, unicode, long strings, missing and extra fields, deep nesting, invalid JSON, a wrong content type and broken credentials. It uses the scorekeeping fixture's valid credentials by default so bodies reach the handlers, and resets the fixture per operation.
+
+Per response it asserts: no 5xx (a `503 busy` is allowed), no leaked PHP diagnostics, a JSON object body, and the `Error` envelope on every 4xx. Responses that Apache generates itself (encoded slashes, oversized lines) skip the envelope check because the SUT never ran.
+
+```sh
+UO_FUZZ_SEED=42 UO_FUZZ_ITERATIONS=400 ./test:api --test-filter ApiFuzzTest
+```
+
+`UO_FUZZ_SEED` replays a run (a failure prints its seed, iteration and the full request); without it each run picks a new seed. `UO_FUZZ_ITERATIONS` is requests per operation, default 60. Values and headers are capped at 2000 characters.
