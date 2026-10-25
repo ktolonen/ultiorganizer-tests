@@ -192,6 +192,26 @@ final class ApiEndpointsContractTest extends TestCase
         $this->assertSame(0, $byNum[4]['callahan']);
     }
 
+    public function testUnknownSubPathsAreNotFound(): void
+    {
+        foreach ([
+            '/api/v1/games/abc/entry-context',
+            '/api/v1/games/-1/entry-context',
+            '/api/v1/games/701/unknown',
+            '/api/v1/games/701',
+            '/api/v1/events/x',
+            '/api/v1/seasons/x',
+            '/api/v1/divisions/x',
+            '/api/v1/teams/x',
+            '/api/v1/gameplay/x',
+            '/api/v1/version/x',
+        ] as $path) {
+            $response = self::apiGet($path, self::TOKEN);
+            self::assertJsonResponse($path, $response, 404);
+            $this->assertSame('not_found', self::decodeJson($response['body'])['error']['code'] ?? null, $path);
+        }
+    }
+
     private static function authorizedJson(string $path): array
     {
         $response = self::apiGet($path, self::TOKEN);

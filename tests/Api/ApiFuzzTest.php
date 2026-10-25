@@ -154,6 +154,9 @@ final class ApiFuzzTest extends ScorekeepingApiTestCase
             $this->assertContains($headers['Authorization'] ?? '', ['Bearer ' . self::TOKEN_INSTALL, 'Bearer ' . self::TOKEN_EVENT], "A request succeeded without a valid app token\n" . $context);
             $this->assertSame((int) $m[1], $covered[$headers['X-Scorekeeping-Token'] ?? ''] ?? null, "A request succeeded for a game its scorekeeping link does not cover\n" . $context);
         }
+        if ($method === 'GET') {
+            $this->assertSame($before, $this->stateSnapshot(), "A GET changed stored state\n" . $context);
+        }
         if ($response['status'] >= 400) {
             $this->assertSame($before, $this->stateSnapshot(), "A refused request changed stored state\n" . $context);
         }
@@ -184,6 +187,10 @@ final class ApiFuzzTest extends ScorekeepingApiTestCase
         $apache = $response['status'] >= 400 && $response['status'] < 500 && str_contains($response['raw'], '<address>Apache/');
         if ($apache || $response['status'] === 204 || $response['status'] === 304) {
             return;
+        }
+        $this->assertStringContainsString('application/json', $response['headers']['content-type'] ?? '', "JSON body without a JSON content type\n" . $context);
+        if ($response['status'] === 405) {
+            $this->assertNotSame('', $response['headers']['allow'] ?? '', "405 without an Allow header\n" . $context);
         }
         $this->assertNotNull($response['json'], "Body is not a JSON object\n" . $context);
         if ($response['status'] >= 400) {
@@ -352,6 +359,21 @@ final class ApiFuzzTest extends ScorekeepingApiTestCase
         $schema = $this->deref($spec, $schema);
         if ($this->chance($in === 'path' ? 6 : ($in === 'header' ? 8 : 25))) {
             return $this->junk();
+        }
+        if ($in === 'query' && $this->chance(80)) {
+            $hinted = match ($name) {
+                'event' => $this->pick(['HRN2026', 'HRN2026', 'HRN2026', 'OTHER2026', 'hrn2026', 'HRN2026 ', 'HRN2026,OTHER2026']),
+                'division' => $this->pick([100, 100, 101, 0, -1]),
+                'pool' => $this->pick([200, 200, 201, 0, -1]),
+                'pools' => $this->pick(['200', '200,201', '200,', ',', '200;201', '0', '-1', str_repeat('200,', 300)]),
+                'team' => $this->pick([300, 301, 302, 0, -1]),
+                'game' => $this->pick([700, 700, 701, 702, 0, -1, PHP_INT_MAX]),
+                'group' => $this->pick(['all', 'Harness', '', '%', 'a,b']),
+                default => null,
+            };
+            if ($hinted !== null) {
+                return $hinted;
+            }
         }
         if ($name === 'game_id') {
             return $this->pick(array_merge(array_fill(0, 12, self::GAME), [700, 700, 0, -1, 999999, PHP_INT_MAX]));
