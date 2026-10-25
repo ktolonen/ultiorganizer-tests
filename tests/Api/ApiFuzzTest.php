@@ -19,13 +19,18 @@ use UltiorganizerHarness\Support\ScorekeepingApiTestCase;
  *  - the body leaks no PHP diagnostics (Warning, Notice, Fatal error, Stack trace).
  *
  * The run is reproducible: UO_FUZZ_SEED fixes the seed (a failure prints it),
- * UO_FUZZ_ITERATIONS sets the requests per operation (default 60). Valid
+ * UO_FUZZ_ITERATIONS sets the requests per operation (default 60), and
+ * UO_FUZZ_STATS=1 prints the status codes each operation received. Valid
  * credentials of the scorekeeping fixture are used so mutated bodies reach the
  * handlers instead of stopping at authentication; the fixture is reset for each
  * operation because a fuzzed finalize or upload changes game 701.
  */
 final class ApiFuzzTest extends ScorekeepingApiTestCase
 {
+    /** Requests between fixture resets; a fuzzed finalize or upload would otherwise turn every later request into a 409. */
+    private const RESET_EVERY = 25;
+    private const GAMES = '700, 701';
+
     private int $seed;
     private int $requests = 0;
 
@@ -59,15 +64,85 @@ final class ApiFuzzTest extends ScorekeepingApiTestCase
         $spec = json_decode((string) file_get_contents(self::specPath()), true);
         $operation = $spec['paths'][$path][strtolower($method)];
 
+        $tally = [];
         for ($i = 0; $i < $iterations; $i++) {
+            if ($i > 0 && $i % self::RESET_EVERY === 0) {
+                $this->tearDown();
+                $this->setUp();
+            }
+            if ($i % self::RESET_EVERY === 0) {
+                $this->warmUp();
+            }
             [$url, $headers, $body] = $this->buildRequest($spec, $method, $path, $operation);
             if ($this->requests++ % 20 === 0) {
                 DBQuery("DELETE FROM uo_api_rate_limit");
             }
+            $before = $this->stateSnapshot();
             $response = self::request($method, $url, $headers, $body);
+            $key = $response['status'] . (isset($response['json']['error']['code']) ? ':' . $response['json']['error']['code'] : '');
+            $tally[$key] = ($tally[$key] ?? 0) + 1;
             $this->assertSafeResponse($response, $method, $url, $headers, $body, $i);
+            $this->assertStateInvariants($response, $before, $method, $url, $headers, $body, $i);
+        }
+        if (getenv('UO_FUZZ_STATS')) {
+            ksort($tally);
+            fwrite(STDERR, sprintf("\nfuzz %-48s %s", "$method $path", json_encode($tally)));
         }
         $this->addToAssertionCount(1);
+    }
+
+    /**
+     * Gives each batch a different starting state so the write handlers reach
+     * their success paths: an empty game, a game with rosters, a game with a
+     * complete upload, or a game with rosters and one goal.
+     */
+    private function warmUp(): void
+    {
+        $mode = mt_rand(0, 3);
+        if ($mode === 0) {
+            return;
+        }
+        if ($mode === 2) {
+            $token = self::entryContext()['token'];
+            self::put(self::validDoc(), $token, 'warm-up');
+            return;
+        }
+        DBQuery("INSERT INTO uo_played (player, game, num, accredited, captain) VALUES
+            (802, 701, 7, 1, 0), (803, 701, 14, 1, 0), (800, 701, 8, 1, 0), (801, 701, 12, 1, 0)");
+        if ($mode === 3) {
+            $headers = self::auth() + ['Idempotency-Key' => 'warm-up', 'Content-Type' => 'application/json'];
+            self::request('POST', '/api/v1/games/' . self::GAME . '/goals', $headers, json_encode([
+                'side' => 'home', 'scorer_id' => 803, 'assist_id' => 802, 'callahan' => false, 'time' => 60,
+            ]));
+        }
+    }
+
+    /** Everything a game write can change for the two fixture games, as one comparable value. */
+    private function stateSnapshot(): string
+    {
+        $parts = [];
+        $parts[] = DBQueryToArrayUncached("SELECT game_id, homescore, visitorscore, hasstarted, isongoing, official, halftime, forfeit, timer_start, timer_pause_start, timer_paused_duration FROM uo_game WHERE game_id IN (" . self::GAMES . ") ORDER BY game_id");
+        foreach (['uo_goal' => 'game, num', 'uo_played' => 'game, player', 'uo_timeout' => 'game, num', 'uo_spirit_timeout' => 'game, num', 'uo_gameevent' => 'game, num', 'uo_defense' => 'game, num', 'uo_scoresheet_history' => 'game, 1'] as $table => $order) {
+            $parts[] = DBQueryToArrayUncached("SELECT * FROM $table WHERE game IN (" . self::GAMES . ") ORDER BY $order");
+        }
+        return md5((string) json_encode($parts));
+    }
+
+    /**
+     * A refused request must leave no trace, and whatever a request did the
+     * stored goals must stay a gapless sequence 1..n of players on the game roster.
+     */
+    private function assertStateInvariants(array $response, string $before, string $method, string $url, array $headers, ?string $body, int $i): void
+    {
+        $context = sprintf("seed=%d iteration=%d\n%s %s\nheaders=%s\nbody=%s\n-> %d %s", $this->seed, $i, $method, $url, json_encode($headers), substr((string) $body, 0, 600), $response['status'], substr($response['raw'], 0, 300));
+        if ($response['status'] >= 400) {
+            $this->assertSame($before, $this->stateSnapshot(), "A refused request changed stored state\n" . $context);
+        }
+        $nums = array_map('intval', array_column(DBQueryToArrayUncached("SELECT num FROM uo_goal WHERE game=701 ORDER BY num"), 'num'));
+        $this->assertSame($nums === [] ? [] : range(1, count($nums)), $nums, "Goal numbers are not 1..n\n" . $context);
+        $this->assertSame(0, self::dbCount("SELECT COUNT(*) FROM uo_goal g WHERE g.game=701 AND
+            ((g.scorer IS NOT NULL AND NOT EXISTS (SELECT 1 FROM uo_played p WHERE p.game=g.game AND p.player=g.scorer))
+            OR (g.assist IS NOT NULL AND NOT EXISTS (SELECT 1 FROM uo_played p WHERE p.game=g.game AND p.player=g.assist)))"), "A goal names a player who is not on the game roster\n" . $context);
     }
 
     private function assertSafeResponse(array $response, string $method, string $url, array $headers, ?string $body, int $i): void
@@ -118,7 +193,7 @@ final class ApiFuzzTest extends ScorekeepingApiTestCase
                     $query[$param['name']] = $this->scalar($value);
                 }
             } elseif ($param['in'] === 'header' && $param['name'] !== 'X-Scorekeeping-Token') {
-                if (!empty($param['required']) ? !$this->chance(5) : $this->chance(40)) {
+                if (!empty($param['required']) ? !$this->chance(2) : $this->chance(40)) {
                     $headers[$param['name']] = $this->headerSafe($this->scalar($value));
                 }
             }
@@ -142,11 +217,55 @@ final class ApiFuzzTest extends ScorekeepingApiTestCase
         $content = $operation['requestBody']['content']['application/json']['schema'] ?? null;
         if ($content !== null) {
             $headers['Content-Type'] = $this->chance(92) ? 'application/json' : $this->pick(['text/plain', 'application/x-www-form-urlencoded', '']);
-            $body = $this->chance(8) ? $this->rawGarbage() : json_encode($this->mutate($this->generate($spec, $content, 0), 0), JSON_PARTIAL_OUTPUT_ON_ERROR);
+            $semantic = $this->chance(65) ? $this->semanticBody(basename((string) ($content['$ref'] ?? '')), $url) : null;
+            $value = $semantic ?? $this->generate($spec, $content, 0);
+            // A valid body goes out unmutated half of the time: one corrupt node in twenty makes a whole upload fail validation.
+            $body = $this->chance(8) ? $this->rawGarbage() : json_encode($semantic !== null && $this->chance(50) ? $semantic : $this->mutate($value, 0), JSON_PARTIAL_OUTPUT_ON_ERROR);
         } elseif (in_array($method, ['POST', 'PUT', 'PATCH'], true) && $this->chance(30)) {
             $body = $this->rawGarbage();
         }
         return [$url, $headers, $body];
+    }
+
+    /**
+     * A body that is valid for the current game state, built from what the
+     * fixture and the database hold; mutate() then breaks one piece of it.
+     * Schema-only generation cannot satisfy rules such as "scorer on the
+     * side's roster" or "score equals the stored score", so without this
+     * the success paths of the writes would hardly ever run.
+     */
+    private function semanticBody(string $schema, string $url): ?array
+    {
+        $sides = ['home' => [301, [802, 803]], 'away' => [300, [800, 801]]];
+        switch ($schema) {
+            case 'GameData':
+                return self::validDoc();
+            case 'SideRoster':
+                $side = preg_match('#/rosters/(home|away)#', $url, $m) ? $m[1] : $this->pick(['home', 'away']);
+                [$team, $ids] = $sides[$side];
+                $players = [];
+                foreach ($ids as $n => $id) {
+                    $players[] = ['player_id' => $id, 'number' => 7 + $n, 'captain' => $n === 0, 'spirit_captain' => $n === 1];
+                }
+                return ['team_id' => $team, 'players' => array_slice($players, 0, mt_rand(0, 2))];
+            case 'LiveGoal':
+                $side = $this->pick(['home', 'away']);
+                $ids = $sides[$side][1];
+                shuffle($ids);
+                $callahan = $this->chance(15);
+                $last = (int) DBQueryToValueUncached("SELECT COALESCE(MAX(time), 0) FROM uo_goal WHERE game=701");
+                return [
+                    'side' => $side,
+                    'scorer_id' => $ids[0],
+                    'assist_id' => $callahan ? null : $ids[1],
+                    'callahan' => $callahan,
+                    'time' => $last + mt_rand(1, 120),
+                ];
+            case 'FinalScore':
+                $row = DBQueryToRowUncached("SELECT homescore, visitorscore FROM uo_game WHERE game_id=701");
+                return ['home' => (int) $row['homescore'], 'away' => (int) $row['visitorscore']];
+        }
+        return null;
     }
 
     /** @return array<string, string> */
@@ -184,26 +303,29 @@ final class ApiFuzzTest extends ScorekeepingApiTestCase
     private function pickValue(array $spec, array $schema, string $name, string $in): mixed
     {
         $schema = $this->deref($spec, $schema);
-        if ($this->chance(25)) {
+        if ($this->chance($in === 'path' ? 6 : ($in === 'header' ? 8 : 25))) {
             return $this->junk();
         }
         if ($name === 'game_id') {
-            return $this->pick([self::GAME, self::GAME, self::GAME, 700, 0, -1, 999999, PHP_INT_MAX]);
+            return $this->pick(array_merge(array_fill(0, 12, self::GAME), [700, 700, 0, -1, 999999, PHP_INT_MAX]));
         }
         if ($name === 'Idempotency-Key') {
-            return $this->pick(['k' . mt_rand(), 'key-1', str_repeat('k', 64), str_repeat('k', 65), '', 'sch' . "\u{fc}" . 'ssel']);
+            return $this->chance(85) ? 'k' . mt_rand() : $this->pick(['key-1', 'key-1', str_repeat('k', 64), str_repeat('k', 65), '', 'sch' . "\u{fc}" . 'ssel']);
         }
         if ($name === 'If-Match') {
+            if ($this->chance(65)) {
+                return '"' . self::entryContext()['token'] . '"';
+            }
             return $this->pick(['"' . str_repeat('a', 64) . '"', '*', 'W/"x"', '""', '"' . mt_rand() . '"']);
         }
         if (isset($schema['enum'])) {
             return $this->pick($schema['enum']);
         }
-        return $this->generate($spec, $schema, 0);
+        return $this->generate($spec, $schema, 0, $name);
     }
 
     /** Builds a schema-valid value (best effort). */
-    private function generate(array $spec, array $schema, int $depth): mixed
+    private function generate(array $spec, array $schema, int $depth, string $name = ''): mixed
     {
         $schema = $this->deref($spec, $schema);
         if ($depth > 6) {
@@ -211,7 +333,7 @@ final class ApiFuzzTest extends ScorekeepingApiTestCase
         }
         foreach (['oneOf', 'anyOf'] as $key) {
             if (!empty($schema[$key])) {
-                return $this->generate($spec, $this->pick($schema[$key]), $depth + 1);
+                return $this->generate($spec, $this->pick($schema[$key]), $depth + 1, $name);
             }
         }
         if (!empty($schema['allOf'])) {
@@ -219,7 +341,7 @@ final class ApiFuzzTest extends ScorekeepingApiTestCase
             foreach ($schema['allOf'] as $part) {
                 $merged = array_replace_recursive($merged, $this->deref($spec, $part));
             }
-            return $this->generate($spec, $merged, $depth + 1);
+            return $this->generate($spec, $merged, $depth + 1, $name);
         }
         if (isset($schema['enum'])) {
             return $this->pick($schema['enum']);
@@ -229,6 +351,10 @@ final class ApiFuzzTest extends ScorekeepingApiTestCase
         }
         switch ($schema['type'] ?? 'object') {
             case 'integer':
+                $hinted = $this->hintedInteger($name);
+                if ($hinted !== null) {
+                    return $hinted;
+                }
                 $min = (int) ($schema['minimum'] ?? 0);
                 $max = (int) ($schema['maximum'] ?? 1000);
                 return mt_rand($min, max($min, min($max, $min + 2000)));
@@ -246,7 +372,7 @@ final class ApiFuzzTest extends ScorekeepingApiTestCase
                 $items = $schema['items'] ?? [];
                 $out = [];
                 for ($n = mt_rand((int) ($schema['minItems'] ?? 0), max((int) ($schema['minItems'] ?? 0), 3)); $n > 0; $n--) {
-                    $out[] = $this->generate($spec, $items, $depth + 1);
+                    $out[] = $this->generate($spec, $items, $depth + 1, $name);
                 }
                 return $out;
             default:
@@ -254,11 +380,30 @@ final class ApiFuzzTest extends ScorekeepingApiTestCase
                 $required = $schema['required'] ?? [];
                 foreach ($schema['properties'] ?? [] as $name => $sub) {
                     if (in_array($name, $required, true) || $this->chance(70)) {
-                        $out[$name] = $this->generate($spec, $sub, $depth + 1);
+                        $out[$name] = $this->generate($spec, $sub, $depth + 1, $name);
                     }
                 }
                 return $out === [] ? new \stdClass() : $out;
         }
+    }
+
+    /** Ids the fixture knows, so mutated bodies reach the handlers' real checks. */
+    private function hintedInteger(string $name): ?int
+    {
+        if (!$this->chance(85)) {
+            return null;
+        }
+        return match ($name) {
+            'scorer_id', 'assist_id', 'player_id' => $this->pick([800, 801, 802, 803]),
+            'team_id', 'home_team_id', 'away_team_id' => $this->pick([300, 301]),
+            'num' => mt_rand(1, 4),
+            'number' => mt_rand(0, 99),
+            'time' => $this->chance(15) ? $this->pick([0, 1, 32767, 32768, 65535, 86400, 86401]) : mt_rand(0, 2400),
+            'home', 'away' => mt_rand(0, 4),
+            'point_cap' => mt_rand(1, 15),
+            'halftime' => $this->pick([900, 1800, 2400]),
+            default => null,
+        };
     }
 
     /** Randomly corrupts a generated value, recursively. */

@@ -16,12 +16,14 @@ Output is `logs/api.log` and `junit/api.xml`. Failures are `phpunit_test_failure
 
 ## Fuzzing
 
-`tests/Api/ApiFuzzTest.php` fuzzes every operation listed in the SUT's `api/openapi.json` (one test per operation, so a new endpoint is picked up automatically). It builds requests from the request schemas, then mutates them: wrong types, `null`, boundary and huge numbers, unicode, long strings, missing and extra fields, deep nesting, invalid JSON, a wrong content type and broken credentials. It uses the scorekeeping fixture's valid credentials by default so bodies reach the handlers, and resets the fixture per operation.
+`tests/Api/ApiFuzzTest.php` fuzzes every operation listed in the SUT's `api/openapi.json` (one test per operation, so a new endpoint is picked up automatically). It builds requests from the request schemas, then mutates them: wrong types, `null`, boundary and huge numbers, unicode, long strings, missing and extra fields, deep nesting, invalid JSON, a wrong content type and broken credentials.
 
-Per response it asserts: no 5xx (a `503 busy` is allowed), no leaked PHP diagnostics, a JSON object body, and the `Error` envelope on every 4xx. Responses that Apache generates itself (encoded slashes, oversized lines) skip the envelope check because the SUT never ran.
+Schema-only generation cannot satisfy rules such as "scorer on the side's roster", "score equals the stored score" or a fresh `If-Match`, so the write handlers would mostly answer 400/409. The fuzzer therefore also uses fixture-aware values (player and team ids, the live token, a valid upload document, the stored score) and resets the fixture every 25 requests to one of four starting states (empty, rostered, uploaded, rostered with a goal). Half of those valid bodies go out unmutated.
+
+Per response it asserts: no 5xx (a `503 busy` is allowed), no leaked PHP diagnostics, a JSON object body, and the `Error` envelope on every 4xx. Responses that Apache generates itself (encoded slashes, oversized lines) skip the envelope check because the SUT never ran. After every request it also asserts, for games 700 and 701, that a refused (4xx) request changed no stored state and that the goal numbers stay a gapless 1..n of players on the game roster.
 
 ```sh
-UO_FUZZ_SEED=42 UO_FUZZ_ITERATIONS=400 ./test:api --test-filter ApiFuzzTest
+UO_FUZZ_SEED=42 UO_FUZZ_ITERATIONS=400 UO_FUZZ_STATS=1 ./test:api --test-filter ApiFuzzTest
 ```
 
-`UO_FUZZ_SEED` replays a run (a failure prints its seed, iteration and the full request); without it each run picks a new seed. `UO_FUZZ_ITERATIONS` is requests per operation, default 60. Values and headers are capped at 2000 characters.
+`UO_FUZZ_SEED` replays a run (a failure prints its seed, iteration and the full request); without it each run picks a new seed. `UO_FUZZ_ITERATIONS` is requests per operation, default 60. `UO_FUZZ_STATS=1` prints the status and error codes each operation received into `logs/api.log`: check it after changing the generator, since an operation whose writes never reach 200/201 is not being tested. Values and headers are capped at 2000 characters.
