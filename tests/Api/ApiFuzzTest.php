@@ -28,7 +28,7 @@ use UltiorganizerHarness\Support\ScorekeepingApiTestCase;
 final class ApiFuzzTest extends ScorekeepingApiTestCase
 {
     /** Requests between fixture resets; a fuzzed finalize or upload would otherwise turn every later request into a 409. */
-    private const RESET_EVERY = 25;
+    private const RESET_EVERY = 10;
     private const GAMES = '700, 701';
 
     private int $seed;
@@ -308,6 +308,10 @@ final class ApiFuzzTest extends ScorekeepingApiTestCase
         }
         if ($name === 'game_id') {
             return $this->pick(array_merge(array_fill(0, 12, self::GAME), [700, 700, 0, -1, 999999, PHP_INT_MAX]));
+        }
+        if ($name === 'num' && $in === 'path' && $this->chance(70)) {
+            // Only the last goal can be deleted.
+            return max(1, (int) DBQueryToValueUncached("SELECT COALESCE(MAX(num), 0) FROM uo_goal WHERE game=701"));
         }
         if ($name === 'Idempotency-Key') {
             return $this->chance(85) ? 'k' . mt_rand() : $this->pick(['key-1', 'key-1', str_repeat('k', 64), str_repeat('k', 65), '', 'sch' . "\u{fc}" . 'ssel']);
