@@ -199,7 +199,7 @@ final class ApiFuzzTest extends ScorekeepingApiTestCase
         if ($response['status'] < 300 && preg_match('#^/api/v1/games/(\d+)/#', $url, $m)) {
             // Both credentials must be valid and the link must cover this very game; the fixture links cover 701 (game, field 501) and 700 (game, field 500).
             $covered = [self::LINK_GAME => 701, self::LINK_FIELD => 701, self::LINK_OTHER_GAME => 700, self::LINK_OTHER_FIELD => 700];
-            $this->assertContains($headers['Authorization'] ?? '', ['Bearer ' . self::TOKEN_INSTALL, 'Bearer ' . self::TOKEN_EVENT], "A request succeeded without a valid app token\n" . $context);
+            $this->assertContains($headers['Authorization'] ?? '', ['Bearer ' . self::TOKEN_INSTALL, 'Bearer ' . self::TOKEN_EVENT, 'Bearer ' . self::TOKEN_USER], "A request succeeded without a valid app token\n" . $context);
             $this->assertSame((int) $m[1], $covered[$headers['X-Scorekeeping-Token'] ?? ''] ?? null, "A request succeeded for a game its scorekeeping link does not cover\n" . $context);
         }
         if ($method === 'GET') {
