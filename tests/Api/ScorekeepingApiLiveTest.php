@@ -133,6 +133,16 @@ final class ScorekeepingApiLiveTest extends ScorekeepingApiTestCase
         self::assertError(self::put(self::validDoc(), $before), 409, 'stale_token');
     }
 
+    public function testUserScopedTokenAttributesHistoryToItsUser(): void
+    {
+        self::seedRoster();
+        $goal = self::live('POST', 'goals', self::goal('home', 803, 802, 60), 'user-1', ['Authorization' => 'Bearer ' . self::TOKEN_USER]);
+        $this->assertSame(201, $goal['status'], $goal['raw']);
+
+        $rows = DBQueryToArrayUncached("SELECT user_id, scorekeeper_token, api_token FROM uo_scoresheet_history WHERE game=701 AND target='goal'");
+        $this->assertSame([['user_id' => 'admin', 'scorekeeper_token' => '920', 'api_token' => '914']], $rows);
+    }
+
     public function testGoalChecksTimesAndPlayers(): void
     {
         self::seedRoster();
@@ -552,7 +562,7 @@ final class ScorekeepingApiLiveTest extends ScorekeepingApiTestCase
         DBQuery("UPDATE uo_season SET event_readonly=0 WHERE season_id='HRN2026'");
 
         self::assertError(self::live('POST', 'goals', $goal, 'c', ['X-Scorekeeping-Token' => self::LINK_OTHER_GAME]), 403, 'game_not_covered');
-        self::assertError(self::live('POST', 'goals', $goal, 'd', ['Authorization' => 'Bearer ' . self::TOKEN_USER]), 403, 'invalid_scope');
+        self::assertError(self::live('POST', 'goals', $goal, 'd', ['Authorization' => 'Bearer ' . self::TOKEN_USER, 'X-Scorekeeping-Token' => self::LINK_OTHER_GAME]), 403, 'game_not_covered');
         self::assertError(self::live('POST', 'goals', $goal, 'e', ['Idempotency-Key' => null]), 400, 'idempotency_key_required');
         $this->assertSame(0, self::stored()['goals']);
         $this->assertSame(201, self::live('POST', 'goals', $goal, 'f', ['X-Scorekeeping-Token' => self::LINK_FIELD])['status'], 'contrast: the field link may write');

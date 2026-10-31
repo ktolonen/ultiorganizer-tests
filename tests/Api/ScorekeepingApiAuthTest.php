@@ -42,12 +42,12 @@ final class ScorekeepingApiAuthTest extends ScorekeepingApiTestCase
         self::assertError(self::get(self::DISCOVERY, self::auth(self::TOKEN_OTHER_EVENT)), 403, 'event_scope_mismatch');
     }
 
-    public function testUserScopedAppTokenIsRefused(): void
+    public function testUserScopedAppTokenKeepsScoreOnlyWithALink(): void
     {
-        self::assertError(self::get(self::ENTRY, self::auth(self::TOKEN_USER)), 403, 'invalid_scope');
-        self::assertError(self::get(self::DISCOVERY, self::auth(self::TOKEN_USER)), 403, 'invalid_scope');
-        // The same token reads the public API, so the refusal is about scorekeeping, not the token.
-        $this->assertSame(200, self::request('GET', '/api/v1/games?event=HRN2026', ['Authorization' => 'Bearer ' . self::TOKEN_USER])['status']);
+        $this->assertSame(200, self::get(self::ENTRY, self::auth(self::TOKEN_USER))['status']);
+        $this->assertSame(200, self::get(self::DISCOVERY, self::auth(self::TOKEN_USER))['status']);
+        self::assertError(self::get(self::ENTRY, self::auth(self::TOKEN_USER, null)), 401, 'missing_scorekeeping_token');
+        self::assertError(self::get(self::ENTRY, self::auth(self::TOKEN_USER, self::LINK_OTHER_GAME)), 403, 'game_not_covered');
     }
 
     public function testNoLinkIsRefused(): void

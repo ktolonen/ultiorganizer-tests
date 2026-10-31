@@ -81,6 +81,39 @@ final class ApiFunctionsLibTest extends TestCase
         $this->assertNull($result);
     }
 
+    // --- ApiUserToken and ApiUserTokenReplace ---
+
+    public function testApiUserTokenIsCreatedOnceAndReplacedForTheLoggedInUser(): void
+    {
+        $_SESSION = ['uid' => 'harness_app_user', 'userproperties' => []];
+        try {
+            $first = ApiUserToken('harness_app_user');
+            $this->assertIsArray($first);
+            $this->assertSame($first, ApiUserToken('harness_app_user'), 'the second visit shows the same token');
+            $row = ApiTokenLookup($first['token']);
+            $this->assertSame(['user', 'harness_app_user'], [$row['scope_type'], $row['scope_id']]);
+
+            $second = ApiUserTokenReplace('harness_app_user');
+            $this->assertNotSame($first['token'], $second['token']);
+            $this->assertNull(ApiTokenLookup($first['token']), 'replacing revokes the old token');
+            $this->assertSame($second, ApiUserToken('harness_app_user'));
+        } finally {
+            DBQuery("DELETE FROM uo_api_token WHERE scope_type='user' AND scope_id='harness_app_user'");
+        }
+    }
+
+    public function testApiUserTokenIsOnlyForThatLoggedInUser(): void
+    {
+        $_SESSION = ['uid' => 'anonymous', 'userproperties' => []];
+        $this->assertNull(ApiUserToken('anonymous'));
+        $this->assertNull(ApiUserTokenReplace('anonymous'));
+        $_SESSION = ['uid' => 'harness_app_user', 'userproperties' => []];
+        $this->assertNull(ApiUserToken('admin'));
+        $this->assertNull(ApiUserTokenReplace('admin'));
+        $this->assertSame(0, (int) DBQueryToValue("SELECT COUNT(*) FROM uo_api_token WHERE scope_type='user' AND scope_id IN ('anonymous', 'admin', 'harness_app_user')
+            AND label='Scorekeeping app'"));
+    }
+
     // --- ApiTokenList ---
 
     public function testApiTokenListIncludesFixtureToken(): void

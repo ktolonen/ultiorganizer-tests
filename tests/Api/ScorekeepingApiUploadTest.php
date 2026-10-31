@@ -463,7 +463,7 @@ final class ScorekeepingApiUploadTest extends ScorekeepingApiTestCase
 
         self::assertError(self::put(self::validDoc(), $token, 'key-1', ['X-Scorekeeping-Token' => self::LINK_OTHER_GAME]), 403, 'game_not_covered');
         self::assertError(self::put(self::validDoc(), $token, 'key-1', ['X-Scorekeeping-Token' => null]), 401, 'missing_scorekeeping_token');
-        self::assertError(self::put(self::validDoc(), $token, 'key-1', ['Authorization' => 'Bearer ' . self::TOKEN_USER]), 403, 'invalid_scope');
+        self::assertError(self::put(self::validDoc(), $token, 'key-1', ['Authorization' => 'Bearer ' . self::TOKEN_USER, 'X-Scorekeeping-Token' => self::LINK_OTHER_GAME]), 403, 'game_not_covered');
         self::assertError(self::put(self::validDoc(), $token, 'key-1', ['Authorization' => 'Bearer ' . self::TOKEN_OTHER_EVENT]), 403, 'event_scope_mismatch');
         $this->assertSame($before, self::stored());
         // Contrast: the field link of the game's reservation may upload.

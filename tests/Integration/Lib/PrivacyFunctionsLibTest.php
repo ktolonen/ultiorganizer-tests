@@ -377,6 +377,8 @@ final class PrivacyFunctionsLibTest extends TestCase
     public function testPrivacyDeleteUserDataDeletesThrowawayUser(): void
     {
         DBQuery("INSERT INTO uo_users (userid, name, email) VALUES ('privacy_del_test', 'Delete Me', 'del@test.invalid')");
+        DBQuery("INSERT INTO uo_api_token (token_hash, token_value, label, scope_type, scope_id)
+            VALUES (SHA2('privacy-del-token', 256), 'privacy-del-token', 'Scorekeeping app', 'user', 'privacy_del_test')");
         self::flushQueryCaches();
         try {
             $result = PrivacyDeleteUserData('privacy_del_test', 'admin');
@@ -384,7 +386,9 @@ final class PrivacyFunctionsLibTest extends TestCase
             self::flushQueryCaches();
             $row = DBQueryToRow("SELECT userid FROM uo_users WHERE userid='privacy_del_test'");
             $this->assertNull($row);
+            $this->assertSame(0, (int) DBQueryToValue("SELECT COUNT(*) FROM uo_api_token WHERE scope_type='user' AND scope_id='privacy_del_test'"));
         } finally {
+            DBQuery("DELETE FROM uo_api_token WHERE scope_type='user' AND scope_id='privacy_del_test'");
             DBQuery("DELETE FROM uo_users WHERE userid='privacy_del_test'");
             DBQuery("DELETE FROM uo_event_log WHERE source='privacy'");
         }
