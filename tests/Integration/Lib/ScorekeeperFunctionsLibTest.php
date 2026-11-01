@@ -369,29 +369,34 @@ final class ScorekeeperFunctionsLibTest extends TestCase
     public function testApiActorGivesLinkRightsWithoutSessionOrAnonymousSetting(): void
     {
         $this->requireApiActor();
+        // Older SUTs return no user key: the actor carries a user since personal app tokens.
+        $withUser = array_key_exists('user', ScorekeeperApiActor());
+        $actor = static fn(int $l, int $a, string $u = '') => $withUser ? ['link' => $l, 'api' => $a, 'user' => $u] : ['link' => $l, 'api' => $a];
         $link = self::tokenId(ScorekeeperToken('game', 701));
         // setUp() leaves anonymous_scorekeeping off: the app token is the gate.
         $this->assertSame(0, (int) DBQueryToValueUncached(
             "SELECT anonymous_scorekeeping FROM uo_season WHERE season_id='HRN2026'",
         ));
-        $this->assertSame(['link' => 0, 'api' => 0, 'user' => ''], ScorekeeperApiActor());
+        $this->assertSame($actor(0, 0), ScorekeeperApiActor());
 
         // The link alone, without an app token, sets no actor and grants nothing.
-        $this->assertSame(['link' => 0, 'api' => 0, 'user' => ''], ScorekeeperApiActor($link, 0));
+        $this->assertSame($actor(0, 0), ScorekeeperApiActor($link, 0));
         $this->assertSame('testuser', $_SESSION['uid']);
         $this->assertFalse(ScorekeeperGrantCovers(701));
         $this->assertSame([], ScorekeeperGrantedGameIds('HRN2026'));
 
-        $this->assertSame(['link' => $link, 'api' => 4242, 'user' => ''], ScorekeeperApiActor($link, 4242));
+        $this->assertSame($actor($link, 4242), ScorekeeperApiActor($link, 4242));
 
-        $this->assertSame(['link' => $link, 'api' => 4242, 'user' => ''], ScorekeeperApiActor());
+        $this->assertSame($actor($link, 4242), ScorekeeperApiActor());
         $this->assertSame('anonymous', $_SESSION['uid']);
         $this->assertSame([], $_SESSION['userproperties']);
         $this->assertFalse(isLoggedIn());
         // A user-scoped app token names its user for history only; the session stays anonymous.
-        $this->assertSame(['link' => $link, 'api' => 4242, 'user' => 'testuser'], ScorekeeperApiActor($link, 4242, 'testuser'));
-        $this->assertSame('anonymous', $_SESSION['uid']);
-        $this->assertSame(['link' => $link, 'api' => 4242, 'user' => ''], ScorekeeperApiActor($link, 4242));
+        if ($withUser) {
+            $this->assertSame($actor($link, 4242, 'testuser'), ScorekeeperApiActor($link, 4242, 'testuser'));
+            $this->assertSame('anonymous', $_SESSION['uid']);
+            $this->assertSame($actor($link, 4242), ScorekeeperApiActor($link, 4242));
+        }
         $this->assertSame($link, ScorekeeperAnonymousTokenId(701));
         $this->assertTrue(ScorekeeperGrantCovers(701));
         $this->assertTrue(hasEditGameEventsRight(701));
@@ -408,7 +413,7 @@ final class ScorekeeperFunctionsLibTest extends TestCase
         DBQuery("UPDATE uo_game SET time='" . self::today() . " 14:00:00' WHERE game_id=701");
 
         ScorekeeperApiActor(0, 0);
-        $this->assertSame(['link' => 0, 'api' => 0, 'user' => ''], ScorekeeperApiActor());
+        $this->assertSame($actor(0, 0), ScorekeeperApiActor());
         $this->assertSame('testuser', $_SESSION['uid'], 'clearing restores the session the request had');
         $this->assertFalse(ScorekeeperGrantCovers(701));
     }

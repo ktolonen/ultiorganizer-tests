@@ -194,6 +194,11 @@ final class ApiEndpointsContractTest extends TestCase
 
     public function testUnknownSubPathsAreNotFound(): void
     {
+        // The sub-path 404s shipped after the timekeeper templates route.
+        $paths = self::decodeJson(self::apiGet('/api/v1/openapi')['body'])['paths'] ?? [];
+        if (!isset($paths['/api/v1/timekeeper/templates'])) {
+            $this->markTestSkipped('The SUT predates the API sub-path 404s.');
+        }
         foreach ([
             '/api/v1/games/abc/entry-context',
             '/api/v1/games/-1/entry-context',

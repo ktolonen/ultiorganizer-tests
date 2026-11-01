@@ -83,8 +83,16 @@ final class ApiFunctionsLibTest extends TestCase
 
     // --- ApiUserToken, ApiUserTokenReplace and ApiUserTokenRevoke ---
 
+    private function requirePersonalTokens(): void
+    {
+        if (!function_exists('ApiUserTokenRevoke')) {
+            $this->markTestSkipped('The SUT has no personal app tokens.');
+        }
+    }
+
     public function testApiUserTokenIsCreatedReplacedAndRemovedByTheLoggedInUser(): void
     {
+        $this->requirePersonalTokens();
         $_SESSION = ['uid' => 'harness_app_user', 'userproperties' => []];
         try {
             $this->assertNull(ApiUserToken('harness_app_user'), 'opening the page creates no token');
@@ -116,6 +124,7 @@ final class ApiFunctionsLibTest extends TestCase
 
     public function testApiUserTokenIsOnlyForThatLoggedInUser(): void
     {
+        $this->requirePersonalTokens();
         DBQuery("INSERT INTO uo_api_token (token_hash, token_value, label, scope_type, scope_id)
             VALUES (SHA2('harness-admin-app', 256), 'harness-admin-app', 'Scorekeeping app', 'user', 'admin')");
         try {
