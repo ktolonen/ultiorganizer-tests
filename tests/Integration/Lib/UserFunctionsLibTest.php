@@ -688,12 +688,28 @@ final class UserFunctionsLibTest extends TestCase
         $personalTokens = function_exists('ApiUserTokenRevoke');
         DBQuery("INSERT INTO uo_api_token (token_hash, token_value, label, scope_type, scope_id)
             VALUES (SHA2('testuser-create-token', 256), 'testuser-create-token', 'Scorekeeping app', 'user', 'testuser_create')");
-        DeleteUser('testuser_create');
-        $this->assertFalse(UserExists('testuser_create'));
-        if ($personalTokens) {
-            $this->assertSame(0, (int) DBQueryToValue("SELECT COUNT(*) FROM uo_api_token WHERE token_value='testuser-create-token'"));
+        // Older SUTs keep the User-Agent of a deleted user's receipts.
+        $clearsReceipts = function_exists('UserApiTokensDelete');
+        $tokenId = (int) DBQueryToValueUncached("SELECT token_id FROM uo_api_token WHERE token_value='testuser-create-token'");
+        if ($clearsReceipts) {
+            DBQuery(sprintf("INSERT INTO uo_api_receipt (api_token, scorekeeper_token, game, idempotency_key, method, path, request_hash, status, response, user_agent)
+                VALUES (%d, 1, 700, 'delete-user', 'POST', '/goals', REPEAT('0', 64), 201, '{}', 'UltiorganizerApp/1.0 (delete)')", $tokenId));
         }
-        DBQuery("DELETE FROM uo_api_token WHERE token_value='testuser-create-token'");
+        try {
+            DeleteUser('testuser_create');
+            $this->assertFalse(UserExists('testuser_create'));
+            if ($personalTokens) {
+                $this->assertSame(0, (int) DBQueryToValue("SELECT COUNT(*) FROM uo_api_token WHERE token_value='testuser-create-token'"));
+            }
+            if ($clearsReceipts) {
+                $receipt = DBQueryToRowUncached("SELECT user_agent FROM uo_api_receipt WHERE api_token=$tokenId");
+                $this->assertIsArray($receipt, 'the receipt stays with the game');
+                $this->assertNull($receipt['user_agent']);
+            }
+        } finally {
+            DBQuery("DELETE FROM uo_api_receipt WHERE api_token=$tokenId");
+            DBQuery("DELETE FROM uo_api_token WHERE token_value='testuser-create-token'");
+        }
     }
 
     public function testCreateConfirmedUserWithNoEmail(): void
