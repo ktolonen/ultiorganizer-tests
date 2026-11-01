@@ -334,25 +334,44 @@ final class ScorekeepingapiFunctionsLibTest extends TestCase
         DBQuery("DELETE FROM uo_api_receipt WHERE game=701");
     }
 
-    public function testReceiptsRoundTripPerKeyTokenPairAndGame(): void
+    public function testReceiptsReplayPerKeyTokenPairAndGame(): void
     {
-        $this->skipWithoutPhase2();
-        DBQuery("DELETE FROM uo_api_receipt WHERE game=701");
+        if (!function_exists('ScorekeepingApiWrite')) {
+            $this->markTestSkipped('The SUT has no shared scorekeeping API write wrapper.');
+        }
+        DBQuery("DELETE FROM uo_api_receipt WHERE game IN (700, 701)");
+        $this->startLink();
+        $writes = 0;
+        $write = function () use (&$writes) {
+            $writes++;
+            return ['status' => 201, 'data' => ['n' => $writes]];
+        };
+        $send = static fn(string $key, int $api = 9931, int $link = 9930) => ScorekeepingApiWrite(
+            701,
+            ['api_token' => $api, 'link_token' => $link, 'key' => $key, 'method' => 'POST', 'path' => '/api/v1/games/701/goals', 'body' => ['x' => 1]],
+            ['events'],
+            $write,
+        );
         try {
-            $this->assertNull(ApiReceiptFind(9931, 9930, 701, 'k1'));
+            $first = $send('k1');
+            $this->assertFalse($first['replay']);
+            $this->assertSame(1, $writes);
 
-            ApiReceiptStore(9931, 9930, 701, 'k1', 'PUT', '/api/v1/games/701/game-data', str_repeat('a', 64), 200, ['status' => 'ok', 'data' => ['token' => 'x']]);
+            $again = $send('k1');
+            $this->assertTrue($again['replay'], 'the same key replays');
+            $this->assertSame([201, $first['body'], $first['token']], [$again['status'], $again['body'], $again['token']]);
+            $this->assertSame(1, $writes, 'a replay does not write again');
 
-            $this->assertSame(
-                ['method' => 'PUT', 'path' => '/api/v1/games/701/game-data', 'request_hash' => str_repeat('a', 64), 'status' => 200, 'response' => ['status' => 'ok', 'data' => ['token' => 'x']]],
-                ApiReceiptFind(9931, 9930, 701, 'k1'),
-            );
-            $this->assertNull(ApiReceiptFind(9931, 9930, 701, 'K1'), 'keys are case-sensitive');
-            $this->assertNull(ApiReceiptFind(9932, 9930, 701, 'k1'), 'another app token has its own keys');
-            $this->assertNull(ApiReceiptFind(9931, 9933, 701, 'k1'), 'another link has its own keys');
-            $this->assertNull(ApiReceiptFind(9931, 9930, 700, 'k1'), 'another game has its own keys');
+            $this->assertFalse($send('K1')['replay'], 'keys are case-sensitive');
+            $this->assertFalse($send('k1', 9932)['replay'], 'another app token has its own keys');
+            $this->assertFalse($send('k1', 9931, 9933)['replay'], 'another link has its own keys');
+            DBQuery("INSERT INTO uo_api_receipt (api_token, scorekeeper_token, game, idempotency_key, method, path, request_hash, status, response)
+                VALUES (9931, 9930, 700, 'g1', 'POST', '/api/v1/games/701/goals', REPEAT('0', 64), 201, '{}')");
+            $this->assertFalse($send('g1')['replay'], 'another game has its own keys');
+            $this->assertSame(5, $writes);
         } finally {
-            DBQuery("DELETE FROM uo_api_receipt WHERE game=701");
+            DBQuery("DELETE FROM uo_api_receipt WHERE game=700");
+            $this->finishLink();
         }
     }
 
