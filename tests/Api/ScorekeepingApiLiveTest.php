@@ -143,6 +143,28 @@ final class ScorekeepingApiLiveTest extends ScorekeepingApiTestCase
         $this->assertSame([['user_id' => 'admin', 'scorekeeper_token' => '920', 'api_token' => '914']], $rows);
     }
 
+    public function testReceiptRecordsTheUserAgentUnlessVisitorLoggingIsDisabled(): void
+    {
+        self::seedRoster();
+        $agent = ['User-Agent' => 'UltiorganizerApp/1.0 (test)'];
+        $stored = static fn(string $key) => DBQueryToValueUncached("SELECT user_agent FROM uo_api_receipt WHERE game=701 AND idempotency_key='$key'");
+        $previous = DBQueryToValueUncached("SELECT value FROM uo_setting WHERE name='DisableVisitorLogging'");
+
+        try {
+            DBQuery("UPDATE uo_setting SET value='false' WHERE name='DisableVisitorLogging'");
+            $logged = self::live('POST', 'goals', self::goal('home', 803, 802, 60), 'live-ua', $agent);
+            $this->assertSame(201, $logged['status'], $logged['raw']);
+            $this->assertSame('UltiorganizerApp/1.0 (test)', $stored('live-ua'));
+
+            DBQuery("UPDATE uo_setting SET value='true' WHERE name='DisableVisitorLogging'");
+            $suppressed = self::live('POST', 'goals', self::goal('away', 800, 801, 90), 'live-ua-off', $agent);
+            $this->assertSame(201, $suppressed['status'], $suppressed['raw']);
+            $this->assertNull($stored('live-ua-off'));
+        } finally {
+            DBQuery(sprintf("UPDATE uo_setting SET value='%s' WHERE name='DisableVisitorLogging'", DBEscapeString((string) $previous)));
+        }
+    }
+
     public function testGoalChecksTimesAndPlayers(): void
     {
         self::seedRoster();
