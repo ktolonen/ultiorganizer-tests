@@ -444,6 +444,22 @@
       "sut_path": "/home/kari/dev/ultiorganizer/lib/scorekeeper.functions.php"
     },
     {
+      "lib_file": "scorekeepingapi.functions.php",
+      "lib_path": "lib/scorekeepingapi.functions.php",
+      "subject_id": "scorekeepingapi.functions",
+      "test_suite": "integration",
+      "test_path": "tests/Integration/Lib/ScorekeepingapiFunctionsLibTest.php",
+      "test_class": "ScorekeepingapiFunctionsLibTest",
+      "strategy": "fixture_backed",
+      "load_profile": "team_stack",
+      "test_path_exists": true,
+      "status": "covered",
+      "triage_status": "triaged",
+      "triage_notes": "Tests skip when the SUT lacks the file or DB version 104. Cover the game lock, the upload token (stability, goal append, no-op and timer-only writes) and the playoff finalize inside an outer transaction.",
+      "notes": "",
+      "sut_path": "/home/kari/dev/ultiorganizer/lib/scorekeepingapi.functions.php"
+    },
+    {
       "lib_file": "scoresheethistory.functions.php",
       "lib_path": "lib/scoresheethistory.functions.php",
       "subject_id": "scoresheethistory.functions",

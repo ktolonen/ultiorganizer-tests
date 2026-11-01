@@ -81,6 +81,69 @@ final class ApiFunctionsLibTest extends TestCase
         $this->assertNull($result);
     }
 
+    // --- ApiUserToken, ApiUserTokenReplace and ApiUserTokenRevoke ---
+
+    private function requirePersonalTokens(): void
+    {
+        if (!function_exists('ApiUserTokenRevoke')) {
+            $this->markTestSkipped('The SUT has no personal app tokens.');
+        }
+    }
+
+    public function testApiUserTokenIsCreatedReplacedAndRemovedByTheLoggedInUser(): void
+    {
+        $this->requirePersonalTokens();
+        $_SESSION = ['uid' => 'harness_app_user', 'userproperties' => []];
+        try {
+            $this->assertNull(ApiUserToken('harness_app_user'), 'opening the page creates no token');
+
+            $first = ApiUserTokenReplace('harness_app_user');
+            $this->assertIsArray($first);
+            $shown = ApiUserToken('harness_app_user');
+            $this->assertSame([$first['token_id'], $first['token'], null], [$shown['token_id'], $shown['token'], $shown['last_used']]);
+            $row = ApiTokenLookup($first['token']);
+            $this->assertSame(['user', 'harness_app_user'], [$row['scope_type'], $row['scope_id']]);
+
+            ApiTokenTouch($first['token_id']);
+            $this->assertNotEmpty(ApiUserToken('harness_app_user')['last_used'], 'the page shows when the token was last used');
+
+            $second = ApiUserTokenReplace('harness_app_user');
+            $this->assertNotSame($first['token'], $second['token']);
+            $this->assertNull(ApiTokenLookup($first['token']), 'replacing revokes the old token');
+            $this->assertSame($second['token'], ApiUserToken('harness_app_user')['token']);
+
+            $this->assertTrue(ApiUserTokenRevoke('harness_app_user'));
+            $this->assertNull(ApiTokenLookup($second['token']), 'removing revokes the token');
+            $this->assertNull(ApiUserToken('harness_app_user'));
+            $this->assertSame(2, (int) DBQueryToValueUncached("SELECT COUNT(*) FROM uo_api_token WHERE scope_type='user' AND scope_id='harness_app_user' AND revoked=1"),
+                'revoked rows stay so history rows can still name them');
+        } finally {
+            DBQuery("DELETE FROM uo_api_token WHERE scope_type='user' AND scope_id='harness_app_user'");
+        }
+    }
+
+    public function testApiUserTokenIsOnlyForThatLoggedInUser(): void
+    {
+        $this->requirePersonalTokens();
+        DBQuery("INSERT INTO uo_api_token (token_hash, token_value, label, scope_type, scope_id)
+            VALUES (SHA2('harness-admin-app', 256), 'harness-admin-app', 'Scorekeeping app', 'user', 'admin')");
+        try {
+            $_SESSION = ['uid' => 'anonymous', 'userproperties' => []];
+            $this->assertNull(ApiUserToken('anonymous'));
+            $this->assertNull(ApiUserTokenReplace('anonymous'));
+            $this->assertFalse(ApiUserTokenRevoke('anonymous'));
+            $_SESSION = ['uid' => 'harness_app_user', 'userproperties' => []];
+            $this->assertNull(ApiUserToken('admin'));
+            $this->assertNull(ApiUserTokenReplace('admin'));
+            $this->assertFalse(ApiUserTokenRevoke('admin'));
+            $this->assertIsArray(ApiTokenLookup('harness-admin-app'), "another user cannot revoke the admin's token");
+            $this->assertSame(1, (int) DBQueryToValueUncached("SELECT COUNT(*) FROM uo_api_token WHERE scope_type='user' AND scope_id IN ('anonymous', 'admin', 'harness_app_user')
+                AND label='Scorekeeping app'"));
+        } finally {
+            DBQuery("DELETE FROM uo_api_token WHERE token_value='harness-admin-app'");
+        }
+    }
+
     // --- ApiTokenList ---
 
     public function testApiTokenListIncludesFixtureToken(): void

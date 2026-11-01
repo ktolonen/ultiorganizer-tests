@@ -377,14 +377,39 @@ final class PrivacyFunctionsLibTest extends TestCase
     public function testPrivacyDeleteUserDataDeletesThrowawayUser(): void
     {
         DBQuery("INSERT INTO uo_users (userid, name, email) VALUES ('privacy_del_test', 'Delete Me', 'del@test.invalid')");
+        // Older SUTs have no personal app tokens and no receipt User-Agent to cover.
+        $personalTokens = function_exists('ApiUserTokenRevoke');
+        $tokenId = 0;
+        if ($personalTokens) {
+            DBQuery("INSERT INTO uo_api_token (token_hash, token_value, label, scope_type, scope_id)
+                VALUES (SHA2('privacy-del-token', 256), 'privacy-del-token', 'Scorekeeping app', 'user', 'privacy_del_test')");
+            $tokenId = (int) DBQueryToValueUncached("SELECT token_id FROM uo_api_token WHERE scope_id='privacy_del_test'");
+            $game = (int) DBQueryToValueUncached("SELECT MIN(game_id) FROM uo_game");
+            DBQuery(sprintf("INSERT INTO uo_api_receipt (api_token, scorekeeper_token, game, idempotency_key, method, path, request_hash, status, response, user_agent)
+                VALUES (%d, 1, %d, 'privacy-del', 'POST', '/goals', REPEAT('0', 64), 201, '{}', 'UltiorganizerApp/1.0 (privacy)')", $tokenId, $game));
+        }
         self::flushQueryCaches();
         try {
+            if ($personalTokens) {
+                $receipts = PrivacyCollectUserReportData('privacy_del_test')['api_receipt_rows'];
+                $this->assertSame(['UltiorganizerApp/1.0 (privacy)'], array_column($receipts, 'user_agent'));
+                $this->assertArrayNotHasKey('response', $receipts[0]);
+            }
+
             $result = PrivacyDeleteUserData('privacy_del_test', 'admin');
             $this->assertTrue($result);
             self::flushQueryCaches();
             $row = DBQueryToRow("SELECT userid FROM uo_users WHERE userid='privacy_del_test'");
             $this->assertNull($row);
+            if ($personalTokens) {
+                $this->assertSame(0, (int) DBQueryToValue("SELECT COUNT(*) FROM uo_api_token WHERE scope_type='user' AND scope_id='privacy_del_test'"));
+                $receipt = DBQueryToRowUncached("SELECT user_agent FROM uo_api_receipt WHERE api_token=$tokenId");
+                $this->assertIsArray($receipt, 'the receipt stays with the game');
+                $this->assertNull($receipt['user_agent']);
+            }
         } finally {
+            DBQuery("DELETE FROM uo_api_receipt WHERE api_token=$tokenId");
+            DBQuery("DELETE FROM uo_api_token WHERE scope_type='user' AND scope_id='privacy_del_test'");
             DBQuery("DELETE FROM uo_users WHERE userid='privacy_del_test'");
             DBQuery("DELETE FROM uo_event_log WHERE source='privacy'");
         }

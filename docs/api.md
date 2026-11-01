@@ -6,8 +6,26 @@ The baseline fixture marks `HRN2026` API-public and seeds the token `harness-api
 
 Covered: `GET /api/v1/openapi`; `401` for missing and invalid tokens; `events`, `teams`, `divisions`, and `games` for `event=HRN2026`; `gameplay?game=700`; plus season-scoped token, pool visibility, hidden-time, and spirit-visibility rules.
 
+The scorekeeping app API cases (`ScorekeepingApi*Test`, base class `tests/Support/ScorekeepingApiTestCase.php`) drive discovery, entry context and the complete upload over HTTP with their own app tokens (ids 910-914) and scorekeeping links (920-923). They move games 700 and 701 and their reservations to today in the event timezone and restore everything in `tearDown()`. A case skips when the SUT's OpenAPI document does not list the endpoints, never on a 5xx. They cover the auth matrix, the entry-context shape, upload preconditions and validation, idempotent replay, history attribution, the forced snapshot (restored with history disabled) and failure handling: a `BEFORE INSERT` trigger on `uo_api_receipt` injects a failure after every write to prove data, history and receipt roll back together, and a trigger signalling error 1213 exercises the deadlock retry and the 503 `busy` answer. Those two cases skip if the database user cannot create triggers.
+
 ```sh
 ./test:api
 ```
 
 Output is `logs/api.log` and `junit/api.xml`. Failures are `phpunit_test_failure`, with an `API_FAILURE` payload when the response or the Apache log shows a PHP runtime error.
+
+## Fuzzing
+
+`tests/Api/ApiFuzzTest.php` fuzzes every operation listed in the SUT's `api/openapi.json` (one test per operation, so a new endpoint is picked up automatically). It builds requests from the request schemas, then mutates them: wrong types, `null`, boundary and huge numbers, unicode, long strings, missing and extra fields, deep nesting, invalid JSON, a wrong content type and broken credentials.
+
+Schema-only generation cannot satisfy rules such as "scorer on the side's roster", "score equals the stored score" or a fresh `If-Match`, so the write handlers would mostly answer 400/409. The fuzzer therefore also uses fixture-aware values (player and team ids, the live token, a valid upload document, the stored score) and resets the fixture every 10 requests to one of four starting states (empty, rostered, uploaded, rostered with a goal). Half of those valid bodies go out unmutated, and `DELETE goals/{num}` targets the last goal.
+
+The test also seeds a private event `PRIV2026` (not API public, not a public event; series 190, pool 290, teams 390/391, game 790, all named `Secretteam …`) and removes it afterwards; the hints send its ids as well, and any success response that mentions it fails as a leak, since no fixture credential may read it.
+
+Per response it asserts: no 5xx (a `503 busy` is allowed), no leaked PHP diagnostics, a JSON object body, and the `Error` envelope on every 4xx. Responses that Apache generates itself (encoded slashes, oversized lines) skip the envelope check because the SUT never ran. Query parameters of the read endpoints get fixture-aware values (event, division, pool, team, game) mixed with near-misses. After every request it also asserts: a JSON body carries a JSON content type, a 405 carries `Allow`, a success only answers a path the OpenAPI document lists, and a success on a game route needs a valid app token and a link covering that game; and, for games 700 and 701, that a GET and any refused (4xx) request changed no stored state and that the goal numbers stay a gapless 1..n of players on the game roster.
+
+```sh
+UO_FUZZ_SEED=42 UO_FUZZ_ITERATIONS=400 UO_FUZZ_STATS=1 ./test:api --test-filter ApiFuzzTest
+```
+
+`UO_FUZZ_SEED` replays a run (a failure prints its seed, iteration and the full request); without it each run picks a new seed. `UO_FUZZ_ITERATIONS` is requests per operation, default 60. `UO_FUZZ_STATS=1` prints the status and error codes each operation received into `logs/api.log`: check it after changing the generator, since an operation whose writes never reach 200/201 is not being tested. Values and headers are capped at 2000 characters.

@@ -684,8 +684,16 @@ final class UserFunctionsLibTest extends TestCase
         $this->assertSame(1, $count);
         $row = DBQueryToRow("SELECT password FROM uo_users WHERE userid='testuser_create'");
         $this->assertTrue(verifyUserPassword('password123', $row['password']));
+        // Older SUTs leave a deleted user's app tokens behind.
+        $personalTokens = function_exists('ApiUserTokenRevoke');
+        DBQuery("INSERT INTO uo_api_token (token_hash, token_value, label, scope_type, scope_id)
+            VALUES (SHA2('testuser-create-token', 256), 'testuser-create-token', 'Scorekeeping app', 'user', 'testuser_create')");
         DeleteUser('testuser_create');
         $this->assertFalse(UserExists('testuser_create'));
+        if ($personalTokens) {
+            $this->assertSame(0, (int) DBQueryToValue("SELECT COUNT(*) FROM uo_api_token WHERE token_value='testuser-create-token'"));
+        }
+        DBQuery("DELETE FROM uo_api_token WHERE token_value='testuser-create-token'");
     }
 
     public function testCreateConfirmedUserWithNoEmail(): void
@@ -729,6 +737,8 @@ final class UserFunctionsLibTest extends TestCase
         DBQuery("INSERT INTO uo_scoresheet_history (game, user_id, ip, source, target, action, detail)
             VALUES (700, 'testuser_ren', '', 'user', 'result', 'update', '{}')");
         DBQuery("INSERT INTO uo_event_log (user_id, category, type, id1) VALUES ('testuser_ren', 'test', 'rename', '1')");
+        DBQuery("INSERT INTO uo_api_token (token_hash, token_value, label, scope_type, scope_id)
+            VALUES (SHA2('testuser-ren-token', 256), 'testuser-ren-token', 'Scorekeeping app', 'user', 'testuser_ren')");
         try {
             $id = (int) DBQueryToValue("SELECT id FROM uo_users WHERE userid='testuser_ren'");
             UserUpdateInfo($id, 'testuser_ren', 'testuser_ren2', 'Rename');
@@ -742,7 +752,13 @@ final class UserFunctionsLibTest extends TestCase
             $this->assertSame(1, (int) DBQueryToValue(
                 "SELECT COUNT(*) FROM uo_event_log WHERE user_id='testuser_ren2'",
             ));
+            if (function_exists('ApiUserTokenRevoke')) {
+                $this->assertSame(1, (int) DBQueryToValue(
+                    "SELECT COUNT(*) FROM uo_api_token WHERE scope_type='user' AND scope_id='testuser_ren2'",
+                ), 'the app token follows the login');
+            }
         } finally {
+            DBQuery("DELETE FROM uo_api_token WHERE token_value='testuser-ren-token'");
             DBQuery("DELETE FROM uo_scoresheet_history WHERE user_id IN ('testuser_ren', 'testuser_ren2')");
             DBQuery("DELETE FROM uo_event_log WHERE user_id IN ('testuser_ren', 'testuser_ren2')");
             DBQuery("DELETE FROM uo_userproperties WHERE userid IN ('testuser_ren', 'testuser_ren2')");

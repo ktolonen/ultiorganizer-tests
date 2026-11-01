@@ -1,4 +1,9 @@
 {
   "_comment": "PHP log lines the gate tolerates. Each entry is a regex matched against one log line plus the reason it is tolerated. Fix in the SUT, then delete the entry. Matches are listed in the summary as known, never silently dropped.",
-  "known": []
+  "known": [
+    {
+      "pattern": "PHP Fatal error:  Allowed memory size of \\d+ bytes exhausted \\(tried to allocate \\d+ bytes\\) in \\S+/sut/lib/database\\.php on line \\d+$",
+      "reason": "Deliberate and permanent, not a SUT bug: ScorekeepingApiLiveTest::testAFatalErrorAnswersJsonAndRollsBack exhausts memory in the database fetch loop to prove the scorekeeping API backstop answers a fatal error with a JSON 500 and rolls back."
+    }
+  ]
 }
