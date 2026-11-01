@@ -876,10 +876,10 @@ final class DatabaseLibTest extends TestCase
     public function testUpgradeFrom103AddsTheColumnAndTableOnce(): void
     {
         $this->requireVersion104();
-        DBQuery("DELETE FROM uo_event_log WHERE category='database' AND type='change' AND id1='104'");
+        DBQuery("DELETE FROM uo_event_log WHERE category='database' AND type='change' AND CAST(id1 AS UNSIGNED) >= 104");
         DBQuery("DROP TABLE uo_api_receipt");
         DBQuery("ALTER TABLE uo_scoresheet_history DROP COLUMN api_token");
-        DBQuery("DELETE FROM uo_database WHERE version=104");
+        DBQuery("DELETE FROM uo_database WHERE version >= 104");
         try {
             $this->assertSame(103, getDBVersion(), 'precondition: the schema is at 103');
             $this->assertFalse($this->hasApiHistoryColumn());
@@ -887,23 +887,62 @@ final class DatabaseLibTest extends TestCase
 
             CheckDB();
 
-            $this->assertSame(104, getDBVersion());
+            $this->assertSame(DB_VERSION, getDBVersion());
             $this->assertTrue($this->hasApiHistoryColumn());
             $this->assertTrue($this->hasApiReceiptTable());
             $this->assertSame('ascii_bin', $this->receiptKeyCollation());
 
             // Contrast: the step is rerun safe once its record is gone again.
-            DBQuery("DELETE FROM uo_database WHERE version=104");
+            DBQuery("DELETE FROM uo_database WHERE version >= 104");
             CheckDB();
-            $this->assertSame(104, getDBVersion());
+            $this->assertSame(DB_VERSION, getDBVersion());
             $this->assertTrue($this->hasApiHistoryColumn());
             $this->assertTrue($this->hasApiReceiptTable());
         } finally {
-            if (!$this->hasApiHistoryColumn() || !$this->hasApiReceiptTable() || getDBVersion() < 104) {
-                DBQuery("DELETE FROM uo_database WHERE version=104");
+            if (!$this->hasApiHistoryColumn() || !$this->hasApiReceiptTable() || getDBVersion() < DB_VERSION) {
+                DBQuery("DELETE FROM uo_database WHERE version >= 104");
                 CheckDB();
             }
-            DBQuery("DELETE FROM uo_event_log WHERE category='database' AND type='change' AND id1='104'");
+            DBQuery("DELETE FROM uo_event_log WHERE category='database' AND type='change' AND CAST(id1 AS UNSIGNED) >= 104");
+        }
+    }
+
+    private function hasReceiptUserAgentColumn(): bool
+    {
+        return (int) DBQueryToValueUncached(
+            "SELECT COUNT(*) FROM information_schema.COLUMNS
+             WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='uo_api_receipt' AND COLUMN_NAME='user_agent'"
+        ) === 1;
+    }
+
+    public function testUpgradeFrom104AddsTheReceiptUserAgentOnce(): void
+    {
+        if (!defined('DB_VERSION') || constant('DB_VERSION') < 105) {
+            $this->markTestSkipped('The SUT is older than DB version 105.');
+        }
+        DBQuery("DELETE FROM uo_event_log WHERE category='database' AND type='change' AND CAST(id1 AS UNSIGNED) >= 105");
+        DBQuery("ALTER TABLE uo_api_receipt DROP COLUMN user_agent");
+        DBQuery("DELETE FROM uo_database WHERE version >= 105");
+        try {
+            $this->assertSame(104, getDBVersion(), 'precondition: the schema is at 104');
+            $this->assertFalse($this->hasReceiptUserAgentColumn());
+
+            CheckDB();
+
+            $this->assertSame(DB_VERSION, getDBVersion());
+            $this->assertTrue($this->hasReceiptUserAgentColumn());
+
+            // Contrast: the step is rerun safe once its record is gone again.
+            DBQuery("DELETE FROM uo_database WHERE version >= 105");
+            CheckDB();
+            $this->assertSame(DB_VERSION, getDBVersion());
+            $this->assertTrue($this->hasReceiptUserAgentColumn());
+        } finally {
+            if (!$this->hasReceiptUserAgentColumn() || getDBVersion() < DB_VERSION) {
+                DBQuery("DELETE FROM uo_database WHERE version >= 105");
+                CheckDB();
+            }
+            DBQuery("DELETE FROM uo_event_log WHERE category='database' AND type='change' AND CAST(id1 AS UNSIGNED) >= 105");
         }
     }
 
