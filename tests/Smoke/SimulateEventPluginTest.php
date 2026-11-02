@@ -180,7 +180,11 @@ final class SimulateEventPluginTest extends TestCase
         $this->assertSame(1, preg_match('/Event <a [^>]*>(SIM\d{3})<\/a> created\./', $body, $m));
         $season = $m[1];
 
-        [, $deleted] = $this->post(['delete' => '1', 'deleteSeason' => $season]);
+        [, $unsigned] = $this->post(['delete' => '1', 'deleteSeason' => $season]);
+        $this->assertStringContainsString('This form was already submitted.', $unsigned);
+        $this->assertSame('1', self::scalar("SELECT COUNT(*) FROM uo_season WHERE season_id='$season'"), 'no token, no delete');
+
+        [, $deleted] = $this->post(['delete' => '1', 'deleteSeason' => $season, 'token' => $this->formToken()]);
 
         $this->assertStringContainsString("Event $season deleted.", $deleted);
         $this->assertSame('0', self::scalar("SELECT COUNT(*) FROM uo_season WHERE season_id='$season'"));
@@ -192,7 +196,7 @@ final class SimulateEventPluginTest extends TestCase
 
     public function testDeleteRefusesAnEventThatIsNotSimulated(): void
     {
-        [, $body] = $this->post(['delete' => '1', 'deleteSeason' => 'HRN2026']);
+        [, $body] = $this->post(['delete' => '1', 'deleteSeason' => 'HRN2026', 'token' => $this->formToken()]);
 
         $this->assertStringContainsString('Event could not be deleted.', $body);
         $this->assertSame('1', self::scalar("SELECT COUNT(*) FROM uo_season WHERE season_id='HRN2026'"));
@@ -201,7 +205,7 @@ final class SimulateEventPluginTest extends TestCase
 
     public function testDeleteOfAnUnknownSimulatedIdReportsFailure(): void
     {
-        [, $body] = $this->post(['delete' => '1', 'deleteSeason' => 'SIM999']);
+        [, $body] = $this->post(['delete' => '1', 'deleteSeason' => 'SIM999', 'token' => $this->formToken()]);
 
         $this->assertStringContainsString('Event could not be deleted.', $body);
         $this->assertStringNotContainsString('Event SIM999 deleted.', $body);
