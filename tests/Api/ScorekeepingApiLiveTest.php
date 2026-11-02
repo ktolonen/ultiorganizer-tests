@@ -206,15 +206,17 @@ final class ScorekeepingApiLiveTest extends ScorekeepingApiTestCase
         $this->assertSame(['1', '2'], array_column(DBQueryToArrayUncached("SELECT time FROM uo_goal WHERE game=701 ORDER BY num"), 'time'));
     }
 
-    public function testAFinalGameRefusesGoalsAndScoreTaps(): void
+    public function testAFinalGameRefusesGoalsScoreTapsAndGoalDeletes(): void
     {
         self::seedRoster();
-        DBQuery("UPDATE uo_game SET homescore=3, visitorscore=2, hasstarted=2, isongoing=0 WHERE game_id=701");
+        $this->assertSame(201, self::live('POST', 'goals', self::goal('home', 803, 802, 60), 'g1')['status']);
+        DBQuery("UPDATE uo_game SET homescore=1, visitorscore=0, hasstarted=2, isongoing=0 WHERE game_id=701");
         $before = self::stored();
 
         self::assertError(self::live('POST', 'goals', self::goal('home', 803, 802, 60)), 409, 'game_final');
         self::assertError(self::live('POST', 'score-taps', ['side' => 'home', 'delta' => 1], 'live-2'), 409, 'game_final');
-        $this->assertSame($before, self::stored());
+        self::assertError(self::live('DELETE', 'goals/1', null, 'live-3'), 409, 'game_final');
+        $this->assertSame($before, self::stored(), 'the goal and the final result are kept');
     }
 
     public function testGoalKeepsAHigherTappedScore(): void
