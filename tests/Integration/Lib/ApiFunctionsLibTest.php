@@ -204,6 +204,30 @@ final class ApiFunctionsLibTest extends TestCase
         $this->assertNotContains($tokenId, $ids);
     }
 
+    public function testApiTokenDeleteClearsTheUserAgentOfAUserTokensReceipts(): void
+    {
+        $this->requirePersonalTokens();
+        $user = (int) ApiTokenCreate('delete-user-token', 'user', 'harness_app_user')['token_id'];
+        $season = (int) ApiTokenCreate('delete-season-token', 'season', 'HRN2026')['token_id'];
+        foreach ([$user, $season] as $tokenId) {
+            DBQuery(sprintf("INSERT INTO uo_api_receipt (api_token, scorekeeper_token, game, idempotency_key, method, path, request_hash, status, response, user_agent)
+                VALUES (%d, 1, 700, 'delete-token', 'POST', '/goals', REPEAT('0', 64), 201, '{}', 'UltiorganizerApp/1.0 (delete)')", $tokenId));
+        }
+        $agent = static fn(int $tokenId) => DBQueryToRowUncached("SELECT user_agent FROM uo_api_receipt WHERE api_token=$tokenId");
+        try {
+            ApiTokenDelete($user);
+            ApiTokenDelete($season);
+
+            $this->assertIsArray($agent($user), 'the receipt stays with the game');
+            $this->assertNull($agent($user)['user_agent'], 'nothing ties it to the user any more');
+            // Contrast: an event token's receipts name no registered user.
+            $this->assertSame('UltiorganizerApp/1.0 (delete)', $agent($season)['user_agent']);
+        } finally {
+            DBQuery("DELETE FROM uo_api_receipt WHERE api_token IN ($user, $season)");
+            DBQuery("DELETE FROM uo_api_token WHERE token_id IN ($user, $season)");
+        }
+    }
+
     // --- ApiTokenSetRevoked ---
 
     public function testApiTokenSetRevokedAndUnrevoked(): void
