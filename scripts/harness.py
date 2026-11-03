@@ -1653,8 +1653,10 @@ def cmd_lib_test_coverage(args: argparse.Namespace) -> int:
     payload = run_case(
         case_id=args.case_id,
         sut_path=args.sut_path,
-        suites=entry["test_suite"],
-        test_filter=entry["test_class"],
+        # --suite-wide counts what every unit and integration test reaches in the
+        # file, not only its own test class.
+        suites="unit,integration" if args.suite_wide else entry["test_suite"],
+        test_filter=None if args.suite_wide else entry["test_class"],
         run_label=args.run_label,
         context_label=args.context_label,
         pr_number=args.pr_number,
@@ -1777,6 +1779,11 @@ def build_parser() -> argparse.ArgumentParser:
     lib_coverage = subparsers.add_parser("lib-test-coverage")
     add_common_case_args(lib_coverage)
     lib_coverage.add_argument("--lib-file", required=True)
+    lib_coverage.add_argument(
+        "--suite-wide",
+        action="store_true",
+        help="run all unit and integration tests instead of only the file's own test class",
+    )
     lib_coverage.set_defaults(func=cmd_lib_test_coverage)
 
     return parser

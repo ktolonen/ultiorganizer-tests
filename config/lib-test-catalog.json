@@ -119,9 +119,10 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "90.0% line / 100% fn. Remaining ~10% is unreachable in-process: GetURLBase fallback (BASEURL is always defined), ordinal() NumberFormatter branch (php-intl absent; the hand-written English table is asserted exactly), GetString body (filter_input returns null in CLI), polyfill blocks (parse_ini_string, array_combine, str_split, stripos), convertToUtf8 iconv fallbacks (mb_convert_encoding always yields valid UTF-8), and the die() branches. SafeRedirectUrl, ValidStyleSheet, ValidCsvEncoding and ValidCsvSeparator are covered by value assertions.",
+      "triage_notes": "92.7% line suite-wide / 100% fn; 95% is not reachable in-process. ~26 lines are PHP 5 polyfills guarded by !function_exists (str_split, stripos, parse_ini_string, array_combine) that can never run on PHP 8; ~13 are the iconv fallbacks of convertToUtf8 (mb_convert_encoding always yields valid UTF-8); the rest is the ordinal() NumberFormatter branch (php-intl absent), the GetString body (filter_input returns null in the CLI), WeekdayString's default case (date('w') is always 0-6) and die() branches. GetURLBase's request-built fallback IS covered, by separate-process tests in ExtendedCommonFunctionsLibTest. Dropping the dead polyfills from the SUT would lift the file above 95%. SafeRedirectUrl, ValidStyleSheet, ValidCsvEncoding and ValidCsvSeparator are covered by value assertions.",
       "notes": "Stable utility-heavy target for the first pure-helper checkpoint.",
-      "sut_path": "/home/kari/dev/ultiorganizer/lib/common.functions.php"
+      "sut_path": "/home/kari/dev/ultiorganizer/lib/common.functions.php",
+      "line_target": 95
     },
     {
       "lib_file": "configuration.functions.php",
@@ -231,9 +232,10 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "Meets ≥80% line and 100% fn targets. Tests cover game scoring, state transitions, and result queries.",
+      "triage_notes": "Meets ≥80% line and 100% fn targets. Tests cover game scoring, state transitions, and result queries. | GameChangeName's update branch is dead code: it tests $gameinfo['name'], which GameInfo() does not return (it returns 'gamename'), so every call inserts a new uo_scheduling_name row. It has no callers outside lib/. Not tested, to avoid pinning the bug.",
       "notes": "",
-      "sut_path": "/home/kari/dev/ultiorganizer/lib/game.functions.php"
+      "sut_path": "/home/kari/dev/ultiorganizer/lib/game.functions.php",
+      "line_target": 95
     },
     {
       "lib_file": "image.functions.php",
@@ -393,7 +395,8 @@
       "triage_status": "triaged",
       "triage_notes": "Meets ≥80% line and 100% fn targets. Tests cover pool creation, standings, and game scheduling queries.",
       "notes": "",
-      "sut_path": "/home/kari/dev/ultiorganizer/lib/pool.functions.php"
+      "sut_path": "/home/kari/dev/ultiorganizer/lib/pool.functions.php",
+      "line_target": 95
     },
     {
       "lib_file": "privacy.functions.php",
@@ -455,9 +458,10 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "Tests skip when the SUT lacks the file or DB version 104. Cover the game lock, the upload token (stability, goal append, no-op and timer-only writes) and the playoff finalize inside an outer transaction.",
+      "triage_notes": "98.7% line / 100% fn (own test class). Remaining: the 403 'forbidden' guard in ScorekeepingApiWrite (an actor whose link covers the game always holds the edit rights, so it is a race-only defence), the duplicate-number retry in ScorekeeperAddGoal (needs two concurrent connections), and the deadlock retry fall-through. Tests skip when the SUT lacks the file or DB version 104.",
       "notes": "",
-      "sut_path": "/home/kari/dev/ultiorganizer/lib/scorekeepingapi.functions.php"
+      "sut_path": "/home/kari/dev/ultiorganizer/lib/scorekeepingapi.functions.php",
+      "line_target": 95
     },
     {
       "lib_file": "scoresheethistory.functions.php",
@@ -503,9 +507,10 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "86.9% line / 100% fn - ceiling. RequestSeasonsFromView / MaintenanceSeasonFromView parameter branches read filter_input() (null in CLI), the Enforce*/Require* wrappers end in exit(), UploadSeasonBanner needs is_uploaded_file(), and the die() guards. Covered: CanAccessSeason with scoped roles, FilterAccessibleSeasons, AccessibleSeasonIdListSql, duplicate-id AddSeason.",
+      "triage_notes": "86.9% line / 100% fn - ceiling. RequestSeasonsFromView / MaintenanceSeasonFromView parameter branches read filter_input() (null in CLI), the Enforce*/Require* wrappers end in exit(), UploadSeasonBanner needs is_uploaded_file(), and the die() guards. Covered: CanAccessSeason with scoped roles, FilterAccessibleSeasons, AccessibleSeasonIdListSql, duplicate-id AddSeason. Now 88.0% line suite-wide; 95% is not reachable in-process. ~31 lines are UploadSeasonBanner behind is_uploaded_file(), which is false for every file outside a real HTTP upload; ~25 are RequestSeasonsFromView, which reads the request through iget() -> filter_input() (null in the CLI); ~11 are RequireSeasonPublicExternal / EnforceSoftMaintenanceForView / EnforcePrivateEventAccessForView, which end the request; the rest are die() branches. The AddSeason duplicate-key race and the DeleteSeasonWithData rollback are covered with MariaDB triggers. Reaching 95% needs SUT seams (an injectable upload check and a request-parameter accessor that reads $_GET).",
       "notes": "Feasible read-only target; keep first-pass coverage on deterministic season, pool, and reservation reads.",
-      "sut_path": "/home/kari/dev/ultiorganizer/lib/season.functions.php"
+      "sut_path": "/home/kari/dev/ultiorganizer/lib/season.functions.php",
+      "line_target": 95
     },
     {
       "lib_file": "seasonpoints.functions.php",
@@ -633,7 +638,8 @@
       "triage_status": "triaged",
       "triage_notes": "84.5% line / 100% fn achieved (up from 69.6%). Remaining ~16%: TeamMove body (88 lines, requires playoff pool move config not in fixture); die() branches in TeamCopyRoster/AddTeamProfileUrl/RemoveTeamProfileUrl/SetTeam/SetTeamName/SetTeamOwner. All functions now covered.",
       "notes": "Mixed legacy-heavy pilot target; keep first-pass assertions on stable fixture reads instead of mutation-heavy branches.",
-      "sut_path": "/home/kari/dev/ultiorganizer/lib/team.functions.php"
+      "sut_path": "/home/kari/dev/ultiorganizer/lib/team.functions.php",
+      "line_target": 95
     },
     {
       "lib_file": "timekeeper.functions.php",

@@ -1879,4 +1879,245 @@ final class PoolFunctionsLibTest extends TestCase
             DBQuery("DELETE FROM uo_pool WHERE pool_id=$followerPoolId");
         }
     }
+
+    // ---- GeneratePlayoffPools: persisted trees, special moves, pseudo teams ----
+
+    /** Pools reachable through the follower chain, to clean up after a generating test. */
+    private function followerChain(int $poolId): array
+    {
+        $ids = [];
+        $next = (int) DBQueryToValueUncached("SELECT follower FROM uo_pool WHERE pool_id=$poolId");
+        while ($next > 0 && !in_array($next, $ids, true)) {
+            $ids[] = $next;
+            $next = (int) DBQueryToValueUncached("SELECT follower FROM uo_pool WHERE pool_id=$next");
+        }
+        return $ids;
+    }
+
+    private function dropPlayoffTree(int $poolId, array $chain): void
+    {
+        $all = implode(',', array_merge([$poolId], $chain));
+        $names = DBQueryToArrayUncached("SELECT scheduling_id FROM uo_moveteams WHERE frompool IN ($all) AND scheduling_id IS NOT NULL");
+        $ranks = DBQueryToArrayUncached("SELECT scheduling_id FROM uo_specialranking WHERE frompool IN ($all)");
+        DBQuery("DELETE FROM uo_specialranking WHERE frompool IN ($all)");
+        DBQuery("DELETE FROM uo_moveteams WHERE frompool IN ($all) OR topool IN ($all)");
+        $schedulingIds = array_merge(array_column($names, 'scheduling_id'), array_column($ranks, 'scheduling_id'));
+        if ($schedulingIds !== []) {
+            DBQuery('DELETE FROM uo_scheduling_name WHERE scheduling_id IN (' . implode(',', array_map('intval', $schedulingIds)) . ')');
+        }
+        DBQuery("UPDATE uo_pool SET follower=NULL WHERE pool_id IN ($all)");
+        DBQuery("DELETE FROM uo_team_pool WHERE pool IN ($all)");
+        DBQuery("DELETE FROM uo_pool WHERE pool_id IN ($all)");
+    }
+
+    /** Fills a temp playoff pool with $count real teams: 300, 301 and fresh ones. */
+    private function playoffPoolWithTeams(int $count): int
+    {
+        $poolId = $this->createTempPool(2);
+        DBQuery("INSERT INTO uo_team_pool (team, pool, rank, activerank) VALUES (300, $poolId, 1, 1), (301, $poolId, 2, 2)");
+        for ($rank = 3; $rank <= $count; $rank++) {
+            DBQuery("INSERT INTO uo_team (name, valid, series) VALUES ('PO$rank', 1, 100)");
+            $teamId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+            $this->createdTeamIds[] = $teamId;
+            DBQuery("INSERT INTO uo_team_pool (team, pool, rank, activerank) VALUES ($teamId, $poolId, $rank, $rank)");
+        }
+        return $poolId;
+    }
+
+    /** @return array<int, array{0:int,1:int,2:string}> from placing, to rank, move name */
+    private function movesOf(int $poolId): array
+    {
+        $rows = DBQueryToArrayUncached(
+            "SELECT m.fromplacing, m.torank, n.name FROM uo_moveteams m
+                INNER JOIN uo_scheduling_name n ON (n.scheduling_id=m.scheduling_id)
+                WHERE m.frompool=$poolId ORDER BY m.fromplacing",
+        );
+        return array_map(static fn(array $r) => [(int) $r['fromplacing'], (int) $r['torank'], $r['name']], $rows);
+    }
+
+    public function testGeneratePlayoffPoolsPersistsTheStandardTreeForEightTeams(): void
+    {
+        $poolId = $this->playoffPoolWithTeams(8);
+        $chain = [];
+        try {
+            $pools = GeneratePlayoffPools($poolId, true);
+
+            $chain = $this->followerChain($poolId);
+            $this->assertCount(2, $pools);
+            $this->assertSame(['TempPool Semifinals', 'TempPool Finals'], array_column($pools, 'name'));
+            $this->assertSame(array_map('intval', array_column($pools, 'pool_id')), $chain, 'the pools follow each other from the master pool');
+            $this->assertSame(
+                [[1, 1, 'QF Winner 1'], [2, 5, 'QF Loser 1'], [3, 2, 'QF Winner 2'], [4, 6, 'QF Loser 2'], [5, 3, 'QF Winner 3'], [6, 7, 'QF Loser 3'], [7, 4, 'QF Winner 4'], [8, 8, 'QF Loser 4']],
+                $this->movesOf($poolId),
+            );
+            $this->assertSame(
+                [[1, 1, 'SF Winner 1'], [2, 3, 'SF Loser 1'], [3, 2, 'SF Winner 2'], [4, 4, 'SF Loser 2'], [5, 5, 'SF Winner 3'], [6, 7, 'SF Loser 3'], [7, 6, 'SF Winner 4'], [8, 8, 'SF Loser 4']],
+                $this->movesOf($chain[0]),
+            );
+            $this->assertSame(['0', '1'], [DBQueryToValueUncached("SELECT placementpool FROM uo_pool WHERE pool_id={$chain[0]}"), DBQueryToValueUncached("SELECT placementpool FROM uo_pool WHERE pool_id={$chain[1]}")], 'only the last pool is a placement pool');
+            $this->assertSame(0, (int) DBQueryToValueUncached("SELECT COUNT(*) FROM uo_specialranking WHERE frompool IN ({$chain[0]}, {$chain[1]})"), 'the standard tree has no special ranking');
+            $this->assertSame(['0', '0'], [DBQueryToValueUncached("SELECT visible FROM uo_pool WHERE pool_id={$chain[0]}"), DBQueryToValueUncached("SELECT visible FROM uo_pool WHERE pool_id={$chain[1]}")], 'the master pool is hidden, so are its followers');
+
+            // Generating again follows the existing chain instead of creating more pools.
+            $again = GeneratePlayoffPools($poolId, true);
+            $this->assertSame($chain, array_map('intval', array_column($again, 'pool_id')));
+        } finally {
+            $this->dropPlayoffTree($poolId, $chain ?: $this->followerChain($poolId));
+        }
+    }
+
+    public function testGeneratePlayoffPoolsFollowsTheLayoutMovesAndAddsSpecialRankingForFourTeams(): void
+    {
+        $poolId = $this->playoffPoolWithTeams(4);
+        DBQuery("UPDATE uo_pool SET visible=1 WHERE pool_id=$poolId");
+        $chain = [];
+        try {
+            $pools = GeneratePlayoffPools($poolId, true);
+            $chain = $this->followerChain($poolId);
+
+            $this->assertSame(['TempPool Finals'], array_column($pools, 'name'));
+            // Layout 4_teams_2_rounds: "1 3 2 4" moves the winners first, then the losers.
+            $this->assertSame(
+                [[1, 1, 'SF Winner 1'], [2, 3, 'SF Loser 1'], [3, 2, 'SF Winner 2'], [4, 4, 'SF Loser 2']],
+                $this->movesOf($poolId),
+            );
+            $this->assertSame('1', DBQueryToValueUncached("SELECT visible FROM uo_pool WHERE pool_id={$chain[0]}"), 'a visible master makes the follower visible');
+            $this->assertSame('1', DBQueryToValueUncached("SELECT placementpool FROM uo_pool WHERE pool_id={$chain[0]}"));
+            $rules = DBQueryToArrayUncached("SELECT r.fromplacing, r.torank, n.name FROM uo_specialranking r INNER JOIN uo_scheduling_name n ON (n.scheduling_id=r.scheduling_id) WHERE r.frompool={$chain[0]} ORDER BY r.torank");
+            $this->assertSame(
+                [['1', '1', ' Rank 1'], ['2', '2', ' Rank 2'], ['3', '3', ' Rank 3'], ['4', '4', ' Rank 4']],
+                array_map('array_values', $rules),
+            );
+        } finally {
+            $this->dropPlayoffTree($poolId, $chain ?: $this->followerChain($poolId));
+        }
+    }
+
+    public function testGeneratePlayoffPoolsAddsTheExtraMoveForAnOddTeamCount(): void
+    {
+        $poolId = $this->playoffPoolWithTeams(5);
+        $chain = [];
+        try {
+            GeneratePlayoffPools($poolId, true);
+            $chain = $this->followerChain($poolId);
+
+            $this->assertCount(1, $chain);
+            $this->assertSame(
+                [[1, 1, 'SF Winner 1'], [2, 3, 'SF Loser 1'], [3, 2, 'SF Winner 2'], [4, 4, 'SF Loser 2'], [5, 5, 'SF Team 4']],
+                $this->movesOf($poolId),
+                'the fifth team carries over to the next round',
+            );
+        } finally {
+            $this->dropPlayoffTree($poolId, $chain ?: $this->followerChain($poolId));
+        }
+    }
+
+    /** A playoff pool fed only by pseudo teams: moves from a source pool, no real teams yet. */
+    private function pseudoTeamPool(int $count): array
+    {
+        $source = $this->createTempPool(1);
+        $target = $this->createTempPool(2);
+        $schedulingIds = [];
+        for ($rank = 1; $rank <= $count; $rank++) {
+            DBQuery("INSERT INTO uo_scheduling_name (name) VALUES ('Seed $rank')");
+            $schedulingId = (int) DBQueryToValue("SELECT LAST_INSERT_ID()");
+            $schedulingIds[] = $schedulingId;
+            DBQuery("INSERT INTO uo_moveteams (frompool, fromplacing, topool, torank, ismoved, scheduling_id) VALUES ($source, $rank, $target, $rank, 0, $schedulingId)");
+        }
+        return [$source, $target, $schedulingIds];
+    }
+
+    private function dropPseudoTeamPools(int $source, int $target, array $schedulingIds): void
+    {
+        DBQuery("DELETE FROM uo_moveteams WHERE frompool IN ($source, $target)");
+        if ($schedulingIds !== []) {
+            DBQuery('DELETE FROM uo_scheduling_name WHERE scheduling_id IN (' . implode(',', $schedulingIds) . ')');
+        }
+        DBQuery("DELETE FROM uo_pool WHERE pool_id IN ($source, $target)");
+    }
+
+    public function testGeneratePlayoffPoolsNamesTheRoundsOfPseudoTeamPools(): void
+    {
+        foreach ([
+            6 => ['TempPool Semifinals', 'TempPool Finals'],
+            16 => ['TempPool Quarterfinals', 'TempPool Semifinals', 'TempPool Finals'],
+            32 => ['TempPool Round 2', 'TempPool Quarterfinals', 'TempPool Semifinals', 'TempPool Finals'],
+        ] as $teams => $names) {
+            [$source, $target, $schedulingIds] = $this->pseudoTeamPool($teams);
+            try {
+                $pools = GeneratePlayoffPools($target, false);
+                $this->assertSame($names, array_column($pools, 'name'), "$teams pseudo teams");
+                $this->assertSame(0, (int) DBQueryToValue("SELECT COUNT(*) FROM uo_pool WHERE name LIKE 'TempPool %'"), 'a dry run creates nothing');
+            } finally {
+                $this->dropPseudoTeamPools($source, $target, $schedulingIds);
+            }
+        }
+    }
+
+    // ---- Games that move with their teams, and placement names ----
+
+    private function movePool(string $name, int $placement = 0, string $ordering = '99'): int
+    {
+        $poolId = $this->createTempPool(2);
+        DBQuery("UPDATE uo_pool SET name='$name', placementpool=$placement, ordering='$ordering' WHERE pool_id=$poolId");
+        return $poolId;
+    }
+
+    public function testGamesMoveWithTheirTeamsAccordingToTheMoveRule(): void
+    {
+        // Pool 200: team 300 beat 301 in game 700 and is first; game 701 is unplayed between the same two.
+        $target = $this->movePool('GM_Target');
+        DBQuery("INSERT INTO uo_moveteams (frompool, fromplacing, topool, torank, ismoved) VALUES (200, 1, $target, 1, 0), (200, 2, $target, 2, 0), (200, 9, $target, 3, 0)");
+        try {
+            $this->assertSame([700, 701], array_map('intval', PoolGetGamesToMove($target, 0)), 'all games of every moving team, each once');
+            $this->assertSame([], array_map('intval', PoolGetGamesToMove($target, 1)), 'nothing moves');
+            $this->assertSame([700, 701], array_map('intval', PoolGetGamesToMove($target, 2)), 'mutual games between the moving teams');
+
+            DBQuery("DELETE FROM uo_moveteams WHERE topool=$target AND fromplacing=2");
+            $this->assertSame([700, 701], array_map('intval', PoolGetGamesToMove($target, 0)), 'one team still brings its games');
+            $this->assertSame([], array_map('intval', PoolGetGamesToMove($target, 2)), 'a lone team has no mutual game');
+        } finally {
+            DBQuery("DELETE FROM uo_moveteams WHERE topool=$target");
+            DBQuery("DELETE FROM uo_pool WHERE pool_id=$target");
+        }
+    }
+
+    public function testPlacementNamesCountTheTeamsOfEarlierPlacementPools(): void
+    {
+        $first = $this->movePool('PP_First', 1, 'PP1');
+        $second = $this->movePool('PP_Second', 1, 'PP2');
+        $other = $this->movePool('PP_Other');
+        DBQuery("INSERT INTO uo_moveteams (frompool, fromplacing, topool, torank, ismoved) VALUES
+            ($other, 1, $first, 1, 0), ($other, 2, $first, 2, 0),
+            ($other, 3, $second, 1, 0), ($other, 4, $second, 2, 0), ($other, 5, $second, 3, 0)");
+        try {
+            $this->assertSame('Gold', PoolPlacementString($first, 1));
+            $this->assertSame('Silver', PoolPlacementString($first, 2));
+            $this->assertSame('Bronze', PoolPlacementString($second, 1), 'after the two teams of the first pool');
+            $this->assertSame('4th', PoolPlacementString($second, 2));
+            $this->assertSame('5th', PoolPlacementString($second, 3));
+            $this->assertSame(5, PoolPlacementString($second, 3, false), 'the plain number');
+            $this->assertSame('', PoolPlacementString(200, 1), 'a pool that is not a placement pool has no name');
+
+            // A team of the first pool that moves on to another pool does not take a placement.
+            DBQuery("INSERT INTO uo_moveteams (frompool, fromplacing, topool, torank, ismoved) VALUES ($first, 2, $other, 1, 0)");
+            CacheForgetNamespace('pool_moved_placings');
+            $this->assertSame('Silver', PoolPlacementString($second, 1));
+            $this->assertSame('4th', PoolPlacementString($second, 3), 'one earlier placing fewer');
+        } finally {
+            DBQuery("DELETE FROM uo_moveteams WHERE topool IN ($first, $second, $other) OR frompool IN ($first, $second, $other)");
+            CacheForgetNamespace('pool_moved_placings');
+            DBQuery("DELETE FROM uo_pool WHERE pool_id IN ($first, $second, $other)");
+        }
+    }
+
+    public function testPickedPoolColorsAreValidPaletteEntries(): void
+    {
+        $plain = PoolPickColor(100, 200);
+        $random = PoolPickColor(100, 200, true);
+        $this->assertMatchesRegularExpression('/^[0-9A-F]{6}$/', $plain);
+        $this->assertMatchesRegularExpression('/^[0-9A-F]{6}$/', $random);
+        $this->assertContains($random, PoolColors());
+        $this->assertContains($plain, PoolColors());
+    }
 }

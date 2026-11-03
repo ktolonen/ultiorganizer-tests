@@ -1486,4 +1486,73 @@ final class SeasonFunctionsLibTest extends TestCase
             $_SESSION = [];
         }
     }
+
+    // ---- Failure handling around the writes ----
+
+    public function testAddSeasonTreatsADuplicateKeyRaceAsFalseAndRethrowsOtherFailures(): void
+    {
+        LegacyApp::loadUserFunctions();
+        LegacyApp::loginAsAdmin();
+        $newId = 'TST' . substr(uniqid(), -7);
+        try {
+            // A concurrent insert that wins between SeasonExists() and the INSERT.
+            DBQuery("CREATE TRIGGER trg_season_race BEFORE INSERT ON uo_season FOR EACH ROW SIGNAL SQLSTATE '23000' SET MYSQL_ERRNO=1062, MESSAGE_TEXT='Duplicate entry'");
+            $this->assertFalse(AddSeason($newId, self::minimalSeasonParams('Raced')));
+            DBQuery("DROP TRIGGER trg_season_race");
+
+            DBQuery("CREATE TRIGGER trg_season_fail BEFORE INSERT ON uo_season FOR EACH ROW SIGNAL SQLSTATE '45000' SET MYSQL_ERRNO=1644, MESSAGE_TEXT='Disk on fire'");
+            try {
+                AddSeason($newId, self::minimalSeasonParams('Failing'));
+                $this->fail('another database failure must not be reported as a duplicate');
+            } catch (mysqli_sql_exception $e) {
+                $this->assertSame(1644, $e->getCode());
+            }
+            DBQuery("DROP TRIGGER trg_season_fail");
+
+            $this->assertFalse(SeasonExists($newId), 'nothing was stored');
+            $this->assertNotFalse(AddSeason($newId, self::minimalSeasonParams('Fine')), 'contrast: without the trigger it is stored');
+            $this->assertTrue(SeasonExists($newId));
+        } finally {
+            DBQuery("DROP TRIGGER IF EXISTS trg_season_race");
+            DBQuery("DROP TRIGGER IF EXISTS trg_season_fail");
+            DBQuery("DELETE FROM uo_season WHERE season_id='$newId'");
+            ClearSeasonRuntimeCache();
+            $_SESSION = [];
+        }
+    }
+
+    public function testDeleteSeasonWithDataRollsBackEverythingWhenAStatementFails(): void
+    {
+        LegacyApp::loadLibFilesUsingProfile(['statistical.functions.php'], 'database_only');
+        LegacyApp::loginAsAdmin();
+        DBQuery("INSERT INTO uo_season (season_id, name) VALUES ('SIMT02', 'Rollback test')");
+        DBQuery("INSERT INTO uo_series (series_id, season, name, valid) VALUES (99101, 'SIMT02', 'Open', 1)");
+        DBQuery("INSERT INTO uo_reservation (id, location, fieldname, reservationgroup, starttime, endtime, season) VALUES (99501, 400, '9', 'G', '2026-06-01 10:00:00', '2026-06-01 11:00:00', 'SIMT02')");
+        $before = DBShouldThrowExceptions();
+        try {
+            // The season row is the last thing deleted, so everything before it has to be undone.
+            DBQuery("CREATE TRIGGER trg_season_del BEFORE DELETE ON uo_season FOR EACH ROW SIGNAL SQLSTATE '45000' SET MYSQL_ERRNO=1644, MESSAGE_TEXT='Cannot delete'");
+            try {
+                DeleteSeasonWithData('SIMT02');
+                $this->fail('the failure must surface');
+            } catch (mysqli_sql_exception $e) {
+                $this->assertSame(1644, $e->getCode());
+            }
+            $this->assertSame($before, DBShouldThrowExceptions(), 'the exception mode is restored');
+            $this->assertSame(1, (int) DBQueryToValueUncached("SELECT COUNT(*) FROM uo_series WHERE series_id=99101"), 'the series is still there');
+            $this->assertSame(1, (int) DBQueryToValueUncached("SELECT COUNT(*) FROM uo_reservation WHERE id=99501"), 'the reservation is still there');
+            $this->assertSame(1, (int) DBQueryToValueUncached("SELECT COUNT(*) FROM uo_season WHERE season_id='SIMT02'"));
+
+            DBQuery("DROP TRIGGER trg_season_del");
+            $this->assertTrue(DeleteSeasonWithData('SIMT02'), 'contrast: without the trigger the delete goes through');
+            $this->assertSame(0, (int) DBQueryToValueUncached("SELECT COUNT(*) FROM uo_series WHERE series_id=99101"));
+        } finally {
+            DBQuery("DROP TRIGGER IF EXISTS trg_season_del");
+            DBQuery("DELETE FROM uo_reservation WHERE id=99501");
+            DBQuery("DELETE FROM uo_series WHERE series_id=99101");
+            DBQuery("DELETE FROM uo_season WHERE season_id='SIMT02'");
+            ClearSeasonRuntimeCache();
+            $_SESSION = [];
+        }
+    }
 }

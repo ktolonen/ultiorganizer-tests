@@ -1686,6 +1686,8 @@ final class CommonFunctionsLibTest extends TestCase
         $this->assertSame('fallback', SafeRedirectUrl('data:text/html,x', 'fallback'));
         $this->assertSame('fallback', SafeRedirectUrl('ftp://' . parse_url(GetURLBase(), PHP_URL_HOST) . '/x', 'fallback'));
         $this->assertSame('fallback', SafeRedirectUrl('http://', 'fallback'));
+        $this->assertSame('fallback', SafeRedirectUrl('https:/evil.example/x', 'fallback'), 'a scheme without a host');
+        $this->assertSame('/relative?x=1', SafeRedirectUrl('/relative?x=1', 'fallback'), 'contrast: a relative path is kept');
     }
 
     public function testSafeRedirectUrlAcceptsAbsoluteUrlsOnlyForTheInstallationHost(): void

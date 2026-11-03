@@ -1552,7 +1552,7 @@ final class TeamFunctionsLibTest extends TestCase
         DBQuery("DELETE FROM uo_team_pool WHERE pool IN ($pools)");
         DBQuery("DELETE FROM uo_team WHERE team_id IN ($teams)");
         DBQuery("DELETE FROM uo_pool WHERE pool_id IN ($pools)");
-        DBQuery("DELETE FROM uo_setting WHERE name='HomeTeamResponsible' AND value='no'");
+        DBQuery("UPDATE uo_setting SET value='yes' WHERE name='HomeTeamResponsible'");
         self::flushQueryCaches();
     }
 
@@ -1653,8 +1653,8 @@ final class TeamFunctionsLibTest extends TestCase
     public function testTeamMoveFillsOnlyTheHomeTeamWhenTheHomeTeamIsNotResponsible(): void
     {
         $this->moveFixture(0);
-        DBQuery("DELETE FROM uo_setting WHERE name='HomeTeamResponsible'");
-        DBQuery("INSERT INTO uo_setting (name, value) VALUES ('HomeTeamResponsible', 'no')");
+        $this->assertSame('yes', DBQueryToValue("SELECT value FROM uo_setting WHERE name='HomeTeamResponsible'"), 'the fixture makes the home team responsible');
+        DBQuery("UPDATE uo_setting SET value='no' WHERE name='HomeTeamResponsible'");
         $this->moveGame(null, null, 0, self::MV_SCHED, null);
         DBQuery("UPDATE uo_game SET respteam=NULL WHERE game_id=" . self::MV_GAME);
         self::flushQueryCaches();

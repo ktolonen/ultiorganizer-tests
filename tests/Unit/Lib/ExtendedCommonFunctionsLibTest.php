@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use PHPUnit\Framework\Attributes\PreserveGlobalState;
+use PHPUnit\Framework\Attributes\RunInSeparateProcess;
 use PHPUnit\Framework\TestCase;
 use UltiorganizerHarness\Support\LegacyApp;
 
@@ -275,5 +277,63 @@ final class ExtendedCommonFunctionsLibTest extends TestCase
     {
         $result = uo_strptime_fallback('2024-13-01', '%Y-%m-%d');
         $this->assertFalse($result);
+    }
+
+    // --- GetURLBase without a configured BASEURL ---
+
+    /**
+     * A fresh process that never loaded the SUT config, so BASEURL is undefined and
+     * GetURLBase() has to rebuild the URL from the request. The in-process suites
+     * always have BASEURL defined and can only reach the constant branch.
+     */
+    #[RunInSeparateProcess]
+    #[PreserveGlobalState(false)]
+    public function testGetURLBaseRebuildsTheUrlFromTheRequestWhenBaseUrlIsNotConfigured(): void
+    {
+        $this->assertFalse(defined('BASEURL'), 'precondition: no configured base URL in this process');
+        if (!function_exists('GetServerName')) {
+            // lib/database.php owns this helper and is not loaded in a bootstrap-only process.
+            function GetServerName()
+            {
+                return $_SERVER['SERVER_NAME'];
+            }
+        }
+        $request = function (array $server, string $prefix = '') {
+            $_SERVER = $server + ['SERVER_NAME' => 'example.org', 'SCRIPT_NAME' => '/app/index.php'];
+            unset($_SERVER['HTTPS']);
+            $_SERVER = $server + $_SERVER;
+            $GLOBALS['include_prefix'] = $prefix;
+            return GetURLBase();
+        };
+
+        $this->assertSame('http://example.org/app', $request(['SERVER_PORT' => '80']));
+        $this->assertSame('http://example.org/app', $request([]), 'no port at all');
+        $this->assertSame('http://example.org:8080/app', $request(['SERVER_PORT' => '8080']));
+        $this->assertSame('https://example.org/app', $request(['HTTPS' => 'on', 'SERVER_PORT' => '443']));
+        $this->assertSame('https://example.org:80/app', $request(['HTTPS' => 'on', 'SERVER_PORT' => '80']), 'port 80 is not the https default');
+        $this->assertSame('http://example.org/app', $request(['HTTPS' => 'off', 'SERVER_PORT' => '80']));
+        $this->assertSame('http://example.org:8080/app', $request(['SERVER_NAME' => 'example.org:8080', 'SERVER_PORT' => '8080']), 'a port already in the name is not repeated');
+
+        $deep = ['SCRIPT_NAME' => '/a/b/c/page.php'];
+        $this->assertSame('http://example.org/a/b/c', $request($deep));
+        $this->assertSame('http://example.org/a/b', $request($deep, '../'));
+        $this->assertSame('http://example.org/a', $request($deep, '../../'));
+        $this->assertSame('http://example.org/a/b/c', $request($deep, 'lib/'), 'a prefix without ../ trims nothing');
+    }
+
+    #[RunInSeparateProcess]
+    #[PreserveGlobalState(false)]
+    public function testGetURLBaseIgnoresAnEmptyConfiguredBaseUrl(): void
+    {
+        define('BASEURL', '/');
+        $_SERVER = ['SERVER_NAME' => 'example.org', 'SCRIPT_NAME' => '/app/index.php'];
+        if (!function_exists('GetServerName')) {
+            function GetServerName()
+            {
+                return $_SERVER['SERVER_NAME'];
+            }
+        }
+        $GLOBALS['include_prefix'] = '';
+        $this->assertSame('http://example.org/app', GetURLBase(), 'a base URL that is only a slash counts as empty');
     }
 }

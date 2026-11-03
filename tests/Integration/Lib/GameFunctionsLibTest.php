@@ -2409,4 +2409,278 @@ final class GameFunctionsLibTest extends TestCase
         $types = array_column(GameEvents($gameId), 'type');
         $this->assertContains('half_cap', $types);
     }
+
+    // ---- Branch-closing batch: result guards, display text, timer, SetGame, mass input ----
+
+    public function testGoalDisplayTextFallsBackToWhicheverPlayerIsKnown(): void
+    {
+        $goal = static fn(string $af, string $al, string $sf, string $sl) => [
+            'iscallahan' => 0, 'assistfirstname' => $af, 'assistlastname' => $al, 'scorerfirstname' => $sf, 'scorerlastname' => $sl,
+        ];
+        $this->assertSame('Ann Aa --> Bo Bb', GoalDisplayText($goal('Ann', 'Aa', 'Bo', 'Bb'), 700));
+        $this->assertSame('Bo Bb', GoalDisplayText($goal('', '', 'Bo', 'Bb'), 700), 'a goal without an assist shows the scorer');
+        $this->assertSame('Ann Aa', GoalDisplayText($goal('Ann', 'Aa', '', ''), 700), 'a goal without a scorer shows the assist');
+        $this->assertSame('', GoalDisplayText($goal('', '', '', ''), 700));
+        $this->assertSame('Callahan goal', GoalDisplayText(['iscallahan' => 1] + $goal('Ann', 'Aa', 'Bo', 'Bb'), 700));
+        $this->assertSame('', GoalPlayerDisplayText(0, 700), 'no player id, no text');
+    }
+
+    public function testGameNameUsesPlaceholderNamesUntilBothTeamsAreSet(): void
+    {
+        $base = ['time' => '2026-06-01 10:00:00', 'hometeamname' => 'Heat', 'visitorteamname' => 'Tempest', 'phometeamname' => 'Winner A', 'pvisitorteamname' => 'Winner B'];
+        $set = GameName(['hometeam' => 300, 'visitorteam' => 301] + $base);
+        $open = GameName(['hometeam' => null, 'visitorteam' => 301] + $base);
+        $this->assertStringEndsWith('Heat-Tempest', $set);
+        $this->assertStringEndsWith('Winner A-Winner B', $open);
+        $this->assertNotSame($set, $open);
+    }
+
+    public function testHalftimeSecondsIsNullUnlessPositive(): void
+    {
+        $this->assertSame(1800, GameHalftimeSeconds(['halftime' => '1800']));
+        $this->assertNull(GameHalftimeSeconds(['halftime' => '0']));
+        $this->assertNull(GameHalftimeSeconds(['halftime' => null]));
+        $this->assertNull(GameHalftimeSeconds([]));
+    }
+
+    public function testRecordedTimeoutCountIsTheLargerSide(): void
+    {
+        $this->assertSame(0, GameRecordedTimeoutCount([]));
+        $this->assertSame(2, GameRecordedTimeoutCount([['ishome' => '1'], ['ishome' => '1'], ['ishome' => '0']]));
+        $this->assertSame(3, GameRecordedTimeoutCount([['ishome' => '0'], ['ishome' => '0'], ['ishome' => '0'], ['ishome' => '1']]));
+    }
+
+    public function testTimeoutsPerTeamDefaultsToFourForAGameOutsideAnyPool(): void
+    {
+        $gameId = $this->createTempGame();
+        $this->assertSame(5, GameTimeoutsPerTeam($gameId), 'pool 200: 2 per half + 1 overtime');
+        DBQuery("DELETE FROM uo_game_pool WHERE game=$gameId");
+        self::flushQueryCaches();
+        $this->assertSame(4, GameTimeoutsPerTeam($gameId));
+    }
+
+    public function testTimerStateRoundsNearlyFullMinutesUp(): void
+    {
+        $gameId = $this->createTempGame();
+        DBQuery(sprintf("UPDATE uo_game SET hasstarted=1, isongoing=1, timer_start=%d, timer_paused_duration=0 WHERE game_id=%d", time() - 238, $gameId));
+        self::flushQueryCaches();
+        $state = GameTimerState($gameId);
+        $this->assertSame([true, true, false], [$state['started'], $state['ongoing'], $state['paused']]);
+        $this->assertSame([4, 0], [$state['mm'], $state['rss']], '3:58 and 3:59 show as 4:00');
+    }
+
+    public function testScoresOutsideTheValidRangeAreRefusedByEveryResultWriter(): void
+    {
+        foreach (['abc', -1, 1001, '1001', 1.5, null, ''] as $bad) {
+            $this->assertFalse(IsValidGameScore($bad), json_encode($bad));
+        }
+        $this->assertTrue(IsValidGameScore(0));
+        $this->assertTrue(IsValidGameScore('1000'));
+
+        $gameId = $this->createTempGame();
+        $this->assertFalse(GameUpdateResult($gameId, 'abc', 1));
+        $this->assertFalse(GameSetResult($gameId, 1, 1001));
+        $this->assertNull(DBQueryToValue("SELECT homescore FROM uo_game WHERE game_id=$gameId"));
+        $this->assertTrue(GameUpdateResult($gameId, 3, 2), 'contrast: valid scores are stored');
+        self::flushQueryCaches();
+        $this->assertSame('3', DBQueryToValue("SELECT homescore FROM uo_game WHERE game_id=$gameId"));
+    }
+
+    public function testFinalizingAnUnchangedResultStillRecomputesTheStandings(): void
+    {
+        $gameId = $this->createTempGame();
+        try {
+            $this->assertTrue(GameSetResult($gameId, 5, 4));
+            DBQuery("UPDATE uo_team_pool SET rank=rank WHERE pool=200");
+            $before = (int) DBQueryToValue("SELECT COUNT(*) FROM uo_scoresheet_history WHERE game=$gameId");
+            $this->assertTrue(GameSetResult($gameId, 5, 4), 'same final score again');
+            self::flushQueryCaches();
+            $this->assertSame($before, (int) DBQueryToValue("SELECT COUNT(*) FROM uo_scoresheet_history WHERE game=$gameId"), 'no second audit row');
+            $this->assertSame(['5', '4', '2', '0'], array_values(DBQueryToRow("SELECT homescore, visitorscore, hasstarted, isongoing FROM uo_game WHERE game_id=$gameId")));
+        } finally {
+            DBQuery("DELETE FROM uo_scoresheet_history WHERE game=$gameId");
+            ResolvePoolStandings(200);
+            PoolResolvePlayed(200);
+        }
+    }
+
+    public function testResultSyncAndRolePlayersRefuseStaleOrUnknownInput(): void
+    {
+        $gameId = $this->createTempGame();
+        DBQuery("UPDATE uo_game SET homescore=2, visitorscore=1, hasstarted=1, isongoing=1 WHERE game_id=$gameId");
+        $this->assertFalse(GameSyncResultFromGoals($gameId, 5, 5), 'the stored score is not the removed goal');
+        $this->assertSame(['2', '1'], array_values(DBQueryToRow("SELECT homescore, visitorscore FROM uo_game WHERE game_id=$gameId")));
+        $this->assertNotFalse(GameSyncResultFromGoals($gameId, 2, 1), 'contrast: the matching score is lowered');
+        self::flushQueryCaches();
+        $this->assertSame(['0', '0'], array_values(DBQueryToRow("SELECT homescore, visitorscore FROM uo_game WHERE game_id=$gameId")), 'no goals left');
+
+        $this->assertFalse(GameSetRolePlayers($gameId, 300, 'bogus', [800]));
+        $this->assertSame(0, (int) DBQueryToValue("SELECT COUNT(*) FROM uo_played WHERE game=$gameId"));
+    }
+
+    public function testCapEventWritesThatChangeNothingReturnTrueWithoutRewriting(): void
+    {
+        $gameId = $this->createTempGame();
+        $this->assertTrue(GameRemoveCapEvent($gameId, 'time_cap'), 'nothing to remove');
+        $this->assertNotFalse(GameSetCapEvent($gameId, 'time_cap', 1200, 9));
+        $history = (int) DBQueryToValue("SELECT COUNT(*) FROM uo_scoresheet_history WHERE game=$gameId");
+        $this->assertTrue(GameSetCapEvent($gameId, 'time_cap', 1200, 9), 'the same cap again');
+        self::flushQueryCaches();
+        $this->assertSame($history, (int) DBQueryToValue("SELECT COUNT(*) FROM uo_scoresheet_history WHERE game=$gameId"));
+        $this->assertSame(1, (int) DBQueryToValue("SELECT COUNT(*) FROM uo_gameevent WHERE game=$gameId AND type='time_cap'"));
+        DBQuery("DELETE FROM uo_scoresheet_history WHERE game=$gameId");
+    }
+
+    public function testAddNewPlayerRefusesATeamOutsideTheGame(): void
+    {
+        $gameId = $this->createTempGame(300, 301);
+        $before = (int) DBQueryToValue("SELECT COUNT(*) FROM uo_player");
+        $this->assertFalse(GameAddNewPlayer($gameId, 'Out', 'Sider', '', 9999, 5));
+        self::flushQueryCaches();
+        $this->assertSame($before, (int) DBQueryToValue("SELECT COUNT(*) FROM uo_player"));
+    }
+
+    public function testResponsibleTeamComesFromTheTeamAdminRole(): void
+    {
+        $gameId = $this->createTempGame(300, 301);
+        $_SESSION['userproperties']['userrole'] = ['teamadmin' => [301 => 301]];
+        $this->assertSame('301', (string) GameRespTeam($gameId), 'the visitor team admin');
+        $_SESSION['userproperties']['userrole'] = ['teamadmin' => [300 => 300, 301 => 301]];
+        $this->assertSame('300', (string) GameRespTeam($gameId), 'the home team wins when both are administered');
+        $_SESSION['userproperties']['userrole'] = ['teamadmin' => [555 => 555]];
+        $this->assertSame(-1, GameRespTeam($gameId));
+        $this->assertSame(-1, GameRespTeam(999999));
+        $this->assertSame('', GameNameFromId(999999));
+        $this->assertSame('Helsinki Heat - Tampere Tempest', GameNameFromId($gameId));
+    }
+
+    public function testSetGamePoolRollsBackWhenTheDestinationPoolDoesNotExist(): void
+    {
+        $gameId = $this->createTempGame();
+        SetGamePool($gameId, 0);
+        SetGamePool(0, 200);
+        $this->assertSame('200', (string) GamePool($gameId), 'non-positive ids are ignored');
+
+        $threw = false;
+        try {
+            SetGamePool($gameId, 999999);
+        } catch (Throwable $e) {
+            $threw = true;
+        }
+        $this->assertTrue($threw, 'the foreign key violation is rethrown');
+        self::flushQueryCaches();
+        $this->assertSame(1, (int) DBQueryToValue("SELECT COUNT(*) FROM uo_game_pool WHERE game=$gameId AND timetable=1 AND pool=200"), 'the old owner row is kept');
+        $this->assertSame(0, (int) DBQueryToValue("SELECT COUNT(*) FROM uo_game_pool WHERE game=$gameId AND pool=999999"));
+        $this->assertFalse(DBShouldThrowExceptions(), 'the exception mode is restored');
+    }
+
+    public function testSetGameMovesPoolSetsReservationAndResponsibleTeam(): void
+    {
+        $gameId = $this->createTempGame(300, 301, 200, null, null);
+        DBQuery($this->gamePoolSql(9560, 'SG_Pool'));
+        try {
+            SetGame($gameId, ['pool' => 9560, 'reservation' => 500, 'time' => '2026-06-01 12:00:00', 'respteam' => 301]);
+            self::flushQueryCaches();
+            $row = DBQueryToRow("SELECT reservation, time, respteam FROM uo_game WHERE game_id=$gameId");
+            $this->assertSame(['500', '2026-06-01 12:00:00', '301'], array_values($row));
+            $this->assertSame('9560', (string) GamePool($gameId));
+            $this->assertSame(0, (int) DBQueryToValue("SELECT COUNT(*) FROM uo_game_pool WHERE game=$gameId AND pool=200 AND timetable=1"), 'the old owner row is gone');
+            $this->assertSame(1, (int) DBQueryToValue("SELECT COUNT(*) FROM uo_scoresheet_history WHERE game=$gameId AND target='fixture' AND action='move'"));
+
+            // Saving again with the same pool and no responsible team: no second move row, respteam cleared.
+            SetGame($gameId, ['pool' => 9560, 'time' => '', 'valid' => 1]);
+            self::flushQueryCaches();
+            $row = DBQueryToRow("SELECT time, respteam FROM uo_game WHERE game_id=$gameId");
+            $this->assertSame(['2026-06-01 12:00:00', null], array_values($row), 'an empty time is skipped; no respteam clears it');
+            $this->assertSame(1, (int) DBQueryToValue("SELECT COUNT(*) FROM uo_scoresheet_history WHERE game=$gameId AND target='fixture' AND action='move'"));
+        } finally {
+            DBQuery("DELETE FROM uo_scoresheet_history WHERE game=$gameId");
+            DBQuery("DELETE FROM uo_game_pool WHERE pool=9560");
+            DBQuery("DELETE FROM uo_pool WHERE pool_id=9560");
+        }
+    }
+
+    private function gamePoolSql(int $poolId, string $name): string
+    {
+        return "INSERT INTO uo_pool (pool_id, name, ordering, visible, continuingpool, placementpool, series, type, teams, mvgames, timeoutlen, halftime, winningscore, timecap, scorecap, played, addscore, halftimescore, timeouts, timeoutsper, timeoutsovertime, timeoutstimecap, betweenpointslen, forfeitscore, forfeitagainst, drawsallowed, follower) VALUES ($poolId, '$name', 99, 0, 0, 0, 100, 1, 2, 0, 70, 35, 15, NULL, NULL, 0, NULL, NULL, 2, 'half', 1, 'soft', 90, 15, 0, 0, NULL)";
+    }
+
+    public function testChangeHomeKeepsTheResponsibleTeamOnItsSide(): void
+    {
+        $visitorResponsible = $this->createTempGame(300, 301);
+        DBQuery("UPDATE uo_game SET respteam=301 WHERE game_id=$visitorResponsible");
+        DBQuery("INSERT INTO uo_team (team_id, name, valid, series) VALUES (9561, 'Third', 1, 100)");
+        $thirdResponsible = $this->createTempGame(300, 301);
+        DBQuery("UPDATE uo_game SET respteam=9561 WHERE game_id=$thirdResponsible");
+        $noOne = $this->createTempGame(300, 301);
+        DBQuery("UPDATE uo_game SET respteam=NULL WHERE game_id=$noOne");
+        self::flushQueryCaches();
+        try {
+            foreach ([$visitorResponsible, $thirdResponsible, $noOne] as $id) {
+                GameChangeHome($id);
+            }
+            self::flushQueryCaches();
+            $resp = fn(int $id) => DBQueryToRow("SELECT hometeam, visitorteam, respteam FROM uo_game WHERE game_id=$id");
+            $this->assertSame(['301', '300', '300'], array_values($resp($visitorResponsible)), 'the visitor stays responsible: now team 300');
+            $this->assertSame(['301', '300', '9561'], array_values($resp($thirdResponsible)), 'a third team is left alone');
+            $this->assertSame(['301', '300', null], array_values($resp($noOne)));
+        } finally {
+            DBQuery("DELETE FROM uo_scoresheet_history WHERE game IN ($visitorResponsible, $thirdResponsible, $noOne)");
+            DBQuery("UPDATE uo_game SET respteam=NULL WHERE game_id IN ($visitorResponsible, $thirdResponsible, $noOne)");
+            DBQuery("DELETE FROM uo_team WHERE team_id=9561");
+        }
+    }
+
+    public function testMassInputCountsClearedChangedAndRefusedResults(): void
+    {
+        $setGame = $this->createTempGame();
+        $clearGame = $this->createTempGame();
+        $badGame = $this->createTempGame();
+        DBQuery("UPDATE uo_game SET homescore=4, visitorscore=3, hasstarted=2, isongoing=0 WHERE game_id=$clearGame");
+        self::flushQueryCaches();
+        $GLOBALS['runtime_cache'] = [];
+        try {
+            $html = GameProcessMassInput([
+                'scoreId' => [$setGame, $clearGame, $badGame],
+                'homescore' => ['7', '', 'x'],
+                'visitorscore' => ['6', '', '1'],
+            ]);
+            $this->assertStringContainsString('Results cleared: 1.', $html);
+            $this->assertStringContainsString('Results changed: 1.', $html);
+            $this->assertStringContainsString('Errors: 1.', $html);
+            self::flushQueryCaches();
+            $this->assertSame(['7', '6', '2'], array_values(DBQueryToRow("SELECT homescore, visitorscore, hasstarted FROM uo_game WHERE game_id=$setGame")));
+            $this->assertSame([null, null], array_values(DBQueryToRow("SELECT homescore, visitorscore FROM uo_game WHERE game_id=$clearGame")));
+            $this->assertNull(DBQueryToValue("SELECT homescore FROM uo_game WHERE game_id=$badGame"));
+        } finally {
+            DBQuery("DELETE FROM uo_scoresheet_history WHERE game IN ($setGame, $clearGame, $badGame)");
+            ResolvePoolStandings(200);
+            PoolResolvePlayed(200);
+        }
+    }
+
+    public function testUnscheduledGamesAreListedPerTeamPoolSeriesAndSeason(): void
+    {
+        $gameId = $this->createTempGame(300, 301);
+        $scheduled = $this->createTempGame(300, 301, 200, 500, '2026-06-01 10:00:00');
+        $this->assertArrayHasKey($gameId, UnscheduledGameInfo());
+        $this->assertArrayNotHasKey($scheduled, UnscheduledGameInfo(), 'a game with a slot is not unscheduled');
+        $this->assertSame($gameId, (int) GameInfo($gameId)['game_id']);
+        $this->assertArrayHasKey($gameId, UnscheduledGameInfo([300, 301]));
+        $this->assertArrayNotHasKey($gameId, UnscheduledGameInfo([300]), 'both teams must be listed');
+        $this->assertArrayHasKey($gameId, UnscheduledPoolGameInfo(200));
+        $this->assertArrayNotHasKey($gameId, UnscheduledPoolGameInfo(9999));
+        $this->assertArrayHasKey($gameId, UnscheduledSeriesGameInfo(100));
+        $this->assertArrayHasKey($gameId, UnscheduledSeasonGameInfo('HRN2026'));
+        $this->assertArrayNotHasKey($gameId, UnscheduledSeasonGameInfo('OTHER'));
+    }
+
+    public function testAGameWithEventsCannotBeDeleted(): void
+    {
+        $gameId = $this->createTempGame();
+        $this->assertTrue(CanDeleteGame($gameId));
+        DBQuery("INSERT INTO uo_gameevent (game, num, time, type, ishome, info) VALUES ($gameId, 1, 10, 'offence', 1, NULL)");
+        self::flushQueryCaches();
+        $this->assertFalse(CanDeleteGame($gameId));
+    }
 }

@@ -30,7 +30,7 @@ The top-level `targets` block sets the per-file coverage goal (`line_pct`, `func
 | `./libtest:missing` | List lib files without a test |
 | `./libtest:scaffold --lib-file <f> [--force]` | Create the matching test file |
 | `./libtest:run --lib-file <f>` | Run only the matching test |
-| `./libtest:coverage --lib-file <f>` | Run it with coverage; JSON with uncovered and partial functions vs. targets |
+| `./libtest:coverage --lib-file <f> [--suite-wide]` | Run it with coverage; JSON with uncovered and partial functions vs. targets. By default only the file's own test class runs; `--suite-wide` runs every unit and integration test, which is how a file also reached by other tests (for example `game.functions.php` through the scorekeeping API tests) is measured |
 | `./libtest:triage-status [--lib-file <f> \| --all]` | Triage state for changed (default), one, or all files |
 
 ## Maintenance

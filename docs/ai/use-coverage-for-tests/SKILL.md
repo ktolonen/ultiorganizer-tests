@@ -21,6 +21,8 @@ Coverage comes only from the in-process `unit` and `integration` suites, scoped 
 ./libtest:coverage --lib-file <lib-filename>
 ```
 
+Add `--suite-wide` to count what every unit and integration test reaches in the file instead of only its own test class. A target in the catalog is judged by whichever run you ask for, so use `--suite-wide` for files that other tests also exercise.
+
 It emits JSON like:
 
 ```json

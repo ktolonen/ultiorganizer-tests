@@ -72,7 +72,6 @@ final class ScorekeepingapiFunctionsLibTest extends TestCase
             DBQuery("DELETE FROM uo_setting WHERE name LIKE 'sktx_%'");
             DBQuery("DELETE FROM uo_api_receipt WHERE game=701");
             DBQuery("DELETE FROM uo_scorekeeper_token WHERE token_id IN (9930, 9934)");
-            DBQuery("DELETE FROM uo_setting WHERE name='DisableVisitorLogging'");
             DBQuery("UPDATE uo_player SET accredited=1, num=CASE player_id WHEN 800 THEN 8 WHEN 801 THEN 12 WHEN 802 THEN 7 ELSE 14 END WHERE player_id IN (800, 801, 802, 803)");
             DBQuery("DELETE FROM uo_played WHERE game=701");
             if ($this->standingsDirty && function_exists('ResolvePoolStandings')) {
@@ -1114,6 +1113,8 @@ final class ScorekeepingapiFunctionsLibTest extends TestCase
         $this->skipWithoutPhase2();
         $this->startLink();
         $agent = $_SERVER['HTTP_USER_AGENT'] ?? null;
+        $previous = DBQueryToValueUncached("SELECT value FROM uo_setting WHERE name='DisableVisitorLogging'");
+        $this->assertSame('true', $previous, 'the fixture disables visitor logging');
         $send = static fn(string $key) => ScorekeepingApiWrite(
             701,
             ['api_token' => 9931, 'link_token' => 9930, 'key' => $key, 'method' => 'POST', 'path' => '/p', 'body' => []],
@@ -1121,16 +1122,17 @@ final class ScorekeepingapiFunctionsLibTest extends TestCase
             fn() => ['status' => 200, 'data' => []],
         );
         try {
+            DBQuery("UPDATE uo_setting SET value='false' WHERE name='DisableVisitorLogging'");
             $_SERVER['HTTP_USER_AGENT'] = "App/1.0\x01\u{e5}" . str_repeat('x', 300);
             $send('ua1');
             $stored = DBQueryToValueUncached("SELECT user_agent FROM uo_api_receipt WHERE game=701 AND idempotency_key='ua1'");
             $this->assertSame('App/1.0' . str_repeat('x', 248), $stored);
 
-            DBQuery("INSERT INTO uo_setting (name, value) VALUES ('DisableVisitorLogging', 'true')");
+            DBQuery("UPDATE uo_setting SET value='true' WHERE name='DisableVisitorLogging'");
             $send('ua2');
             $this->assertNull(DBQueryToValueUncached("SELECT user_agent FROM uo_api_receipt WHERE game=701 AND idempotency_key='ua2'"));
         } finally {
-            DBQuery("DELETE FROM uo_setting WHERE name='DisableVisitorLogging'");
+            DBQuery(sprintf("UPDATE uo_setting SET value='%s' WHERE name='DisableVisitorLogging'", DBEscapeString((string) $previous)));
             if ($agent === null) {
                 unset($_SERVER['HTTP_USER_AGENT']);
             } else {
