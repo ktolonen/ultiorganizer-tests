@@ -232,7 +232,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "Meets ≥80% line and 100% fn targets. Tests cover game scoring, state transitions, and result queries. | GameChangeName's update branch is dead code: it tests $gameinfo['name'], which GameInfo() does not return (it returns 'gamename'), so every call inserts a new uo_scheduling_name row. It has no callers outside lib/. Not tested, to avoid pinning the bug.",
+      "triage_notes": "Meets ≥80% line and 100% fn targets. Tests cover game scoring, state transitions, and result queries.",
       "notes": "",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/game.functions.php",
       "line_target": 95

@@ -1416,6 +1416,28 @@ final class GameFunctionsLibTest extends TestCase
         SetGame($gameId, ['name' => '']);
     }
 
+    public function testGameChangeNameCreatesThenRenamesTheSameSchedulingName(): void
+    {
+        $gameId = $this->createTempGame();
+        $before = (int) DBQueryToValue("SELECT COUNT(*) FROM uo_scheduling_name");
+
+        GameChangeName($gameId, 'First');
+        self::flushQueryCaches();
+        $ref = (int) DBQueryToValue(sprintf("SELECT name FROM uo_game WHERE game_id=%d", $gameId));
+        $this->assertGreaterThan(0, $ref);
+        $this->assertSame('First', GameInfo($gameId)['gamename']);
+
+        // A second call renames in place instead of inserting another row.
+        GameChangeName($gameId, 'Second');
+        self::flushQueryCaches();
+        $this->assertSame($ref, (int) DBQueryToValue(sprintf("SELECT name FROM uo_game WHERE game_id=%d", $gameId)));
+        $this->assertSame('Second', GameInfo($gameId)['gamename']);
+        $this->assertSame($before + 1, (int) DBQueryToValue("SELECT COUNT(*) FROM uo_scheduling_name"));
+
+        SetGame($gameId, ['name' => '']);
+        DBQuery(sprintf("DELETE FROM uo_scheduling_name WHERE scheduling_id=%d", $ref));
+    }
+
     public function testDeleteGameRemovesGameAndPoolRow(): void
     {
         $gameId = $this->createTempGame();
