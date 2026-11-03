@@ -1497,4 +1497,178 @@ final class TeamFunctionsLibTest extends TestCase
             self::flushQueryCaches();
         }
     }
+
+    // ---- TeamMove: guards, refusals, eviction, pseudo-team replacement ----
+
+    private const MV_FROM = 9610;
+    private const MV_TO = 9611;
+    private const MV_TEAM = 9710;
+    private const MV_OTHER = 9711;
+    private const MV_SCHED = 9810;
+    private const MV_GAME = 9910;
+
+    private function moveFixture(int $ismoved, int $torank = 1, bool $withSchedulingName = true): void
+    {
+        LegacyApp::loadLibFilesUsingProfile(['standings.functions.php'], 'database_only');
+        DBQuery($this->poolInsertSql(self::MV_FROM, 'MV_From'));
+        DBQuery($this->poolInsertSql(self::MV_TO, 'MV_To'));
+        DBQuery("INSERT INTO uo_team (team_id, name, valid, series) VALUES (" . self::MV_TEAM . ", 'Mover', 1, 100), (" . self::MV_OTHER . ", 'Holder', 1, 100)");
+        DBQuery("INSERT INTO uo_team_pool (team, pool, rank, activerank) VALUES (" . self::MV_TEAM . ", " . self::MV_FROM . ", 1, 1)");
+        DBQuery("INSERT INTO uo_scheduling_name (scheduling_id, name) VALUES (" . self::MV_SCHED . ", 'Winner MV')");
+        DBQuery(sprintf(
+            "INSERT INTO uo_moveteams (frompool, fromplacing, topool, torank, ismoved, scheduling_id) VALUES (%d, 1, %d, %d, %d, %s)",
+            self::MV_FROM,
+            self::MV_TO,
+            $torank,
+            $ismoved,
+            $withSchedulingName ? (string) self::MV_SCHED : 'NULL',
+        ));
+    }
+
+    /** A game in the destination pool; $started 0 or 1, $home the stored home team. */
+    private function moveGame(?int $home, ?int $visitor, int $started, ?int $schedHome = null, ?int $schedVisitor = null): void
+    {
+        DBQuery(sprintf(
+            "INSERT INTO uo_game (game_id, hometeam, visitorteam, scheduling_name_home, scheduling_name_visitor, valid, isongoing, hasstarted, reservation, time)
+                VALUES (%d, %s, %s, %s, %s, 1, 0, %d, 500, '2026-06-01 10:00:00')",
+            self::MV_GAME,
+            $home === null ? 'NULL' : $home,
+            $visitor === null ? 'NULL' : $visitor,
+            $schedHome === null ? 'NULL' : $schedHome,
+            $schedVisitor === null ? 'NULL' : $schedVisitor,
+            $started,
+        ));
+        DBQuery(sprintf("INSERT INTO uo_game_pool (game, pool, timetable) VALUES (%d, %d, 1)", self::MV_GAME, self::MV_TO));
+    }
+
+    private function moveCleanup(): void
+    {
+        $pools = self::MV_FROM . ',' . self::MV_TO;
+        $teams = self::MV_TEAM . ',' . self::MV_OTHER;
+        DBQuery("DELETE FROM uo_game_pool WHERE game=" . self::MV_GAME);
+        DBQuery("DELETE FROM uo_game WHERE game_id=" . self::MV_GAME);
+        DBQuery("DELETE FROM uo_moveteams WHERE frompool IN ($pools)");
+        DBQuery("DELETE FROM uo_scheduling_name WHERE scheduling_id=" . self::MV_SCHED);
+        DBQuery("DELETE FROM uo_team_pool WHERE pool IN ($pools)");
+        DBQuery("DELETE FROM uo_team WHERE team_id IN ($teams)");
+        DBQuery("DELETE FROM uo_pool WHERE pool_id IN ($pools)");
+        DBQuery("DELETE FROM uo_setting WHERE name='HomeTeamResponsible' AND value='no'");
+        self::flushQueryCaches();
+    }
+
+    private function moveState(): array
+    {
+        self::flushQueryCaches();
+        return [
+            'teamPool' => DBQueryToValue("SELECT pool FROM uo_team WHERE team_id=" . self::MV_TEAM),
+            'inTo' => DBQueryToValue("SELECT rank FROM uo_team_pool WHERE pool=" . self::MV_TO . " AND team=" . self::MV_TEAM),
+            'ismoved' => DBQueryToValue("SELECT ismoved FROM uo_moveteams WHERE frompool=" . self::MV_FROM . " AND fromplacing=1"),
+        ];
+    }
+
+    public function testTeamMoveInThePlayoffTreeOnlyFollowsTheFollowerPool(): void
+    {
+        $this->moveFixture(0);
+        try {
+            TeamMove(self::MV_TEAM, self::MV_FROM, true);
+            $this->assertSame(['teamPool' => null, 'inTo' => null, 'ismoved' => '0'], $this->moveState(), 'not the follower pool: nothing moves');
+
+            DBQuery("UPDATE uo_pool SET follower=" . self::MV_TO . " WHERE pool_id=" . self::MV_FROM);
+            self::flushQueryCaches();
+            TeamMove(self::MV_TEAM, self::MV_FROM, true);
+            $this->assertSame(['teamPool' => (string) self::MV_TO, 'inTo' => '1', 'ismoved' => '1'], $this->moveState(), 'the follower pool moves it');
+        } finally {
+            $this->moveCleanup();
+        }
+    }
+
+    public function testTeamMoveRefusesASlotChangeThatStrandsAPlayedGame(): void
+    {
+        $this->moveFixture(0, 2);
+        // The game bound to the destination slot was already played by another team.
+        $this->moveGame(self::MV_OTHER, null, 1, self::MV_SCHED);
+        try {
+            ob_start();
+            TeamMove(self::MV_TEAM, self::MV_FROM, false);
+            $out = ob_get_clean();
+            $this->assertStringContainsString('Move not allowed. Game already played!', $out);
+            $this->assertSame(['teamPool' => null, 'inTo' => null, 'ismoved' => '0'], $this->moveState());
+
+            // Contrast: the same game unplayed lets the move through and takes the slot's game.
+            DBQuery("UPDATE uo_game SET hasstarted=0 WHERE game_id=" . self::MV_GAME);
+            ob_start();
+            TeamMove(self::MV_TEAM, self::MV_FROM, false);
+            $this->assertSame('', ob_get_clean());
+            $this->assertSame(['teamPool' => (string) self::MV_TO, 'inTo' => '2', 'ismoved' => '1'], $this->moveState());
+            $this->assertSame((string) self::MV_TEAM, DBQueryToValue("SELECT hometeam FROM uo_game WHERE game_id=" . self::MV_GAME), 'the placeholder team is replaced');
+        } finally {
+            $this->moveCleanup();
+        }
+    }
+
+    public function testTeamMoveRefusesToLeaveASlotWhoseGameWasPlayed(): void
+    {
+        $this->moveFixture(0, 2);
+        DBQuery("INSERT INTO uo_team_pool (team, pool, rank, activerank) VALUES (" . self::MV_TEAM . ", " . self::MV_TO . ", 1, 1)");
+        // The team already sits at rank 1 of the destination and played there; the move says rank 2.
+        $this->moveGame(self::MV_TEAM, null, 1);
+        try {
+            ob_start();
+            TeamMove(self::MV_TEAM, self::MV_FROM, false);
+            $this->assertStringContainsString('Game already played!', ob_get_clean());
+            $this->assertSame(['teamPool' => null, 'inTo' => '1', 'ismoved' => '0'], $this->moveState(), 'the slot is unchanged');
+
+            DBQuery("UPDATE uo_game SET hasstarted=0 WHERE game_id=" . self::MV_GAME);
+            TeamMove(self::MV_TEAM, self::MV_FROM, false);
+            $this->assertSame(['teamPool' => (string) self::MV_TO, 'inTo' => '2', 'ismoved' => '1'], $this->moveState(), 'an unplayed slot is relocated');
+        } finally {
+            $this->moveCleanup();
+        }
+    }
+
+    public function testTeamMoveEvictsTheHolderOfTheSlotUnlessItPlayed(): void
+    {
+        $this->moveFixture(1);
+        DBQuery("INSERT INTO uo_team_pool (team, pool, rank, activerank) VALUES (" . self::MV_OTHER . ", " . self::MV_TO . ", 1, 1)");
+        $this->moveGame(self::MV_OTHER, null, 1);
+        try {
+            ob_start();
+            TeamMove(self::MV_TEAM, self::MV_FROM, false);
+            $this->assertStringContainsString('Game already played!', ob_get_clean());
+            $this->assertSame((string) self::MV_OTHER, DBQueryToValue("SELECT team FROM uo_team_pool WHERE pool=" . self::MV_TO . " AND rank=1"));
+            $this->assertSame(['teamPool' => null, 'inTo' => null, 'ismoved' => '1'], $this->moveState(), 'a holder who played keeps the slot');
+
+            DBQuery("UPDATE uo_game SET hasstarted=0 WHERE game_id=" . self::MV_GAME);
+            self::flushQueryCaches();
+            TeamMove(self::MV_TEAM, self::MV_FROM, false);
+            self::flushQueryCaches();
+            $this->assertSame((string) self::MV_TEAM, DBQueryToValue("SELECT team FROM uo_team_pool WHERE pool=" . self::MV_TO . " AND rank=1"));
+            $this->assertSame(0, (int) DBQueryToValue("SELECT COUNT(*) FROM uo_team_pool WHERE pool=" . self::MV_TO . " AND team=" . self::MV_OTHER), 'the holder was evicted');
+            $this->assertSame((string) self::MV_TO, $this->moveState()['teamPool']);
+        } finally {
+            $this->moveCleanup();
+        }
+    }
+
+    public function testTeamMoveFillsOnlyTheHomeTeamWhenTheHomeTeamIsNotResponsible(): void
+    {
+        $this->moveFixture(0);
+        DBQuery("DELETE FROM uo_setting WHERE name='HomeTeamResponsible'");
+        DBQuery("INSERT INTO uo_setting (name, value) VALUES ('HomeTeamResponsible', 'no')");
+        $this->moveGame(null, null, 0, self::MV_SCHED, null);
+        DBQuery("UPDATE uo_game SET respteam=NULL WHERE game_id=" . self::MV_GAME);
+        self::flushQueryCaches();
+        try {
+            $this->assertFalse(isRespTeamHomeTeam());
+            TeamMove(self::MV_TEAM, self::MV_FROM, false);
+            self::flushQueryCaches();
+            $this->assertSame(
+                [(string) self::MV_TEAM, null],
+                array_values(DBQueryToRow("SELECT hometeam, respteam FROM uo_game WHERE game_id=" . self::MV_GAME)),
+                'the responsible team is left alone',
+            );
+        } finally {
+            $this->moveCleanup();
+        }
+    }
 }
