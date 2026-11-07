@@ -459,14 +459,20 @@ final class ScorekeepingapiFunctionsLibTest extends TestCase
         }
     }
 
-    public function testTransactionRefusesAGameTheLinkDoesNotCoverWithoutRunningTheWork(): void
+    public function testWriteRefusesAGameTheLinkDoesNotCoverWithoutRunningTheWork(): void
     {
         $this->skipWithoutPhase2();
         $ran = false;
         try {
-            ScorekeepingApiTransaction(701, function () use (&$ran) {
-                $ran = true;
-            });
+            ScorekeepingApiWrite(
+                701,
+                ['api_token' => 9931, 'link_token' => 9930, 'key' => 'nc1', 'method' => 'POST', 'path' => '/p', 'body' => []],
+                ['events'],
+                function () use (&$ran) {
+                    $ran = true;
+                    return ['status' => 200, 'data' => []];
+                },
+            );
             $this->fail('expected a refusal');
         } catch (ScorekeepingApiException $e) {
             $this->assertSame([403, 'game_not_covered'], [$e->httpStatus, $e->apiCode]);
@@ -1617,6 +1623,120 @@ final class ScorekeepingapiFunctionsLibTest extends TestCase
         foreach ([['time_cap', ['time' => 1, 'point_cap' => 9]], ['time_cap', null]] as [$type, $cap]) {
             $e = $this->refusal(fn() => ScorekeeperChangeCap(701, $type, $cap));
             $this->assertSame([409, 'times_hidden'], [$e->httpStatus, $e->apiCode]);
+        }
+    }
+
+    private function skipWithoutCorrections(): void
+    {
+        $this->skipWithoutPhase2();
+        if (!function_exists('ScorekeeperChangeClock')) {
+            $this->markTestSkipped('The SUT has no clock, stoppage delete, goal correction or note writes.');
+        }
+    }
+
+    public function testClockStateReadsTheTimerColumns(): void
+    {
+        $this->skipWithoutCorrections();
+        $row = ['hasstarted' => 0, 'isongoing' => 0, 'timer_start' => null, 'timer_pause_start' => null, 'timer_paused_duration' => 0];
+        $this->assertSame(['state' => 'not_started', 'elapsed' => 0, 'basis' => 0], ScorekeeperClockState($row));
+        $this->assertSame('stopped', ScorekeeperClockState(['hasstarted' => 1, 'isongoing' => 1] + $row)['state'], 'kept without a clock');
+        $this->assertSame('stopped', ScorekeeperClockState(['hasstarted' => 2, 'timer_start' => 1000] + $row)['state'], 'final');
+
+        $now = time();
+        $running = ScorekeeperClockState(['hasstarted' => 1, 'isongoing' => 1, 'timer_start' => $now - 100, 'timer_paused_duration' => 30] + $row);
+        $this->assertSame(['running', $now - 70], [$running['state'], $running['basis']]);
+        $this->assertEqualsWithDelta(70, $running['elapsed'], 2);
+        $paused = ScorekeeperClockState(['hasstarted' => 1, 'isongoing' => 1, 'timer_start' => $now - 100, 'timer_pause_start' => $now - 10, 'timer_paused_duration' => 30] + $row);
+        $this->assertSame(['state' => 'paused', 'elapsed' => 60, 'basis' => 60], $paused);
+    }
+
+    public function testClockChangesFollowTheScorekeeperControls(): void
+    {
+        $this->skipWithoutCorrections();
+        $start = ScorekeeperChangeClock(701, ['action' => 'start', 'elapsed' => null]);
+        $this->assertSame(['status' => 200, 'data' => ['clock' => ['state' => 'running', 'elapsed' => 0]]], $start);
+        $e = $this->refusal(fn() => ScorekeeperChangeClock(701, ['action' => 'start', 'elapsed' => null]));
+        $this->assertSame([409, 'clock_running'], [$e->httpStatus, $e->apiCode]);
+        $e = $this->refusal(fn() => ScorekeeperChangeClock(701, ['action' => 'set', 'elapsed' => 5]));
+        $this->assertSame('clock_not_paused', $e->apiCode);
+
+        ScorekeeperChangeClock(701, ['action' => 'pause', 'elapsed' => null]);
+        $e = $this->refusal(fn() => ScorekeeperChangeClock(701, ['action' => 'pause', 'elapsed' => null]));
+        $this->assertSame('clock_not_running', $e->apiCode);
+        $this->assertSame(['state' => 'paused', 'elapsed' => 600], ScorekeeperChangeClock(701, ['action' => 'set', 'elapsed' => 600])['data']['clock']);
+        $this->assertSame('running', ScorekeeperChangeClock(701, ['action' => 'resume', 'elapsed' => null])['data']['clock']['state']);
+
+        DBQuery("UPDATE uo_game SET homescore=1, visitorscore=0 WHERE game_id=701");
+        $e = $this->refusal(fn() => ScorekeeperChangeClock(701, ['action' => 'reset', 'elapsed' => null]));
+        $this->assertSame('score_not_zero', $e->apiCode);
+        DBQuery("UPDATE uo_game SET homescore=0, visitorscore=0 WHERE game_id=701");
+        $this->assertSame(['state' => 'not_started', 'elapsed' => 0], ScorekeeperChangeClock(701, ['action' => 'reset', 'elapsed' => null])['data']['clock']);
+
+        DBQuery("UPDATE uo_game SET hasstarted=2, isongoing=0 WHERE game_id=701");
+        $this->assertSame('game_final', $this->refusal(fn() => ScorekeeperChangeClock(701, ['action' => 'start', 'elapsed' => null]))->apiCode);
+        $this->setSeason("hide_time_on_scoresheet=1");
+        $this->assertSame('times_hidden', $this->refusal(fn() => ScorekeeperChangeClock(701, ['action' => 'start', 'elapsed' => null]))->apiCode);
+    }
+
+    public function testOnlyTheTeamsLastStoppageIsDeleted(): void
+    {
+        $this->skipWithoutCorrections();
+        ScorekeeperAddStoppage(701, 'timeout', ['side' => 'home', 'time' => 100]);
+        ScorekeeperAddStoppage(701, 'timeout', ['side' => 'home', 'time' => 200]);
+        ScorekeeperAddStoppage(701, 'spirit_stoppage', ['side' => 'away', 'time' => 50]);
+
+        $e = $this->refusal(fn() => ScorekeeperDeleteLastStoppage(701, 'timeout', 'home', 1));
+        $this->assertSame([409, 'timeout_changed'], [$e->httpStatus, $e->apiCode]);
+        $this->assertSame('timeout_changed', $this->refusal(fn() => ScorekeeperDeleteLastStoppage(701, 'timeout', 'away', 1))->apiCode, 'a team without timeouts');
+        $this->assertSame(
+            ['status' => 200, 'data' => ['deleted' => ['side' => 'home', 'num' => 2]]],
+            ScorekeeperDeleteLastStoppage(701, 'timeout', 'home', 2),
+        );
+        $this->assertSame([[1, 100]], $this->ints("SELECT num, time FROM uo_timeout WHERE game=701"));
+        $this->assertSame('spirit_stoppage_changed', $this->refusal(fn() => ScorekeeperDeleteLastStoppage(701, 'spirit_stoppage', 'home', 1))->apiCode);
+        ScorekeeperDeleteLastStoppage(701, 'spirit_stoppage', 'away', 1);
+        $this->assertSame(0, (int) DBQueryToValueUncached("SELECT COUNT(*) FROM uo_spirit_timeout WHERE game=701"));
+    }
+
+    public function testGoalCorrectionChecksPlayersAndKeepsTheRest(): void
+    {
+        $this->skipWithoutCorrections();
+        $this->seedRoster();
+        ScorekeeperAddGoal(701, $this->goal('home', 803, 802, 60));
+
+        $fixed = ScorekeeperCorrectGoal(701, 1, ['scorer_id' => 802, 'assist_id' => 803]);
+        $this->assertSame(
+            ['num' => 1, 'side' => 'home', 'scorer_id' => 802, 'assist_id' => 803, 'callahan' => false, 'time' => 60, 'home_score' => 1, 'away_score' => 0],
+            $fixed['data']['goal'],
+        );
+        $this->assertSame(802, ScorekeeperCorrectGoal(701, 1, ['callahan' => true, 'assist_id' => null])['data']['goal']['scorer_id'], 'unsent fields keep their value');
+
+        $e = $this->refusal(fn() => ScorekeeperCorrectGoal(701, 1, ['scorer_id' => 800]));
+        $this->assertSame([400, 'validation_failed', ['scorer_id']], [$e->httpStatus, $e->apiCode, array_column($e->details, 'path')]);
+        $e = $this->refusal(fn() => ScorekeeperCorrectGoal(701, 1, ['assist_id' => 803]));
+        $this->assertSame(['assist_id'], array_column($e->details, 'path'), 'a Callahan has no assist');
+        $this->assertSame([404, 'goal_not_found'], [($e = $this->refusal(fn() => ScorekeeperCorrectGoal(701, 7, ['scorer_id' => 802])))->httpStatus, $e->apiCode]);
+
+        $this->setSeason("hide_time_on_scoresheet=1");
+        $this->assertNull(ScorekeeperCorrectGoal(701, 1, ['scorer_id' => 803])['data']['goal']['time']);
+    }
+
+    public function testGameNoteNeedsTheActorsUser(): void
+    {
+        $this->skipWithoutCorrections();
+        $this->startLink();
+        try {
+            $e = $this->refusal(fn() => ScorekeeperSetGameNote(701, 'Rain'));
+            $this->assertSame([403, 'user_token_required'], [$e->httpStatus, $e->apiCode]);
+
+            ScorekeeperApiActor(9930, 9931, 'admin');
+            $this->assertSame(['status' => 200, 'data' => ['note' => 'Rain']], ScorekeeperSetGameNote(701, 'Rain'));
+            $this->assertSame('admin', DBQueryToValueUncached("SELECT user_id FROM uo_event_log WHERE category='game' AND source='comments' AND id1='701' ORDER BY event_id DESC LIMIT 1"));
+            $this->assertSame(['status' => 200, 'data' => ['note' => null]], ScorekeeperSetGameNote(701, ''));
+        } finally {
+            $this->finishLink();
+            DBQuery("DELETE FROM uo_comment WHERE type=4 AND id='701'");
+            DBQuery("DELETE FROM uo_event_log WHERE category='game' AND source='comments' AND id1='701'");
         }
     }
 

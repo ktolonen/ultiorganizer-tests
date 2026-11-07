@@ -572,6 +572,43 @@ final class ScorekeepingApiLiveTest extends ScorekeepingApiTestCase
         $this->assertSame($stored, self::stored());
     }
 
+    public function testAReplayGetsItsStoredAnswerAfterCoverageEndsOrTheEventLocks(): void
+    {
+        if (!self::sutHasCorrections()) {
+            $this->markTestSkipped('The SUT checks coverage and the event state before the stored answer.');
+        }
+        self::seedRoster();
+        $goal = self::goal('home', 803, 802, 60);
+        $first = self::live('POST', 'goals', $goal, 'late');
+        $this->assertSame(201, $first['status'], $first['raw']);
+        $stored = self::stored();
+
+        $replay = function (string $label) use ($goal, $first, $stored): void {
+            $again = self::live('POST', 'goals', $goal, 'late');
+            $this->assertSame(201, $again['status'], $label . ': ' . $again['raw']);
+            $this->assertSame('true', $again['headers']['idempotent-replay'] ?? null, $label);
+            $this->assertSame($first['json'], $again['json'], $label);
+            $this->assertSame($stored, self::stored(), $label . ': a replay writes nothing');
+        };
+
+        // Two days back is outside the game day and its 4 hour grace.
+        $past = (new \DateTimeImmutable('-2 days', new \DateTimeZone('Europe/Helsinki')))->format('Y-m-d');
+        DBQuery("UPDATE uo_game SET time='$past 14:00:00' WHERE game_id=701");
+        DBQuery("UPDATE uo_reservation SET starttime='$past 14:00:00', endtime='$past 15:30:00', date='$past 00:00:00' WHERE id=501");
+        $replay('uncovered');
+        self::assertError(self::live('POST', 'goals', self::goal('away', 800, 801, 90), 'late-new'), 403, 'game_not_covered');
+
+        DBQuery("UPDATE uo_season SET event_readonly=1 WHERE season_id='HRN2026'");
+        $replay('read-only');
+        DBQuery("UPDATE uo_season SET event_readonly=0, maintenance_mode=1 WHERE season_id='HRN2026'");
+        $replay('maintenance');
+        $today = (new \DateTimeImmutable('now', new \DateTimeZone('Europe/Helsinki')))->format('Y-m-d');
+        DBQuery("UPDATE uo_game SET time='$today 14:00:00' WHERE game_id=701");
+        $maintenance =self::live('POST', 'goals', self::goal('away', 800, 801, 90), 'late-new');
+        self::assertError($maintenance, 503, 'event_maintenance');
+        $this->assertSame($stored, self::stored());
+    }
+
     public function testLiveWritesRefuseAForfeitAReadOnlyEventAndAnUncoveredGame(): void
     {
         self::seedRoster();
@@ -603,7 +640,7 @@ final class ScorekeepingApiLiveTest extends ScorekeepingApiTestCase
         $this->assertSame('POST', $put['headers']['allow'] ?? null);
 
         $delete = self::live('POST', 'goals/1', null);
-        $this->assertSame('DELETE', $delete['headers']['allow'] ?? null);
+        $this->assertSame(self::sutHasCorrections() ? 'PATCH, DELETE' : 'DELETE', $delete['headers']['allow'] ?? null);
     }
 
     /** Creates a trigger, skipping the case when the database user may not. */

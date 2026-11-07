@@ -1280,6 +1280,48 @@ final class GameFunctionsLibTest extends TestCase
         $this->assertCount(0, $timeouts);
     }
 
+    // --- GameRemoveTimeout / GameRemoveSpiritTimeout ---
+
+    public function testGameRemoveTimeoutDeletesOneTeamsNumberOnly(): void
+    {
+        if (!function_exists('GameRemoveTimeout')) {
+            $this->markTestSkipped('The SUT has no single timeout delete.');
+        }
+        $gameId = $this->createTempGame();
+        GameAddTimeout($gameId, 1, 120, 1);
+        GameAddTimeout($gameId, 1, 130, 0);
+        GameAddSpiritTimeout($gameId, 1, 140, 1);
+
+        $this->assertFalse(GameRemoveTimeout($gameId, 2, 1), 'an absent number deletes nothing');
+        $this->assertTrue(GameRemoveTimeout($gameId, 1, 1));
+        $this->assertSame([['num' => '1', 'ishome' => '0']], DBQueryToArrayUncached(sprintf("SELECT num, ishome FROM uo_timeout WHERE game=%d", $gameId)));
+        $this->assertTrue(GameRemoveSpiritTimeout($gameId, 1, 1));
+        $this->assertCount(0, GameSpiritTimeoutsArray($gameId));
+        // The history list shows no action column, so a removal must not read like an add.
+        $this->assertSame('Timeouts removed: 1', ScoresheetHistoryFormatDetail(['target' => 'timeout', 'action' => 'remove', 'detail' => '{"num":1}']));
+        $this->assertSame('Spirit stoppages removed: 1', ScoresheetHistoryFormatDetail(['target' => 'spirit_timeout', 'action' => 'remove', 'detail' => '{"num":1}']));
+    }
+
+    // --- GameCorrectScorePlayers ---
+
+    public function testGameCorrectScorePlayersKeepsTheScore(): void
+    {
+        if (!function_exists('GameCorrectScorePlayers')) {
+            $this->markTestSkipped('The SUT has no goal player correction.');
+        }
+        $gameId = $this->createTempGame();
+        DBQuery(sprintf("INSERT INTO uo_goal (game, num, assist, scorer, time, homescore, visitorscore, ishomegoal, iscallahan)
+            VALUES (%d, 1, 801, 800, 60, 1, 0, 1, 0)", $gameId));
+
+        $this->assertFalse(GameCorrectScorePlayers($gameId, 2, 800, null, false), 'an absent goal');
+        $this->assertTrue(GameCorrectScorePlayers($gameId, 1, 801, null, true));
+        $this->assertSame(
+            ['scorer' => '801', 'assist' => null, 'iscallahan' => '1', 'time' => '60', 'homescore' => '1', 'visitorscore' => '0', 'ishomegoal' => '1'],
+            DBQueryToRowUncached(sprintf("SELECT scorer, assist, iscallahan, time, homescore, visitorscore, ishomegoal FROM uo_goal WHERE game=%d", $gameId)),
+        );
+        $this->assertTrue(GameCorrectScorePlayers($gameId, 1, 801, null, true), 'an unchanged correction still finds the goal');
+    }
+
     // --- GameSetScoreSheetKeeper ---
 
     public function testGameSetScoreSheetKeeperSetsName(): void

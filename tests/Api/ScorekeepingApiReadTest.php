@@ -49,7 +49,9 @@ final class ScorekeepingApiReadTest extends ScorekeepingApiTestCase
         $this->assertSame(200, $response['status'], $response['raw']);
         $data = $response['json']['data'];
         $this->assertSame(
-            ['game', 'home', 'away', 'result', 'goals', 'timeouts', 'spirit_stoppages', 'metadata', 'rules', 'retained', 'token'],
+            self::sutHasCorrections()
+                ? ['game', 'home', 'away', 'result', 'goals', 'timeouts', 'spirit_stoppages', 'clock', 'note', 'metadata', 'rules', 'retained', 'token']
+                : ['game', 'home', 'away', 'result', 'goals', 'timeouts', 'spirit_stoppages', 'metadata', 'rules', 'retained', 'token'],
             array_keys($data),
         );
         $this->assertSame(701, $data['game']['game_id']);
@@ -70,7 +72,11 @@ final class ScorekeepingApiReadTest extends ScorekeepingApiTestCase
         $this->assertSame(1000, $data['rules']['max_game_score']);
         $this->assertSame(['forfeit' => 'none', 'cap_events' => [], 'defenses' => ['home' => 0, 'away' => 0, 'referenced_player_ids' => []]], $data['retained']);
         $this->assertMatchesRegularExpression('/^[0-9a-f]{64}$/', $data['token']);
-        $this->assertSame('"' . $data['token'] . '"', $response['headers']['etag'] ?? null);
+        if (self::sutHasCorrections()) {
+            $this->assertMatchesRegularExpression('/^"' . $data['token'] . '-[0-9a-f]{32}"$/', $response['headers']['etag'] ?? '', 'the ETag is the token plus a hash of the context');
+        } else {
+            $this->assertSame('"' . $data['token'] . '"', $response['headers']['etag'] ?? null);
+        }
         $this->assertSame($data['token'], self::entryContext()['token'], 'a read changes nothing');
     }
 
@@ -83,6 +89,7 @@ final class ScorekeepingApiReadTest extends ScorekeepingApiTestCase
 
         $this->assertSame(200, $response['status']);
         $this->assertStringNotContainsString('secret-game-note-text', $response['raw']);
+        $this->assertNull($response['json']['data']['note'] ?? null, 'only a user-scoped token reads the note');
         $this->assertStringNotContainsString('history-marker', $response['raw']);
         foreach (['comment', 'email', 'history', 'notes', 'profile', 'birthdate'] as $word) {
             $this->assertStringNotContainsString('"' . $word, $response['raw'], $word);

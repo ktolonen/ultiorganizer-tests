@@ -63,6 +63,21 @@ abstract class ScorekeepingApiTestCase extends TestCase
         LegacyApp::closeDatabaseConnection();
     }
 
+    /**
+     * Whether the SUT has the clock, undo, goal correction and note writes, and
+     * with them the entry context's clock, note and context-hash ETag, goals/{num}
+     * PATCH, and replays answered before the coverage and event checks.
+     */
+    protected static function sutHasCorrections(): bool
+    {
+        static $has = null;
+        if ($has === null) {
+            $paths = self::request('GET', '/api/v1/openapi')['json']['paths'] ?? [];
+            $has = isset($paths['/api/v1/games/{game_id}/clock']);
+        }
+        return $has;
+    }
+
     /** Skips only when the SUT answers but does not list the endpoints; a 5xx fails the case. */
     private static function sutHasEndpoints(): bool
     {
