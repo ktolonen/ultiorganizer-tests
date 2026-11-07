@@ -65,9 +65,9 @@ final class ApiSpiritVisibilityTest extends TestCase
         // Rows written by this process must not be masked by Apache's cache.
         self::flushQueryCaches();
         $baseUrl = getenv('UO_BASE_URL') ?: 'http://127.0.0.1';
-        $context = stream_context_create(['http' => ['ignore_errors' => true, 'timeout' => 20]]);
+        $context = stream_context_create(['http' => ['ignore_errors' => true, 'timeout' => 20, 'header' => 'Authorization: Bearer ' . self::TOKEN]]);
         $body = file_get_contents(
-            $baseUrl . '/api/v1/gameplay?game=' . self::GAME . '&token=' . self::TOKEN,
+            $baseUrl . '/api/v1/gameplay?game=' . self::GAME,
             false,
             $context,
         );

@@ -49,6 +49,28 @@ final class ApiHiddenTimesTest extends TestCase
         $this->assertEmpty($data['statistics']['time_on_offence'] ?? null);
     }
 
+    public function testMediaTimesAreNotReturnedWhenTheEventHidesThem(): void
+    {
+        DBQuery("INSERT INTO uo_urls (owner, owner_id, type, url, ismedialink, name, mediaowner)
+            VALUES ('game', '700', 'video', 'http://example.com/harness-hidden-times-video', 1, 'Harness video', '')");
+        $urlId = (int) DBQueryToValueUncached("SELECT LAST_INSERT_ID()");
+        $num = (int) DBQueryToValueUncached("SELECT COALESCE(MAX(num), 0) + 1 FROM uo_gameevent WHERE game=700");
+        DBQuery(sprintf("INSERT INTO uo_gameevent (game, num, ishome, time, type, info) VALUES (700, %d, 0, 300, 'media', %d)", $num, $urlId));
+        try {
+            $shown = self::gameplay();
+            $this->assertSame([300], array_column($shown['media_events'], 'time'));
+            $this->assertSame([300], array_column($shown['media'], 'time'));
+
+            DBQuery("UPDATE uo_season SET hide_time_on_scoresheet=1 WHERE season_id='HRN2026'");
+            $hidden = self::gameplay();
+            $this->assertSame([null], array_column($hidden['media_events'], 'time'));
+            $this->assertSame([null], array_column($hidden['media'], 'time'));
+        } finally {
+            DBQuery(sprintf("DELETE FROM uo_gameevent WHERE game=700 AND num=%d", $num));
+            DBQuery(sprintf("DELETE FROM uo_urls WHERE url_id=%d", $urlId));
+        }
+    }
+
     /** @return list<int> the non-null goal times the endpoint reports */
     private static function goalTimes(array $data): array
     {
@@ -63,8 +85,8 @@ final class ApiHiddenTimesTest extends TestCase
         // Rows written by this process must not be masked by Apache's cache.
         self::flushQueryCaches();
         $baseUrl = getenv('UO_BASE_URL') ?: 'http://127.0.0.1';
-        $context = stream_context_create(['http' => ['ignore_errors' => true, 'timeout' => 20]]);
-        $body = file_get_contents($baseUrl . '/api/v1/gameplay?game=700&token=' . self::TOKEN, false, $context);
+        $context = stream_context_create(['http' => ['ignore_errors' => true, 'timeout' => 20, 'header' => 'Authorization: Bearer ' . self::TOKEN]]);
+        $body = file_get_contents($baseUrl . '/api/v1/gameplay?game=700', false, $context);
         self::assertStringContainsString(' 200 ', $http_response_header[0] ?? '');
         $payload = json_decode((string) $body, true);
         self::assertIsArray($payload, 'not JSON: ' . substr((string) $body, 0, 300));

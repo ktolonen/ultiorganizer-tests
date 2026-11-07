@@ -51,10 +51,46 @@ final class ApiPoolVisibilityTest extends TestCase
         $this->assertSame([], self::apiGameIds());
     }
 
+    public function testHiddenPoolIsLeftOutOfTheDivisions(): void
+    {
+        $this->assertContains(self::POOL, self::divisionPoolIds());
+
+        DBQuery(sprintf("UPDATE uo_pool SET visible=0 WHERE pool_id=%d", self::POOL));
+
+        $this->assertNotContains(self::POOL, self::divisionPoolIds());
+    }
+
+    public function testHiddenPoolGameplayIsNotFound(): void
+    {
+        DBQuery(sprintf("UPDATE uo_pool SET visible=0 WHERE pool_id=%d", self::POOL));
+        self::flushQueryCaches();
+
+        $baseUrl = getenv('UO_BASE_URL') ?: 'http://127.0.0.1';
+        $context = stream_context_create(['http' => ['ignore_errors' => true, 'timeout' => 20, 'header' => 'Authorization: Bearer ' . self::TOKEN]]);
+        $body = file_get_contents($baseUrl . '/api/v1/gameplay?game=700', false, $context);
+        $this->assertStringContainsString(' 404 ', $http_response_header[0] ?? '');
+        $payload = json_decode((string) $body, true);
+        $this->assertSame('game_not_found', $payload['error']['code'] ?? null);
+    }
+
+    /** @return list<int> */
+    private static function divisionPoolIds(): array
+    {
+        $payload = json_decode(self::get('/api/v1/divisions?event=HRN2026'), true);
+        self::assertIsArray($payload);
+        $ids = [];
+        foreach ($payload['data']['divisions'] as $division) {
+            foreach ($division['pools'] as $pool) {
+                $ids[] = $pool['pool_id'];
+            }
+        }
+        return $ids;
+    }
+
     /** @return list<int> */
     private static function apiGameIds(): array
     {
-        $body = self::get('/api/v1/games?event=HRN2026&token=' . self::TOKEN);
+        $body = self::get('/api/v1/games?event=HRN2026');
         $payload = json_decode($body, true);
         self::assertIsArray($payload, 'not JSON: ' . substr($body, 0, 300));
         $ids = array_map(static fn(array $game): int => $game['game_id'], $payload['data']['games']);
@@ -72,7 +108,7 @@ final class ApiPoolVisibilityTest extends TestCase
         // Rows written by this process must not be masked by Apache's cache.
         self::flushQueryCaches();
         $baseUrl = getenv('UO_BASE_URL') ?: 'http://127.0.0.1';
-        $context = stream_context_create(['http' => ['ignore_errors' => true, 'timeout' => 20]]);
+        $context = stream_context_create(['http' => ['ignore_errors' => true, 'timeout' => 20, 'header' => 'Authorization: Bearer ' . self::TOKEN]]);
         $body = file_get_contents($baseUrl . $path, false, $context);
         self::assertStringContainsString(' 200 ', $http_response_header[0] ?? '', $path);
         return (string) $body;

@@ -33,6 +33,17 @@ final class ApiEndpointsContractTest extends TestCase
         $this->assertSame('missing_token', $payload['error']['code']);
     }
 
+    public function testApiRefusesTokenInQueryString(): void
+    {
+        $response = self::apiGet('/api/v1/events?token=' . rawurlencode(self::TOKEN));
+
+        self::assertJsonResponse('events-query-token', $response, 401);
+        $payload = self::decodeJson($response['body']);
+
+        $this->assertSame('missing_token', $payload['error']['code']);
+        $this->assertStringContainsString('Authorization: Bearer', $payload['error']['message']);
+    }
+
     public function testApiRejectsInvalidBearerToken(): void
     {
         $response = self::apiGet('/api/v1/events', 'not-a-valid-token');
@@ -230,14 +241,11 @@ final class ApiEndpointsContractTest extends TestCase
         $errorLog = getenv('UO_APACHE_ERROR_LOG') ?: '/var/log/php/error.log';
         $beforeSize = is_file($errorLog) ? filesize($errorLog) : 0;
 
-        if ($token !== null) {
-            $path .= (str_contains($path, '?') ? '&' : '?') . 'token=' . rawurlencode($token);
-        }
-
         $context = stream_context_create([
             'http' => [
                 'ignore_errors' => true,
                 'timeout' => 20,
+                'header' => $token !== null ? 'Authorization: Bearer ' . $token : '',
             ],
         ]);
 
