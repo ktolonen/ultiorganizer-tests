@@ -540,7 +540,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "80.6% achieved. Remaining ~19%: ConfirmEnrolledTeam body (827-905) needs ClubId/AddClub/AddSeasonUserRole from club/user lib files not loaded; SeriesTeamResponsibles (939-954) dies unless user has editseason property (not just superadmin); die() paths in enrolled team functions (532,711,727,739,758,774,790,812,901); SeriesPoolTemplateSql valid-template path (585) needs a real uo_pooltemplate row.",
+      "triage_notes": "92.4% line / 100% fn. Enrollment confirmation asserts the team name, confirmed status, replay rejection and one team-admin role. Closed, read-only and inaccessible self-enrollment refusals are exercised over HTTP in AccountEnrollmentSecurityTest because they terminate with die(). Remaining in-process gaps include terminal rights guards and the new-club confirmation branch.",
       "notes": "",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/series.functions.php"
     },
@@ -636,7 +636,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "84.5% line / 100% fn achieved (up from 69.6%). Remaining ~16%: TeamMove body (88 lines, requires playoff pool move config not in fixture); die() branches in TeamCopyRoster/AddTeamProfileUrl/RemoveTeamProfileUrl/SetTeam/SetTeamName/SetTeamOwner. All functions now covered.",
+      "triage_notes": "84.5% line / 100% fn achieved (up from 69.6%). Remaining ~16%: TeamMove body (88 lines, requires playoff pool move config not in fixture); die() branches in TeamCopyRoster/AddTeamProfileUrl/RemoveTeamProfileUrl/SetTeam/SetTeamName/SetTeamOwner. All functions now covered. AddPlayer copies a quoted accreditation ID from an existing profile and asserts the exact stored ID and profile association.",
       "notes": "Mixed legacy-heavy pilot target; keep first-pass assertions on stable fixture reads instead of mutation-heavy branches.",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/team.functions.php",
       "line_target": 95
@@ -717,7 +717,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "93.1% line / 100% fn. CanChangeSeasonUserRole is asserted for every role kind, event binding and series-admin scope; DeleteSelectedUsersEventRoles/DeleteEventUserRoles/DeleteUserRoleRows delete only event-scoped roles and refresh the session. Remaining: the exit() redirects (FailRedirect, FailUnauthorized, Forbidden) and the md5/hash_equals polyfill fallbacks.",
+      "triage_notes": "91.1% line / 94.7% fn on f37f0e0. CanChangeSeasonUserRole is asserted for every role kind, event binding and series-admin scope; DeleteSelectedUsersEventRoles/DeleteEventUserRoles/DeleteUserRoleRows delete only event-scoped roles and refresh the session. Remaining: the exit() redirects (FailRedirect, FailUnauthorized, Forbidden), md5/hash_equals polyfill fallbacks, and unrelated scorekeeper-token/history-permission helpers. Reset links are checked before and after password changes, renames and deletions, including old-login reuse and an unaffected user token. Registration policy uses isolated PHP children with a local mail sink; those child calls and HTTP terminal guards do not contribute PCOV coverage.",
       "notes": "",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/user.functions.php"
     },

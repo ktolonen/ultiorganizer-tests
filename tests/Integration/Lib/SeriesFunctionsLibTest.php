@@ -619,8 +619,13 @@ final class SeriesFunctionsLibTest extends TestCase
             // Enrolled team status should be 1 now.
             $status = (int) DBQueryToValue("SELECT status FROM uo_enrolledteam WHERE id=$enrolledId");
             $this->assertSame(1, $status);
+            $this->assertSame('HarnessEnroll', DBQueryToValueUncached("SELECT name FROM uo_team WHERE team_id=$teamId"));
+            $this->assertNull(ConfirmEnrolledTeam(100, $enrolledId));
+            $this->assertSame(1, (int) DBQueryToValueUncached("SELECT COUNT(*) FROM uo_team WHERE series=100 AND name='HarnessEnroll'"));
+            $this->assertSame(1, (int) DBQueryToValueUncached("SELECT COUNT(*) FROM uo_userproperties WHERE userid='admin' AND name='userrole' AND value='teamadmin:$teamId'"));
         } finally {
             if ($teamId !== null) {
+                DBQuery("DELETE FROM uo_userproperties WHERE name='userrole' AND value='teamadmin:$teamId'");
                 DBQuery("DELETE FROM uo_team WHERE team_id=$teamId");
             }
             if ($enrolledId !== null) {
@@ -650,6 +655,7 @@ final class SeriesFunctionsLibTest extends TestCase
             $this->assertSame('AFG', $abb);
         } finally {
             if ($teamId !== null) {
+                DBQuery("DELETE FROM uo_userproperties WHERE name='userrole' AND value='teamadmin:$teamId'");
                 DBQuery("DELETE FROM uo_team WHERE team_id=$teamId");
             }
             if ($enrolledId !== null) {

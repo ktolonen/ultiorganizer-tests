@@ -1258,11 +1258,14 @@ final class TeamFunctionsLibTest extends TestCase
         $profileId = null;
         $playerId = null;
         try {
-            $profileId = (int) DBQueryInsert(
-                "INSERT INTO uo_player_profile (firstname, lastname, num) VALUES ('Harness', 'ProfileTest', 0)"
-            );
+            $profileId = (int) DBQueryInsert(sprintf(
+                "INSERT INTO uo_player_profile (firstname, lastname, num, accreditation_id) VALUES ('Harness', 'ProfileTest', 0, '%s')",
+                DBEscapeString("LIC'42"),
+            ));
             $playerId = (int) AddPlayer(300, 'Harness', 'ProfileTest', $profileId, 99);
             $this->assertGreaterThan(0, $playerId);
+            $this->assertSame("LIC'42", DBQueryToValueUncached("SELECT accreditation_id FROM uo_player WHERE player_id=$playerId"));
+            $this->assertSame((string) $profileId, (string) DBQueryToValueUncached("SELECT profile_id FROM uo_player WHERE player_id=$playerId"));
         } finally {
             if ($playerId !== null && $playerId > 0) {
                 DBQuery("DELETE FROM uo_player WHERE player_id=$playerId");

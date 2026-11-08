@@ -27,3 +27,19 @@ Only the in-process `unit` and `integration` suites produce coverage; HTTP suite
 - For one lib file, use `./libtest:coverage --lib-file <file>`.
 
 Overall line coverage stays low by design: lib tests aim for depth in the file under test, not a rising global percentage.
+
+## Account and enrollment regressions
+
+The per-file user tests check password-reset invalidation after a password change,
+rename, or deletion, including reuse of the old login. The series tests confirm
+that replaying enrollment confirmation creates one team and one team-admin role.
+The team tests copy an accreditation ID containing a quote from an existing profile.
+
+`UserFunctionsLibTest::testSelfRegistrationGateWithAnIsolatedMailSink` runs the
+registration helper in child PHP processes with `sendmail_path=/bin/true`. This
+keeps email local and makes acceptance deterministic without an installed MTA.
+`baseline-default` denies anonymous self-registration while allowing an admin
+invitation; `config-overrides` permits anonymous registration. These children do
+not contribute to the parent process's PCOV coverage.
+
+The matching HTTP regressions live in the smoke suite; see [Smoke](smoke.md).

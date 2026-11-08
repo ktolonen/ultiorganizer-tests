@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use UltiorganizerHarness\Support\LegacyApp;
 
@@ -791,6 +792,83 @@ final class UserFunctionsLibTest extends TestCase
             $this->assertTrue(verifyUserPassword('newpassword', $row['password']));
         } finally {
             DBQuery("DELETE FROM uo_users WHERE userid='testuser_chpw'");
+        }
+    }
+
+    /** @return array<array{string}> */
+    public static function resetInvalidatingChanges(): array
+    {
+        return [['password'], ['rename'], ['delete']];
+    }
+
+    #[DataProvider('resetInvalidatingChanges')]
+    public function testAccountChangesInvalidateOutstandingResetLinks(string $change): void
+    {
+        DBQuery("INSERT INTO uo_users (userid, password, name, email) VALUES ('audit-reset', 'oldhash', 'Reset Test', 'reset@example.com')");
+        DBQuery("INSERT INTO uo_passwordresetrequest (userid, token) VALUES ('audit-reset', 'audit-reset-token'), ('admin', 'audit-unrelated-token')");
+        try {
+            $this->assertSame('audit-reset', PasswordResetUIDByToken('audit-reset-token'));
+            $this->assertSame('admin', PasswordResetUIDByToken('audit-unrelated-token'));
+            switch ($change) {
+                case 'password':
+                    UserChangePassword('audit-reset', 'newpassword');
+                    break;
+                case 'rename':
+                    $id = (int) DBQueryToValueUncached("SELECT id FROM uo_users WHERE userid='audit-reset'");
+                    UserUpdateInfo($id, 'audit-reset', 'audit-renamed', 'Reset Test');
+                    // Reusing the old login must not revive its former owner's link.
+                    DBQuery("INSERT INTO uo_users (userid, password, name) VALUES ('audit-reset', 'replacement', 'Replacement')");
+                    break;
+                case 'delete':
+                    DeleteUser('audit-reset');
+                    DBQuery("INSERT INTO uo_users (userid, password, name) VALUES ('audit-reset', 'replacement', 'Replacement')");
+                    break;
+            }
+            $this->assertFalse(PasswordResetUIDByToken('audit-reset-token'));
+            $this->assertFalse(ConfirmPasswordReset('audit-reset-token', 'attacker-password'));
+            $this->assertSame('admin', PasswordResetUIDByToken('audit-unrelated-token'));
+            $this->assertSame(0, (int) DBQueryToValueUncached("SELECT COUNT(*) FROM uo_passwordresetrequest WHERE userid='audit-reset'"));
+            $password = DBQueryToValueUncached("SELECT password FROM uo_users WHERE userid='audit-reset'");
+            $this->assertFalse(verifyUserPassword('attacker-password', $password));
+        } finally {
+            DBQuery("DELETE FROM uo_passwordresetrequest WHERE token IN ('audit-reset-token', 'audit-unrelated-token')");
+            DBQuery("DELETE FROM uo_userproperties WHERE userid IN ('audit-reset', 'audit-renamed')");
+            DBQuery("DELETE FROM uo_users WHERE userid IN ('audit-reset', 'audit-renamed')");
+        }
+    }
+
+    public function testSelfRegistrationGateWithAnIsolatedMailSink(): void
+    {
+        LegacyApp::loadConfigurationFunctions();
+        $disabled = IsSelfRegistrationDisabled();
+        // A child process isolates PHP's system-only sendmail_path setting. It
+        // accepts mail locally without delivering it or depending on an MTA.
+        $bootstrap = realpath(__DIR__ . '/../../Support/LegacyApp.php');
+        $code = 'require ' . var_export($bootstrap, true) . '; '
+            . '\UltiorganizerHarness\Support\LegacyApp::loadLibFilesUsingProfile(["configuration.functions.php", "user.functions.php"], "database_with_common"); '
+            . '$serverConf = GetSimpleServerConf(); $_SESSION["uid"] = $argv[1]; $_SESSION["userproperties"]["locale"] = "en_GB.utf8"; '
+            . 'if ($argv[1] === "missing") { unset($_SESSION["uid"]); } '
+            . 'echo json_encode(AddRegisterRequest($argv[2], "pass123", "Registration Test", "registration@example.com"));';
+        try {
+            foreach (['anonymous' => 'audit-anon', 'missing' => 'audit-missing', 'admin' => 'audit-invite'] as $actor => $user) {
+                $pipes = [];
+                $process = proc_open([PHP_BINARY, '-d', 'sendmail_path=/bin/true', '-d', 'error_log=/dev/stderr', '-r', $code, $actor, $user],
+                    [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+                $this->assertIsResource($process);
+                $output = stream_get_contents($pipes[1]);
+                $errors = stream_get_contents($pipes[2]);
+                fclose($pipes[1]);
+                fclose($pipes[2]);
+                $this->assertSame(0, proc_close($process), $errors);
+                $this->assertSame('', $errors);
+                $allowed = $actor === 'admin' || !$disabled;
+                $this->assertSame($allowed, json_decode($output, true), $errors . $output);
+                $this->assertSame($allowed ? 1 : 0, (int) DBQueryToValueUncached(
+                    "SELECT COUNT(*) FROM uo_registerrequest WHERE userid='$user'",
+                ));
+            }
+        } finally {
+            DBQuery("DELETE FROM uo_registerrequest WHERE userid IN ('audit-anon', 'audit-missing', 'audit-invite')");
         }
     }
 

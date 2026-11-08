@@ -19,6 +19,7 @@ The remaining classes pin logic that lives in page files rather than `lib/`, so 
 - output escaping of reflected parameters and stored names, anonymous and logged in
 - cross-event checks, where an id from another event must be refused
 - rights checks before a page acts
+- `AccountEnrollmentSecurityTest`: all-event statistics require a superadmin; enrollment checks the target event's open, read-only, and private flags; disabled registration rejects token-bearing POSTs while issued confirmation links remain usable; the SLKL case checks license-ID escaping and protects it from non-superadmin edits
 - page content: gameplay replay, standings, team cards, series status
 - plugins and admin pages run as the fixture superadmin: `SimulateEventPluginTest` generates and deletes a small event (its token, range and delete-guard rules), `SelectTeamsPageTest` pins the team editor's unknown-division warning and list markup
 - login-gated editors such as `ScoresheetPageTest` and `ScoresheetHistoryPageTest`, which log in as the fixture superadmin and restore any rows they change
