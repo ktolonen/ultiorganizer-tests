@@ -1187,6 +1187,8 @@ def run_suite(case: dict, suite: str, run_root: Path, test_filter: str | None, r
         coverage_dir.mkdir(parents=True, exist_ok=True)
         php_cmd += [
             "-d",
+            "memory_limit=512M",
+            "-d",
             "pcov.enabled=1",
             "-d",
             f"pcov.directory={runtime_sut}",

@@ -20,7 +20,7 @@ An empty JUnit file (`JUnit XML file was empty`), with the log's progress dots s
 
 Only the in-process `unit` and `integration` suites produce coverage; HTTP suites run the SUT under Apache and yield none.
 
-- PCOV is installed in `php-test` but disabled; the harness enables it only for those two suites.
+- PCOV is installed in `php-test` but disabled; the harness enables it only for those two suites. Their PHP processes use a 512 MB memory limit so serializing the coverage object does not exhaust PHP's default 128 MB limit on CI.
 - Scope is the SUT `lib/` tree minus vendored directories (`<source>` in `phpunit.xml.dist`). Code outside `lib/` (page entrypoints, `localization.php`) never appears.
 - Each suite writes `coverage/<suite>.cov`; `phpcov` then merges them into `coverage/html/index.html`, `coverage/clover.xml` (absolute container paths), `coverage/coverage.txt` (overall summary), and `coverage/coverage.json` (percent used by `report:html`).
 - `coverage/` is wiped at the start of every run, so rerun the suite rather than trust an old directory. Cases without an in-process suite produce none.
