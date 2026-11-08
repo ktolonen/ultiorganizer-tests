@@ -37,6 +37,10 @@ final class ApiFuzzTest extends ScorekeepingApiTestCase
     /** @var string[] anchored regexes of the documented paths */
     private array $routes = [];
     private int $requests = 0;
+    /** The documented path of the operation being built, for parameter and credential hints. */
+    private string $currentPath = '';
+    /** @var ?array<string, mixed> the side and last number chosen for one stoppage delete, so both path parameters agree */
+    private ?array $stoppageRow = null;
 
     protected function setUp(): void
     {
@@ -147,6 +151,16 @@ final class ApiFuzzTest extends ScorekeepingApiTestCase
      */
     private function warmUp(): void
     {
+        // Timeouts and spirit stoppages to delete: only a team's last one can go.
+        if ($this->chance(60)) {
+            foreach (['uo_timeout', 'uo_spirit_timeout'] as $table) {
+                foreach ([1, 0] as $isHome) {
+                    for ($n = 1, $count = mt_rand(0, 2); $n <= $count; $n++) {
+                        DBQuery(sprintf("INSERT INTO %s (game, num, time, ishome) VALUES (701, %d, %d, %d)", $table, $n, 100 * $n, $isHome));
+                    }
+                }
+            }
+        }
         $mode = mt_rand(0, 3);
         if ($mode === 0) {
             return;
@@ -255,6 +269,8 @@ final class ApiFuzzTest extends ScorekeepingApiTestCase
     private function buildRequest(array $spec, string $method, string $path, array $operation): array
     {
         $params = $operation['parameters'] ?? [];
+        $this->currentPath = $path;
+        $this->stoppageRow = null;
         $url = $path;
         $query = [];
         $headers = [];
@@ -276,7 +292,7 @@ final class ApiFuzzTest extends ScorekeepingApiTestCase
             }
         }
         if ($secured) {
-            $headers += $this->credentials();
+            $headers += $this->credentials(str_ends_with($path, '/note'));
         } elseif ($this->chance(30)) {
             $headers += $this->credentials();
         }
@@ -338,6 +354,23 @@ final class ApiFuzzTest extends ScorekeepingApiTestCase
                     'callahan' => $callahan,
                     'time' => $last + mt_rand(1, 120),
                 ];
+            case 'ClockChange':
+                $action = $this->pick(['start', 'pause', 'resume', 'set', 'reset']);
+                return $action === 'set' ? ['action' => $action, 'elapsed' => mt_rand(0, 3000)] : ['action' => $action];
+            case 'GameNote':
+                return ['text' => $this->chance(15) ? '' : 'Fuzz note ' . mt_rand()];
+            case 'GoalCorrection':
+                $goal = DBQueryToRowUncached("SELECT assist, scorer, ishomegoal, iscallahan FROM uo_goal WHERE game=701 ORDER BY num DESC LIMIT 1");
+                $ids = $this->pick([[802, 803], [803, 802], [800, 801]]);
+                $fields = ['scorer_id' => $ids[0], 'assist_id' => $ids[1], 'callahan' => $this->chance(20)];
+                if ($goal !== null && $goal !== false && $this->chance(60)) {
+                    // Players of the goal's own side keep the correction valid.
+                    $ids = (int) $goal['ishomegoal'] === 1 ? [802, 803] : [800, 801];
+                    shuffle($ids);
+                    $fields = ['scorer_id' => $ids[0], 'assist_id' => $ids[1], 'callahan' => false];
+                }
+                $keys = array_rand($fields, mt_rand(1, 3));
+                return array_intersect_key($fields, array_flip((array) $keys));
             case 'FinalScore':
                 $row = DBQueryToRowUncached("SELECT homescore, visitorscore FROM uo_game WHERE game_id=701");
                 return ['home' => (int) $row['homescore'], 'away' => (int) $row['visitorscore']];
@@ -346,9 +379,10 @@ final class ApiFuzzTest extends ScorekeepingApiTestCase
     }
 
     /** @return array<string, string> */
-    private function credentials(): array
+    private function credentials(bool $userToken = false): array
     {
-        $token = self::TOKEN_INSTALL;
+        // Game notes need a personal token; the others use the installation token.
+        $token = $userToken && $this->chance(92) ? self::TOKEN_USER : self::TOKEN_INSTALL;
         $link = self::LINK_GAME;
         if ($this->chance(8)) {
             $token = $this->pick(['', 'x', str_repeat('a', 5000), "tok\r\nX-Injected: 1", self::TOKEN_REVOKED, self::TOKEN_USER, self::TOKEN_OTHER_EVENT]);
@@ -429,8 +463,17 @@ final class ApiFuzzTest extends ScorekeepingApiTestCase
         if ($name === 'game_id') {
             return $this->pick(array_merge(array_fill(0, 12, self::GAME), [700, 700, 790, 0, -1, 999999, PHP_INT_MAX]));
         }
+        $stoppage = str_contains($this->currentPath, '/timeouts/') ? 'uo_timeout' : (str_contains($this->currentPath, '/spirit-stoppages/') ? 'uo_spirit_timeout' : null);
+        if ($stoppage !== null && $in === 'path' && ($name === 'side' || $name === 'num') && $this->chance(75)) {
+            // The side that has a stoppage, and its last number: only that one can be deleted.
+            $this->stoppageRow ??= DBQueryToRowUncached("SELECT ishome, MAX(num) AS num FROM $stoppage WHERE game=701 GROUP BY ishome ORDER BY RAND() LIMIT 1") ?: [];
+            $row = $this->stoppageRow;
+            if ($row) {
+                return $name === 'side' ? ((int) $row['ishome'] === 1 ? 'home' : 'away') : (int) $row['num'];
+            }
+        }
         if ($name === 'num' && $in === 'path' && $this->chance(70)) {
-            // Only the last goal can be deleted.
+            // Only the last goal can be deleted or corrected.
             return max(1, (int) DBQueryToValueUncached("SELECT COALESCE(MAX(num), 0) FROM uo_goal WHERE game=701"));
         }
         if ($name === 'Idempotency-Key') {
