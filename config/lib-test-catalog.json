@@ -669,7 +669,7 @@
       "test_path_exists": true,
       "status": "covered",
       "triage_status": "triaged",
-      "triage_notes": "Meets ≥80% line and 100% fn targets. Tests cover timetable slot generation and conflict detection.",
+      "triage_notes": "99.9% line (688/689) / 100% fn (32/32). Public pool IDs assert follower-root visibility, division validity, event scoping and integer IDs. Schedule rendering asserts live scores, winner/draw classes, forfeit versus spirit output, escaped flags/placeholders/media, game history and grouping transitions; date navigation asserts exact IDs. Eight disposable SUT mutations verify these assertions discriminate. Remaining: the die() refusal in TimeTableSetMoveTimes, which cannot run in-process.",
       "notes": "",
       "sut_path": "/home/kari/dev/ultiorganizer/lib/timetable.functions.php"
     },

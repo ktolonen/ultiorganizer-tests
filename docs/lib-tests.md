@@ -39,3 +39,15 @@ The top-level `targets` block sets the per-file coverage goal (`line_pct`, `func
 - Changed lib file: run its test, then triage any failure.
 
 Before writing a test, read [Pitfalls](lib-test-pitfalls.md), and follow the assertion-quality rules in `AGENTS.md`.
+
+## Timetable coverage
+
+`TimetableFunctionsLibTest` checks public pool selection through follower chains,
+root visibility, and division validity. Its rendering tests assert winner and draw
+classes, live scores, forfeit versus spirit output, escaped flags and placeholder
+names, live-media visibility, and balanced tables across schedule groups. Date
+navigation pins the selected game IDs and the empty-event result.
+
+The only remaining uncovered line in `timetable.functions.php` is the terminating
+permission guard in `TimeTableSetMoveTimes`; running that refusal in-process would
+terminate PHPUnit. Coverage targets and this limitation are recorded in the catalog.

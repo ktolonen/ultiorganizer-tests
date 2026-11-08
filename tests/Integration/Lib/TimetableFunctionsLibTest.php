@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use UltiorganizerHarness\Support\LegacyApp;
 
@@ -41,9 +42,7 @@ final class TimetableFunctionsLibTest extends TestCase
         $_SESSION['userproperties']['locale'] = 'en_US';
 
         global $serverConf;
-        if (!isset($serverConf)) {
-            $serverConf = [];
-        }
+        $serverConf = GetSimpleServerConf();
         $serverConf['PersistentCacheEnabled'] = 'false';
     }
 
@@ -572,6 +571,202 @@ final class TimetableFunctionsLibTest extends TestCase
         $this->assertStringContainsString('Pool A', $html);
     }
 
+    public function testSeasonPublicPoolIdsRespectRootVisibilityAndDivisionValidity(): void
+    {
+        DBQuery("INSERT INTO uo_pool (name, visible, continuingpool, played, series, type) VALUES ('Coverage follower', 0, 0, 0, 100, 1)");
+        $child = (int) DBQueryToValueUncached('SELECT LAST_INSERT_ID()');
+        try {
+            DBQuery("UPDATE uo_pool SET follower=$child WHERE pool_id=200");
+            self::flushCoverageCaches();
+            $this->assertEqualsCanonicalizing([200, $child], SeasonPublicPoolIds('HRN2026'));
+            $this->assertSame([], SeasonPublicPoolIds('UNKNOWN'));
+
+            // A visible root exposes its hidden follower; a hidden root hides
+            // even a follower whose own visible flag is set.
+            DBQuery("UPDATE uo_pool SET visible=0 WHERE pool_id=200");
+            DBQuery("UPDATE uo_pool SET visible=1 WHERE pool_id=$child");
+            self::flushCoverageCaches();
+            $this->assertSame([], SeasonPublicPoolIds('HRN2026'));
+
+            DBQuery("UPDATE uo_pool SET visible=1 WHERE pool_id=200");
+            DBQuery("UPDATE uo_series SET valid=0 WHERE series_id=100");
+            self::flushCoverageCaches();
+            $this->assertSame([], SeasonPublicPoolIds('HRN2026'));
+            DBQuery("UPDATE uo_series SET valid=1 WHERE series_id=100");
+            self::flushCoverageCaches();
+            $this->assertEqualsCanonicalizing([200, $child], SeasonPublicPoolIds('HRN2026'));
+            foreach (SeasonPublicPoolIds('HRN2026') as $id) {
+                $this->assertIsInt($id);
+            }
+        } finally {
+            DBQuery("UPDATE uo_pool SET visible=1, follower=NULL WHERE pool_id=200");
+            DBQuery("UPDATE uo_series SET valid=1 WHERE series_id=100");
+            DBQuery("DELETE FROM uo_pool WHERE pool_id=$child");
+            self::flushCoverageCaches();
+        }
+    }
+
+    /** @return array<string, array{int, int, int, int, string, string}> */
+    public static function renderedGameStates(): array
+    {
+        return [
+            'home wins' => [15, 11, 0, 1, 'game-winner', 'game-loser'],
+            'visitor wins' => [11, 15, 0, 1, 'game-loser', 'game-winner'],
+            'draw' => [11, 11, 0, 1, '', ''],
+            'ongoing with scoresheet' => [3, 2, 1, 1, '', ''],
+            'ongoing without scoresheet' => [3, 2, 1, 0, '', ''],
+            'finished without scoresheet' => [15, 11, 0, 0, 'game-winner', 'game-loser'],
+        ];
+    }
+
+    #[DataProvider('renderedGameStates')]
+    public function testGameRowPinsWinnersScoresAndGameplayLinks(int $home, int $visitor, int $ongoing, int $scoresheet, string $homeClass, string $visitorClass): void
+    {
+        $game = TimetableGames(700, 'game', 'all', 'time')[0];
+        $game = array_replace($game, ['homescore' => $home, 'visitorscore' => $visitor, 'isongoing' => $ongoing, 'scoresheet' => $scoresheet]);
+        $html = GameRow($game);
+        foreach ([[$homeClass, 'Helsinki Heat'], [$visitorClass, 'Tampere Tempest']] as [$class, $name]) {
+            $this->assertStringContainsString($class === '' ? "<span>$name</span>" : "<span class='$class'>$name</span>", $html);
+        }
+        foreach ([$home, $visitor] as $score) {
+            $value = $ongoing ? "<em>$score</em>" : (string) $score;
+            $this->assertSame($home === $visitor ? 2 : 1, substr_count($html, "<td style='width:15px'><span>$value</span></td>"));
+        }
+        $this->assertSame($scoresheet ? 1 : 0, substr_count($html, '?view=gameplay&amp;game=700'));
+        $this->assertSame($ongoing ? 1 : 0, substr_count($html, 'Ongoing'));
+    }
+
+    public function testGameRowForfeitSuppressesPrefetchedSpiritScores(): void
+    {
+        $game = TimetableGames(700, 'game', 'all', 'time')[0];
+        $totals = [700 => ['home' => 12, 'visitor' => 10]];
+        $render = static fn(array $row): string => GameRow($row, false, true, true, false, false, true, false, true, [], $totals);
+        $this->assertStringContainsString("<span class='game-spirit'>[12 - 10]</span>", $render($game));
+        $game['forfeit'] = 300;
+        $html = $render($game);
+        $this->assertStringContainsString("<span class='forfeit-mark'>(forfeit)</span>", $html);
+        $this->assertStringNotContainsString('game-spirit', $html);
+    }
+
+    public function testGameRowEscapesInternationalFlagsAndUnresolvedTeams(): void
+    {
+        $game = TimetableGames(701, 'game', 'all', 'time')[0];
+        $game = array_replace($game, ['isinternational' => 1, 'homeflag' => 'fi".png', 'visitorflag' => 'se.png']);
+        $html = GameRow($game);
+        $this->assertStringContainsString("src='images/flags/tiny/fi&quot;.png'", $html);
+        $this->assertStringContainsString("src='images/flags/tiny/se.png'", $html);
+        $this->assertStringContainsString('view=gamecard', $html);
+        $game['isinternational'] = 0;
+        $this->assertStringNotContainsString('images/flags/tiny/', GameRow($game));
+
+        $game = array_replace($game, ['hometeam' => null, 'visitorteam' => null,
+            'phometeamname' => 'Winner <A>', 'pvisitorteamname' => 'Winner <B>', 'fieldname' => '', 'gamename' => '']);
+        $html = GameRow($game);
+        $this->assertStringContainsString("<span class='schedulingname'>Winner &lt;A&gt;</span>", $html);
+        $this->assertStringContainsString("<span class='schedulingname'>Winner &lt;B&gt;</span>", $html);
+        $this->assertSame(2, substr_count($html, '<span>?</span>'));
+        $this->assertStringContainsString("<td style='width:60px'></td>", $html);
+        $this->assertStringContainsString("<td style='width:50px'></td>", $html);
+        $this->assertStringNotContainsString('view=gamecard', $html);
+    }
+
+    public function testGameRowLiveMediaIsEscapedAndHiddenAfterTheGame(): void
+    {
+        $game = TimetableGames(701, 'game', 'all', 'time')[0];
+        $urls = [701 => [
+            ['name' => 'Live <court>', 'url' => 'https://example.com/live?a=1&b=2', 'type' => 'you<>tube'],
+            ['name' => '', 'url' => 'https://example.com/other', 'type' => ''],
+        ]];
+        $render = static fn(array $row): string => GameRow($row, false, true, true, false, false, true, false, true, $urls);
+        $html = $render($game);
+        $this->assertStringContainsString("href='https://example.com/live?a=1&amp;b=2'", $html);
+        $this->assertStringContainsString("title='Live &lt;court&gt;' src='images/linkicons/youtube.png'", $html);
+        $this->assertStringContainsString("title='Live Broadcasting' src='images/linkicons/live.png'", $html);
+        $this->assertSame(2, substr_count($html, "rel='noopener'"));
+        $game = array_replace($game, ['hasstarted' => 1, 'isongoing' => 1, 'homescore' => 1, 'visitorscore' => 0]);
+        $this->assertStringContainsString('https://example.com/live', $render($game));
+        $game['isongoing'] = 0;
+        $this->assertStringNotContainsString('https://example.com/', $render($game));
+    }
+
+    public function testGameRowDoesNotOfferHistoryWithoutAMatchingOpponent(): void
+    {
+        $game = TimetableGames(701, 'game', 'all', 'time')[0];
+        $this->assertStringContainsString('?view=gamecard&amp;team1=301&amp;team2=300', GameRow($game));
+        $game['hometeamname'] = 'No historical opponent';
+        $this->assertStringNotContainsString('?view=gamecard', GameRow($game));
+    }
+
+    /** @return array<array{string}> */
+    public static function groupedScheduleRenderers(): array
+    {
+        return [['TournamentView'], ['SeriesView'], ['PlaceView'], ['ExtTournamentView'], ['ExtGameView']];
+    }
+
+    #[DataProvider('groupedScheduleRenderers')]
+    public function testScheduleGroupTransitionsKeepEveryGameAndBalancedTables(string $renderer): void
+    {
+        $base = TimetableGames(700, 'game', 'all', 'time')[0];
+        $changes = [
+            ['reservationgroup' => 'First event'],
+            ['reservationgroup' => 'Second event'],
+            ['reservationgroup' => 'Second event', 'pool' => 201, 'place_id' => 401, 'fieldname' => '2', 'starttime' => '2026-06-02 09:00:00'],
+            ['reservationgroup' => 'Second event', 'pool' => 202, 'series_id' => 101, 'seriesname' => 'Coverage Mixed', 'place_id' => 401, 'fieldname' => '3', 'starttime' => '2026-06-02 09:00:00'],
+        ];
+        $games = [];
+        foreach ($changes as $i => $change) {
+            $games[] = array_replace($base, $change, ['hometeamname' => "Group team $i"]);
+        }
+        $html = $renderer($games);
+        foreach (range(0, 3) as $i) {
+            $this->assertSame(1, substr_count($html, "Group team $i"));
+        }
+        $this->assertSame(substr_count($html, '<table '), substr_count($html, '</table>'));
+        if ($renderer === 'SeriesView') {
+            $this->assertStringContainsString('<h1>Open</h1>', $html);
+            $this->assertStringContainsString('<h1>Coverage Mixed</h1>', $html);
+        } else {
+            $tag = str_starts_with($renderer, 'Ext') ? "h1 class='pk_h1'" : 'h1';
+            $this->assertStringContainsString("<$tag>First event</h1>", $html);
+            $this->assertStringContainsString("<$tag>Second event</h1>", $html);
+        }
+        $this->assertSame(4, substr_count($html, '>15</'));
+        $this->assertSame(4, substr_count($html, '>11</'));
+    }
+
+    public function testExternalSchedulesRenderEscapedPlaceholderTeams(): void
+    {
+        $game = TimetableGames(701, 'game', 'all', 'time')[0];
+        $game = array_replace($game, ['hometeam' => null, 'visitorteam' => null,
+            'phometeamname' => 'Winner <A>', 'pvisitorteamname' => 'Winner <B>']);
+        foreach (['ExtTournamentView', 'ExtGameView'] as $renderer) {
+            $html = $renderer([$game]);
+            $this->assertStringContainsString('Winner &lt;A&gt;', $html);
+            $this->assertStringContainsString('Winner &lt;B&gt;', $html);
+            $this->assertStringNotContainsString('Winner <A>', $html);
+        }
+        $this->assertSame(2, substr_count(ExtTournamentView([$game]), '>?</td>'));
+    }
+
+    public function testScheduleSpiritTotalsIgnoreIncompleteRows(): void
+    {
+        $games = TimetableGames(700, 'game', 'all', 'time');
+        $expected = ScheduleSpiritTotals($games);
+        $this->assertSame([700 => ['home' => null, 'visitor' => null]], $expected);
+        $this->assertSame($expected, ScheduleSpiritTotals(array_merge($games, [
+            ['game_id' => 701, 'spiritmode' => 1003],
+            ['season' => 'HRN2026', 'spiritmode' => 1003],
+        ])));
+    }
+
+    private static function flushCoverageCaches(): void
+    {
+        foreach (['db_query_value', 'db_query_array', 'db_query_row', 'db_query_rowcount'] as $namespace) {
+            CacheForgetPersistent($namespace);
+            CacheForgetNamespace($namespace);
+        }
+    }
+
     // --- PrintTimeZone ---
 
     public function testPrintTimeZoneReturnsTimezoneTagForEmptyInput(): void
@@ -913,16 +1108,16 @@ final class TimetableFunctionsLibTest extends TestCase
     {
         // game 701 is "coming" (hasstarted=0), so NextGameDay should find it
         $result = NextGameDay('HRN2026', 'season', 'time');
-        $this->assertIsArray($result);
-        $this->assertNotEmpty($result);
+        $this->assertSame(['700', '701'], array_column($result, 'game_id'));
+        $this->assertSame([], NextGameDay('UNKNOWN', 'season', 'time'));
     }
 
     public function testPrevGameDayReturnsGamesWhenPastGameExists(): void
     {
         // game 700 is "past" (hasstarted=1), so PrevGameDay should find it
         $result = PrevGameDay('HRN2026', 'season', 'time');
-        $this->assertIsArray($result);
-        $this->assertNotEmpty($result);
+        $this->assertSame(['700', '701'], array_column($result, 'game_id'));
+        $this->assertSame([], PrevGameDay('UNKNOWN', 'season', 'time'));
     }
 
     // --- TimetableToCsv ---
