@@ -517,6 +517,113 @@ final class PersistentCacheFunctionsLibTest extends TestCase
         $this->assertSame('resolved-value', $seen);
     }
 
+    // --- Garbage collection ---
+    //
+    // Entries are only overwritten when the same query runs again, so without a
+    // sweep every distinct query leaves files behind until the disk fills.
+
+    /** Skip on app versions that predate cache garbage collection. */
+    private function requireGarbageCollection(): void
+    {
+        if (!function_exists('PersistentCacheCollectGarbage')) {
+            $this->markTestSkipped('SUT predates persistent cache garbage collection');
+        }
+    }
+
+    public function testPersistentCacheWriteSetsMtimeToExpiry(): void
+    {
+        $this->requireGarbageCollection();
+        $path = $this->tmpPath();
+        PersistentCacheWrite($path, 'v', 300);
+        clearstatcache();
+        $this->assertSame(PersistentCacheRead($path)['expires'], filemtime($path));
+    }
+
+    public function testCacheRememberForRemovesLockFileAfterWrite(): void
+    {
+        $this->requireGarbageCollection();
+        $path = $this->registerCachePath('uo_unit_gc_lock', 'k');
+        if ($path === null) {
+            $this->markTestSkipped('PersistentCacheDir not available');
+        }
+        @unlink($path);
+        CacheRememberFor('uo_unit_gc_lock', 'k', 10, fn() => 'v');
+        $this->assertFileExists($path);
+        $this->assertFileDoesNotExist($path . '.lock');
+    }
+
+    public function testCollectGarbageRemovesExpiredEntriesAndLeftovers(): void
+    {
+        $this->requireGarbageCollection();
+        $expired = $this->registerCachePath('uo_unit_gc', 'expired');
+        $fresh = $this->registerCachePath('uo_unit_gc', 'fresh');
+        $recentlyExpired = $this->registerCachePath('uo_unit_gc', 'recent');
+        if ($expired === null || $fresh === null || $recentlyExpired === null) {
+            $this->markTestSkipped('PersistentCacheDir not available');
+        }
+        $old = time() - 3600;
+        PersistentCacheWrite($expired, 'old', 1);
+        touch($expired, $old);
+        touch($expired . '.lock', $old);
+        $orphanTmp = $expired . '.tmp.999999';
+        $this->tempFiles[] = $orphanTmp;
+        file_put_contents($orphanTmp, 'partial');
+        touch($orphanTmp, $old);
+        PersistentCacheWrite($fresh, 'live', 300);
+        // Expired but inside the grace window: kept for stale reads under contention.
+        PersistentCacheWrite($recentlyExpired, 'stale', 1);
+        touch($recentlyExpired, time() - 10);
+
+        $removed = PersistentCacheCollectGarbage();
+
+        $this->assertGreaterThanOrEqual(3, $removed);
+        clearstatcache();
+        $this->assertFileDoesNotExist($expired);
+        $this->assertFileDoesNotExist($expired . '.lock');
+        $this->assertFileDoesNotExist($orphanTmp);
+        $this->assertFileExists($fresh);
+        $this->assertFileExists($recentlyExpired);
+    }
+
+    public function testCollectGarbageSkipsWhileAnotherSweepRuns(): void
+    {
+        $this->requireGarbageCollection();
+        $path = $this->registerCachePath('uo_unit_gc_busy', 'k');
+        if ($path === null) {
+            $this->markTestSkipped('PersistentCacheDir not available');
+        }
+        PersistentCacheWrite($path, 'old', 1);
+        touch($path, time() - 3600);
+        $holder = fopen(dirname($path) . '/gc.mutex', 'c');
+        $this->assertTrue(flock($holder, LOCK_EX | LOCK_NB), 'precondition: test holds the GC lock');
+        try {
+            $this->assertNull(PersistentCacheCollectGarbage());
+            $this->assertFileExists($path);
+        } finally {
+            flock($holder, LOCK_UN);
+            fclose($holder);
+        }
+        $this->assertGreaterThanOrEqual(1, PersistentCacheCollectGarbage());
+        clearstatcache();
+        $this->assertFileDoesNotExist($path);
+    }
+
+    public function testCacheWipePersistentRemovesOrphanLockAndTempFiles(): void
+    {
+        $this->requireGarbageCollection();
+        $path = $this->registerCachePath('uo_unit_wipe_orphans', 'k');
+        if ($path === null) {
+            $this->markTestSkipped('PersistentCacheDir not available');
+        }
+        $tmp = $path . '.tmp.999998';
+        $this->tempFiles[] = $tmp;
+        touch($path . '.lock');
+        touch($tmp);
+        CacheWipePersistent();
+        $this->assertFileDoesNotExist($path . '.lock');
+        $this->assertFileDoesNotExist($tmp);
+    }
+
     // --- CacheForgetPersistent ---
 
     public function testCacheForgetPersistentDeletesSpecificEntry(): void
